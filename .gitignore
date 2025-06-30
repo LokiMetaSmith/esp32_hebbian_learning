@@ -1,0 +1,32 @@
+# ESP-IDF temporary files
+/build/
+/dependencies.lock
+/managed_components/
+sdkconfig
+sdkconfig.old
+sdkconfig.default
+
+# Python virtual environment
+/venv/
+/.venv/
+/env/
+/.env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# IDE-specific files
+.vscode/
+.history/
+.idea/
+.project
+.classpath
+*.launch
+.cproject
+nbproject/
+
+# Operating System files
+.DS_Store
+Thumbs.db
