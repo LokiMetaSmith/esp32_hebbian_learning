@@ -2,7 +2,7 @@
 #define NVS_STORAGE_H
 
 #include "main.h" // Include main header to get network struct definitions
-
+#include "esp_err.h"
 /**
  * @brief Initializes the Non-Volatile Storage (NVS) system.
  * @return esp_err_t Result of the initialization.

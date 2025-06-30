@@ -15,7 +15,7 @@
 #include "nvs_storage.h"
 
 // ESP-DSP for optimized math
-#include "dsp/dsps_dot_prod.h"
+#include "esp_dsp.h"
 
 // --- Application Configuration ---
 #define NUM_SERVOS 6
@@ -67,7 +67,18 @@ void initialize_network(HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl) {
             hl->weights[i][j] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
         }
     }
-    // ... initialize other layers similarly ...
+    for (int i = 0; i < OUTPUT_NEURONS; i++) {
+        ol->output_bias[i] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
+        for (int j = 0; j < HIDDEN_NEURONS; j++) {
+            ol->weights[i][j] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
+        }
+    }
+    for (int i = 0; i < PRED_NEURONS; i++) {
+        pl->pred_bias[i] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
+        for (int j = 0; j < HIDDEN_NEURONS; j++) {
+            pl->weights[i][j] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
+        }
+    }
 }
 
 // Rewritten forward_pass using ESP-DSP
@@ -75,29 +86,51 @@ void forward_pass(const float* input, HiddenLayer* hl, OutputLayer* ol, Predicti
     // Hidden Layer
     for (int i = 0; i < HIDDEN_NEURONS; i++) {
         float sum = 0;
-        // Dot product of weights[i] and input vector
-        dsps_dot_prod_f32_ae32(hl->weights[i], input, &sum, INPUT_NEURONS);
+        // Dot product of weights[i] and input vector - CORRECTED FUNCTION NAME
+        dsps_dotprod_f32_ae32(hl->weights[i], input, &sum, INPUT_NEURONS);
         sum += hl->hidden_bias[i];
         hl->hidden_activations[i] = activation_tanh(sum);
     }
     // Output Layer (Action)
     for (int i = 0; i < OUTPUT_NEURONS; i++) {
         float sum = 0;
-        dsps_dot_prod_f32_ae32(ol->weights[i], hl->hidden_activations, &sum, HIDDEN_NEURONS);
+        // CORRECTED FUNCTION NAME
+        dsps_dotprod_f32_ae32(ol->weights[i], hl->hidden_activations, &sum, HIDDEN_NEURONS);
         sum += ol->output_bias[i];
         ol->output_activations[i] = activation_tanh(sum);
     }
     // Prediction Layer
     for (int i = 0; i < PRED_NEURONS; i++) {
         float sum = 0;
-        dsps_dot_prod_f32_ae32(pl->weights[i], hl->hidden_activations, &sum, HIDDEN_NEURONS);
+        // CORRECTED FUNCTION NAME
+        dsps_dotprod_f32_ae32(pl->weights[i], hl->hidden_activations, &sum, HIDDEN_NEURONS);
         sum += pl->pred_bias[i];
         pl->pred_activations[i] = activation_tanh(sum);
     }
 }
 
 void update_weights_hebbian(const float* input, float correctness, HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl) {
-    // ... (unchanged from previous version) ...
+    for (int i = 0; i < HIDDEN_NEURONS; i++) {
+        for (int j = 0; j < INPUT_NEURONS; j++) {
+            float delta = LEARNING_RATE * correctness * hl->hidden_activations[i] * input[j];
+            hl->weights[i][j] += delta;
+            hl->weights[i][j] *= (1.0f - WEIGHT_DECAY);
+        }
+    }
+    for (int i = 0; i < OUTPUT_NEURONS; i++) {
+        for (int j = 0; j < HIDDEN_NEURONS; j++) {
+            float delta = LEARNING_RATE * correctness * ol->output_activations[i] * hl->hidden_activations[j];
+            ol->weights[i][j] += delta;
+            ol->weights[i][j] *= (1.0f - WEIGHT_DECAY);
+        }
+    }
+    for (int i = 0; i < PRED_NEURONS; i++) {
+        for (int j = 0; j < HIDDEN_NEURONS; j++) {
+            float delta = LEARNING_RATE * correctness * pl->pred_activations[i] * hl->hidden_activations[j];
+            pl->weights[i][j] += delta;
+            pl->weights[i][j] *= (1.0f - WEIGHT_DECAY);
+        }
+    }
 }
 
 void export_network_state() {
@@ -116,25 +149,23 @@ void export_network_state() {
 }
 
 void serial_command_task(void *pvParameters) {
-    char* cmd_buf = (char*) malloc(100);
+    uint8_t* cmd_buf = (uint8_t*) malloc(100);
     ESP_LOGI(TAG, "Serial command task started.");
     while(1) {
         // Read data from the UART
-        int len = uart_read_bytes(UART_NUM_0, (uint8_t*)cmd_buf, 99, 20 / portTICK_PERIOD_MS);
+        int len = uart_read_bytes(UART_NUM_0, cmd_buf, 99, 20 / portTICK_PERIOD_MS);
         if (len > 0) {
             cmd_buf[len] = '\0';
             ESP_LOGI(TAG, "Received command: %s", cmd_buf);
             
-            if (strncmp(cmd_buf, "save", 4) == 0) {
+            if (strncmp((char*)cmd_buf, "save", 4) == 0) {
                 save_network_to_nvs(g_hl, g_ol, g_pl);
-            } else if (strncmp(cmd_buf, "export", 6) == 0) {
+            } else if (strncmp((char*)cmd_buf, "export", 6) == 0) {
                 export_network_state();
-            } else if (strncmp(cmd_buf, "set_pos", 7) == 0) {
+            } else if (strncmp((char*)cmd_buf, "set_pos", 7) == 0) {
                 int id, pos;
-                if (sscanf(cmd_buf, "set_pos %d %d", &id, &pos) == 2) {
+                if (sscanf((char*)cmd_buf, "set_pos %d %d", &id, &pos) == 2) {
                     ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
-                    // This is a simple direct execution for now.
-                    // A more complex system would queue this as an "intended action".
                     feetech_write_word(id, REG_GOAL_POSITION, pos);
                 }
             }
@@ -187,8 +218,9 @@ void app_main(void) {
         update_weights_hebbian(state_t, correctness, g_hl, g_ol, g_pl);
         led_indicator_set_color_from_fitness(correctness);
 
-        if (cycle++ % 1200 == 0) { // Save every minute
+        if (cycle > 0 && cycle % 1200 == 0) { // Save every minute after the first cycle
             save_network_to_nvs(g_hl, g_ol, g_pl);
         }
+        cycle++;
     }
 }
