@@ -3,14 +3,13 @@
 
 #include <stdint.h>
 #include "driver/uart.h"
-#include "driver/gpio.h" // <-- ADD THIS LINE
-
+#include "driver/gpio.h"
 
 // --- Configuration ---
-// These are confirmed from the provided Python source code
+// CORRECTED: Using UART_NUM_1 for the dedicated servo bus
 #define SERVO_UART_PORT      UART_NUM_1
-#define SERVO_TX_PIN         (GPIO_NUM_17) // Your chosen TX pin
-#define SERVO_RX_PIN         (GPIO_NUM_16) // Your chosen RX pin
+#define SERVO_TX_PIN         (GPIO_NUM_17) // UART1 TX Pin
+#define SERVO_RX_PIN         (GPIO_NUM_16) // UART1 RX Pin
 #define SERVO_BAUD_RATE      1000000       // Default 1Mbps
 #define SERVO_POS_MIN        0
 #define SERVO_POS_MAX        4095          // For sts3215, resolution is 4096
@@ -24,7 +23,6 @@
 #define SCS_INST_SYNC_WRITE     0x83
 
 // --- FeeTech STS/SMS Series Control Table Addresses ---
-// Extracted from tables.py -> STS_SMS_SERIES_CONTROL_TABLE
 #define REG_ID                  5
 #define REG_BAUD_RATE           6
 #define REG_MAX_POSITION_LIMIT  11

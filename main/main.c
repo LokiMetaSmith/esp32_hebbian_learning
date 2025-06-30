@@ -2,11 +2,15 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
-#include <ctype.h> // <-- ADDED THIS LINE
+#include <ctype.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h" // For mutexes
 #include "esp_log.h"
+#include "esp_console.h"
 #include "driver/uart.h"
+#include "driver/uart_vfs.h"
+#include "linenoise/linenoise.h"
 
 // Our custom modules
 #include "main.h"
@@ -21,16 +25,19 @@
 #define LOOP_DELAY_MS 50
 #define LEARNING_RATE 0.01f
 #define WEIGHT_DECAY  0.0001f
-#define UART_BUF_SIZE (1024)
 
 static const char *TAG = "HEBBIAN_ROBOT";
 uint8_t servo_ids[NUM_SERVOS] = {1, 2, 3, 4, 5, 6};
 
-// --- Global Network Pointers ---
+// --- Global Network Pointers & Control Flags ---
 HiddenLayer* g_hl;
 OutputLayer* g_ol;
 PredictionLayer* g_pl;
 volatile bool g_learning_paused = false;
+SemaphoreHandle_t g_console_mutex; // Mutex for protecting console output
+
+// --- Forward Declaration for Tasks ---
+void learning_loop_task(void *pvParameters);
 
 // --- Application-Level Hardware Functions ---
 void read_sensor_state(float* sensor_data) {
@@ -38,9 +45,12 @@ void read_sensor_state(float* sensor_data) {
     if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
         sensor_data[0] = ax; sensor_data[1] = ay; sensor_data[2] = az;
     } else {
-        sensor_data[0] = 0; sensor_data[1] = 0; sensor_data[2] = 0;
+        // On error, keep old values to prevent sudden jumps
     }
-    sensor_data[3] = 0.0f; sensor_data[4] = 0.0f; sensor_data[5] = 0.0f;
+    // The BMA400 does not have a gyroscope, so we feed 0 for those inputs.
+    sensor_data[3] = 0.0f; 
+    sensor_data[4] = 0.0f;
+    sensor_data[5] = 0.0f;
 }
 
 void initialize_robot_arm() {
@@ -146,69 +156,48 @@ void export_network_state() {
     g_learning_paused = false;
 }
 
-// --- STABLE Serial Command Task ---
-void serial_command_task(void *pvParameters) {
-    uint8_t* data = (uint8_t*) malloc(UART_BUF_SIZE);
-    ESP_LOGI(TAG, "Serial command task started. Type 'help' for commands.");
-    printf("\n> ");
-    fflush(stdout);
-
-    while (1) {
-        int len = uart_read_bytes(UART_NUM_0, data, (UART_BUF_SIZE - 1), 20 / portTICK_PERIOD_MS);
-        if (len) {
-            data[len] = '\0';
-            char* cmd = (char*)data;
-            while(*cmd && isspace((unsigned char)*cmd)) cmd++;
-
-            if (strlen(cmd) > 0) {
-                 ESP_LOGI(TAG, "Received command: '%s'", cmd);
-                if (strncmp(cmd, "save", 4) == 0) {
-                    save_network_to_nvs(g_hl, g_ol, g_pl);
-                } else if (strncmp(cmd, "export", 6) == 0) {
-                    export_network_state();
-                } else if (strncmp(cmd, "set_pos", 7) == 0) {
-                    int id, pos;
-                    if (sscanf(cmd, "set_pos %d %d", &id, &pos) == 2) {
-                        ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
-                        feetech_write_word(id, REG_GOAL_POSITION, pos);
-                    } else {
-                        printf("Invalid format. Use: set_pos <id> <position>\n");
-                    }
-                } else if (strncmp(cmd, "help", 4) == 0) {
-                    printf("Available commands:\n  save\n  export\n  set_pos <id> <pos>\n");
-                } else {
-                    printf("Unknown command: %s\n", cmd);
-                }
-            }
-            printf("> ");
-            fflush(stdout);
-        }
-        vTaskDelay(1); 
-    }
-    free(data);
+// --- CONSOLE COMMANDS ---
+static int save_cmd_handler(int argc, char **argv) {
+    g_learning_paused = true;
+    vTaskDelay(pdMS_TO_TICKS(100));
+    ESP_LOGI(TAG, "User triggered save.");
+    save_network_to_nvs(g_hl, g_ol, g_pl);
+    g_learning_paused = false;
+    return 0;
 }
 
-// --- Main Application Loop ---
-void app_main(void) {
-    ESP_LOGI(TAG, "Starting Hebbian Learning Robot Task");
-    g_hl = malloc(sizeof(HiddenLayer)); g_ol = malloc(sizeof(OutputLayer)); g_pl = malloc(sizeof(PredictionLayer));
-    float* state_t = malloc(sizeof(float) * INPUT_NEURONS); float* state_t_plus_1 = malloc(sizeof(float) * INPUT_NEURONS);
-    if (!g_hl || !g_ol || !g_pl || !state_t || !state_t_plus_1) { ESP_LOGE(TAG, "Failed to allocate memory!"); return; }
+static int export_cmd_handler(int argc, char **argv) {
+    export_network_state();
+    return 0;
+}
 
-    nvs_storage_initialize();
-    feetech_initialize();
-    bma400_initialize();
-    led_indicator_initialize();
-    
-    if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
-        ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
-        initialize_network(g_hl, g_ol, g_pl);
+static int set_pos_cmd_handler(int argc, char **argv) {
+    if (argc != 3) {
+        printf("Usage: set_pos <id> <position>\n");
+        return 1;
     }
-    
-    initialize_robot_arm();
-    xTaskCreate(serial_command_task, "serial_task", 4096, NULL, 5, NULL);
+    int id = atoi(argv[1]);
+    int pos = atoi(argv[2]);
+    ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
+    feetech_write_word(id, REG_GOAL_POSITION, pos);
+    return 0;
+}
 
+static void register_console_commands(void) {
+    const esp_console_cmd_t save_cmd = { .command = "save", .help = "Save the network state to NVS", .func = &save_cmd_handler };
+    const esp_console_cmd_t export_cmd = { .command = "export", .help = "Export the network state", .func = &export_cmd_handler };
+    const esp_console_cmd_t set_pos_cmd = { .command = "set_pos", .help = "Set servo position. Usage: set_pos <id> <pos>", .func = &set_pos_cmd_handler };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&save_cmd));
+    ESP_ERROR_CHECK(esp_console_cmd_register(&export_cmd));
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_pos_cmd));
+}
+
+// --- TASKS ---
+void learning_loop_task(void *pvParameters) {
     long cycle = 0;
+    float* state_t = malloc(sizeof(float) * INPUT_NEURONS); 
+    float* state_t_plus_1 = malloc(sizeof(float) * INPUT_NEURONS);
+
     while (1) {
         if (!g_learning_paused) {
             read_sensor_state(state_t);
@@ -225,12 +214,79 @@ void app_main(void) {
             led_indicator_set_color_from_fitness(correctness);
 
             if (cycle > 0 && cycle % 1200 == 0) {
-                ESP_LOGI(TAG, "Auto-saving network to NVS...");
-                save_network_to_nvs(g_hl, g_ol, g_pl);
+                if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                    ESP_LOGI(TAG, "Auto-saving network to NVS...");
+                    save_network_to_nvs(g_hl, g_ol, g_pl);
+                    xSemaphoreGive(g_console_mutex);
+                }
             }
             cycle++;
         } else {
             vTaskDelay(pdMS_TO_TICKS(100));
         }
+    }
+    free(state_t);
+    free(state_t_plus_1);
+}
+
+void app_main(void) {
+    ESP_LOGI(TAG, "Starting Hebbian Learning Robot Task");
+    g_hl = malloc(sizeof(HiddenLayer)); g_ol = malloc(sizeof(OutputLayer)); g_pl = malloc(sizeof(PredictionLayer));
+    if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory for network!"); return; }
+
+    g_console_mutex = xSemaphoreCreateMutex();
+
+    nvs_storage_initialize();
+    feetech_initialize();
+    bma400_initialize();
+    led_indicator_initialize();
+    
+    // Set up console
+    esp_console_config_t console_config = {
+            .max_cmdline_args = 8,
+            .max_cmdline_length = 256,
+    };
+    ESP_ERROR_CHECK(esp_console_init(&console_config));
+    uart_vfs_dev_use_driver(CONFIG_ESP_CONSOLE_UART_NUM);
+    register_console_commands();
+
+    if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
+        ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
+        initialize_network(g_hl, g_ol, g_pl);
+    }
+    
+    initialize_robot_arm();
+    
+    // Create the learning task
+    xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
+
+    // Run the console loop in app_main
+    const char* prompt = LOG_COLOR_I "robot> " LOG_RESET_COLOR;
+    printf("\n"
+           "-----------------------------------\n"
+           " HEBBIAN ROBOT CONTROL CONSOLE\n"
+           " Type 'help' to get the list of commands.\n"
+           "-----------------------------------\n");
+
+    while (true) {
+        char *line = linenoise(prompt);
+        if (line == NULL) { 
+            continue;
+        }
+        
+        xSemaphoreTake(g_console_mutex, portMAX_DELAY);
+        int ret;
+        esp_err_t err = esp_console_run(line, &ret);
+        if (err == ESP_ERR_NOT_FOUND) {
+            printf("Unrecognized command\n");
+        } else if (err == ESP_ERR_INVALID_ARG) {
+            // command was empty
+        } else if (err == ESP_OK && ret != ESP_OK) {
+            printf("Command returned non-zero error code: 0x%x (%s)\n", ret, esp_err_to_name(err));
+        } else if (err != ESP_OK) {
+            printf("Internal error: %s\n", esp_err_to_name(err));
+        }
+        xSemaphoreGive(g_console_mutex);
+        linenoiseFree(line);
     }
 }
