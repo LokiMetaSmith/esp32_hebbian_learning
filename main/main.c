@@ -7,10 +7,8 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
-#include "esp_console.h"
+#include "esp_vfs_dev.h"
 #include "driver/uart.h"
-#include "driver/uart_vfs.h"
-#include "linenoise/linenoise.h"
 
 // Our custom modules
 #include "main.h"
@@ -25,6 +23,7 @@
 #define LOOP_DELAY_MS 50
 #define LEARNING_RATE 0.01f
 #define WEIGHT_DECAY  0.0001f
+#define UART_BUF_SIZE (256)
 
 static const char *TAG = "HEBBIAN_ROBOT";
 uint8_t servo_ids[NUM_SERVOS] = {1, 2, 3, 4, 5, 6};
@@ -35,10 +34,13 @@ OutputLayer* g_ol;
 PredictionLayer* g_pl;
 volatile bool g_learning_paused = false;
 SemaphoreHandle_t g_console_mutex;
+SemaphoreHandle_t g_action_mutex;
+float g_action_vector[OUTPUT_NEURONS];
 
 // --- Forward Declaration for Tasks ---
 void learning_loop_task(void *pvParameters);
 void serial_command_task(void *pvParameters);
+void robot_arm_task(void *pvParameters);
 
 // --- Application-Level Hardware Functions ---
 void read_sensor_state(float* sensor_data) {
@@ -157,39 +159,38 @@ void export_network_state() {
 }
 
 // --- CONSOLE COMMANDS ---
-static int save_cmd_handler(int argc, char **argv) {
-    g_learning_paused = true;
-    vTaskDelay(pdMS_TO_TICKS(100));
-    ESP_LOGI(TAG, "User triggered save.");
-    save_network_to_nvs(g_hl, g_ol, g_pl);
-    g_learning_paused = false;
-    return 0;
-}
+static void process_serial_command(char* cmd) {
+    // Trim leading/trailing whitespace
+    while(*cmd && isspace((unsigned char)*cmd)) cmd++;
+    char *end = cmd + strlen(cmd) - 1;
+    while(end > cmd && isspace((unsigned char)*end)) end--;
+    end[1] = '\0';
 
-static int export_cmd_handler(int argc, char **argv) {
-    export_network_state();
-    return 0;
-}
-
-static int set_pos_cmd_handler(int argc, char **argv) {
-    if (argc != 3) {
-        printf("Usage: set_pos <id> <position>\n");
-        return 1;
+    if (strlen(cmd) == 0) {
+        return;
     }
-    int id = atoi(argv[1]);
-    int pos = atoi(argv[2]);
-    ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
-    feetech_write_word(id, REG_GOAL_POSITION, pos);
-    return 0;
-}
 
-static void register_console_commands(void) {
-    const esp_console_cmd_t save_cmd = { .command = "save", .help = "Save the network state to NVS", .func = &save_cmd_handler };
-    const esp_console_cmd_t export_cmd = { .command = "export", .help = "Export the network state", .func = &export_cmd_handler };
-    const esp_console_cmd_t set_pos_cmd = { .command = "set_pos", .help = "Set servo position. Usage: set_pos <id> <pos>", .func = &set_pos_cmd_handler };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&save_cmd));
-    ESP_ERROR_CHECK(esp_console_cmd_register(&export_cmd));
-    ESP_ERROR_CHECK(esp_console_cmd_register(&set_pos_cmd));
+    ESP_LOGI(TAG, "Received command: '%s'", cmd);
+    if (strcmp(cmd, "save") == 0) {
+        g_learning_paused = true;
+        vTaskDelay(pdMS_TO_TICKS(100));
+        save_network_to_nvs(g_hl, g_ol, g_pl);
+        g_learning_paused = false;
+    } else if (strcmp(cmd, "export") == 0) {
+        export_network_state();
+    } else if (strncmp(cmd, "set_pos", 7) == 0) {
+        int id, pos;
+        if (sscanf(cmd, "set_pos %d %d", &id, &pos) == 2) {
+            ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
+            feetech_write_word(id, REG_GOAL_POSITION, pos);
+        } else {
+            printf("Invalid format. Use: set_pos <id> <position>\n");
+        }
+    } else if (strcmp(cmd, "help") == 0) {
+        printf("Available commands:\n  save\n  export\n  set_pos <id> <pos>\n");
+    } else {
+        printf("Unknown command: %s\n", cmd);
+    }
 }
 
 // --- TASKS ---
@@ -202,7 +203,12 @@ void learning_loop_task(void *pvParameters) {
         if (!g_learning_paused) {
             read_sensor_state(state_t);
             forward_pass(state_t, g_hl, g_ol, g_pl);
-            execute_on_robot_arm(g_ol->output_activations);
+            
+            if (xSemaphoreTake(g_action_mutex, portMAX_DELAY) == pdTRUE) {
+                memcpy(g_action_vector, g_ol->output_activations, sizeof(g_action_vector));
+                xSemaphoreGive(g_action_mutex);
+            }
+
             vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
             read_sensor_state(state_t_plus_1);
 
@@ -229,51 +235,43 @@ void learning_loop_task(void *pvParameters) {
     free(state_t_plus_1);
 }
 
+void robot_arm_task(void *pvParameters) {
+    float local_action_vector[OUTPUT_NEURONS];
+    while(1) {
+        if (xSemaphoreTake(g_action_mutex, portMAX_DELAY) == pdTRUE) {
+            memcpy(local_action_vector, g_action_vector, sizeof(g_action_vector));
+            xSemaphoreGive(g_action_mutex);
+        }
+        
+        execute_on_robot_arm(local_action_vector);
+        
+        vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
+    }
+}
+
 void serial_command_task(void *pvParameters) {
-    // Initialize console
-    esp_console_config_t console_config = {
-            .max_cmdline_args = 8,
-            .max_cmdline_length = 256,
-    };
-    ESP_ERROR_CHECK(esp_console_init(&console_config));
+    uint8_t* uart_buf = (uint8_t*) malloc(UART_BUF_SIZE);
     
-    linenoiseSetMaxLineLen(256);
-    linenoiseHistorySetMaxLen(0); 
-    linenoiseSetMultiLine(1);
-    linenoiseSetCompletionCallback(&esp_console_get_completion);
-    linenoiseSetHintsCallback((linenoiseHintsCallback*) &esp_console_get_hint);
-
-    register_console_commands();
-
-    const char* prompt = LOG_COLOR_I "robot> " LOG_RESET_COLOR;
     printf("\n"
            "-----------------------------------\n"
            " HEBBIAN ROBOT CONTROL CONSOLE\n"
-           " Type 'help' to get the list of commands.\n"
+           " Type 'help' and press Enter.\n"
            "-----------------------------------\n");
 
     while (true) {
-        char *line = linenoise(prompt);
-        if (line == NULL) { 
-            continue;
-        }
+        printf("> ");
+        fflush(stdout);
         
-        if (xSemaphoreTake(g_console_mutex, portMAX_DELAY) == pdTRUE) {
-            int ret;
-            esp_err_t err = esp_console_run(line, &ret);
-            if (err == ESP_ERR_NOT_FOUND) {
-                printf("Unrecognized command\n");
-            } else if (err == ESP_ERR_INVALID_ARG) {
-                // command was empty
-            } else if (err == ESP_OK && ret != ESP_OK) {
-                printf("Command returned non-zero error code: 0x%x (%s)\n", ret, esp_err_to_name(err));
-            } else if (err != ESP_OK) {
-                printf("Internal error: %s\n", esp_err_to_name(err));
+        int len = uart_read_bytes(UART_NUM_0, uart_buf, UART_BUF_SIZE - 1, portMAX_DELAY);
+        if (len > 0) {
+            uart_buf[len] = '\0';
+            if (xSemaphoreTake(g_console_mutex, portMAX_DELAY) == pdTRUE) {
+                process_serial_command((char*)uart_buf);
+                xSemaphoreGive(g_console_mutex);
             }
-            xSemaphoreGive(g_console_mutex);
         }
-        linenoiseFree(line);
     }
+    free(uart_buf);
 }
 
 void app_main(void) {
@@ -282,23 +280,22 @@ void app_main(void) {
     if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory for network!"); return; }
 
     g_console_mutex = xSemaphoreCreateMutex();
+    g_action_mutex = xSemaphoreCreateMutex();
 
     nvs_storage_initialize();
     feetech_initialize();
     bma400_initialize();
     led_indicator_initialize();
-    ESP_LOGE(TAG, "Initializing CONSOLE UART!");
-    uart_vfs_dev_use_driver(CONFIG_ESP_CONSOLE_UART_NUM);
-    ESP_LOGE(TAG, "Initializing NN weights!");
+    
     if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
         ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
         initialize_network(g_hl, g_ol, g_pl);
     }
     
     initialize_robot_arm();
-
+    
+    // Create the three main tasks
     xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
-    ESP_LOGE(TAG, "Starting Learning_Loop Task!");
     xTaskCreate(serial_command_task, "serial_task", 4096, NULL, 5, NULL);
-    ESP_LOGE(TAG, "Starting serial_task!");
+    xTaskCreate(robot_arm_task, "robot_arm_task", 2048, NULL, 5, NULL);
 }
