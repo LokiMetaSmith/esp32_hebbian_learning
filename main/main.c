@@ -5,7 +5,7 @@
 #include <ctype.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "freertos/semphr.h" // For mutexes
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "esp_console.h"
 #include "driver/uart.h"
@@ -34,7 +34,7 @@ HiddenLayer* g_hl;
 OutputLayer* g_ol;
 PredictionLayer* g_pl;
 volatile bool g_learning_paused = false;
-SemaphoreHandle_t g_console_mutex; // Mutex for protecting console output
+SemaphoreHandle_t g_console_mutex;
 
 // --- Forward Declaration for Tasks ---
 void learning_loop_task(void *pvParameters);
@@ -47,7 +47,6 @@ void read_sensor_state(float* sensor_data) {
     } else {
         // On error, keep old values to prevent sudden jumps
     }
-    // The BMA400 does not have a gyroscope, so we feed 0 for those inputs.
     sensor_data[3] = 0.0f; 
     sensor_data[4] = 0.0f;
     sensor_data[5] = 0.0f;
@@ -241,7 +240,6 @@ void app_main(void) {
     bma400_initialize();
     led_indicator_initialize();
     
-    // Set up console
     esp_console_config_t console_config = {
             .max_cmdline_args = 8,
             .max_cmdline_length = 256,
@@ -257,10 +255,8 @@ void app_main(void) {
     
     initialize_robot_arm();
     
-    // Create the learning task
     xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
-
-    // Run the console loop in app_main
+    
     const char* prompt = LOG_COLOR_I "robot> " LOG_RESET_COLOR;
     printf("\n"
            "-----------------------------------\n"
@@ -274,19 +270,20 @@ void app_main(void) {
             continue;
         }
         
-        xSemaphoreTake(g_console_mutex, portMAX_DELAY);
-        int ret;
-        esp_err_t err = esp_console_run(line, &ret);
-        if (err == ESP_ERR_NOT_FOUND) {
-            printf("Unrecognized command\n");
-        } else if (err == ESP_ERR_INVALID_ARG) {
-            // command was empty
-        } else if (err == ESP_OK && ret != ESP_OK) {
-            printf("Command returned non-zero error code: 0x%x (%s)\n", ret, esp_err_to_name(err));
-        } else if (err != ESP_OK) {
-            printf("Internal error: %s\n", esp_err_to_name(err));
+        if (xSemaphoreTake(g_console_mutex, portMAX_DELAY) == pdTRUE) {
+            int ret;
+            esp_err_t err = esp_console_run(line, &ret);
+            if (err == ESP_ERR_NOT_FOUND) {
+                printf("Unrecognized command\n");
+            } else if (err == ESP_ERR_INVALID_ARG) {
+                // command was empty
+            } else if (err == ESP_OK && ret != ESP_OK) {
+                printf("Command returned non-zero error code: 0x%x (%s)\n", ret, esp_err_to_name(err));
+            } else if (err != ESP_OK) {
+                printf("Internal error: %s\n", esp_err_to_name(err));
+            }
+            xSemaphoreGive(g_console_mutex);
         }
-        xSemaphoreGive(g_console_mutex);
         linenoiseFree(line);
     }
 }
