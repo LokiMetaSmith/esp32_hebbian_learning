@@ -1,22 +1,22 @@
 #ifndef BMA400_DRIVER_H
 #define BMA400_DRIVER_H
 
-#include "driver/i2c.h"
+#include "driver/i2c_master.h"
+#include "driver/gpio.h"
 
 // --- I2C Configuration ---
-#define I2C_MASTER_SCL_IO          22      // GPIO number for I2C clock
-#define I2C_MASTER_SDA_IO          21      // GPIO number for I2C data
+// CORRECTED PINS: Using GPIO 8 and 9 which are available on the DevKitC-1
+#define I2C_MASTER_SCL_IO          9       // GPIO number for I2C clock
+#define I2C_MASTER_SDA_IO          8       // GPIO number for I2C data
 #define I2C_MASTER_NUM             I2C_NUM_0 // I2C port number
 #define I2C_MASTER_FREQ_HZ         400000    // I2C master clock frequency (400kHz)
 #define I2C_MASTER_TX_BUF_DISABLE  0
 #define I2C_MASTER_RX_BUF_DISABLE  0
 
 // --- BMA400 Sensor Addresses ---
-// From the SparkFun hookup guide, the default address is 0x14
 #define BMA400_I2C_ADDR             0x14
 
 // --- BMA400 Register Map ---
-// (From the Bosch BMA400 Datasheet)
 #define BMA400_CHIP_ID_REG          0x00
 #define BMA400_STATUS_REG           0x03
 #define BMA400_ACCD_X_LSB_REG       0x04
