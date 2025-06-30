@@ -33,8 +33,32 @@ Over time, the robot builds an internal model of its own physics, learning the c
 1.  **Microcontroller:** [ESP32-S3-DevKitC-1 v1.1](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/hw-reference/esp32s3-devkitc-1/index.html) (or a similar ESP32-S3 board).
 2.  **Robotic Arm:** SO100 / SO-101 with FeeTech Serial Bus Servos.
 3.  **Sensor:** [SparkFun BMA400 Accelerometer](https://www.sparkfun.com/products/18985) (or another BMA400 breakout).
-4.  **Power Supply:** An external 5V-7.4V power supply capable of driving the servos. **Do not power the servos from the ESP32's 3.3V or 5V pins.**
-5.  **Wiring:** Jumper wires to connect the components.
+4.  **Bus Adapter:** [Waveshare Bus Servo Adapter (A)](https://www.waveshare.com/wiki/Bus_Servo_Adapter_(A)). This is required to interface the ESP32's UART with the half-duplex serial bus of the FeeTech servos.
+5.  **Power Supply:** An external 5V-7.4V power supply capable of driving the servos. **Do not power the servos from the ESP32's 3.3V or 5V pins.**
+6.  **Wiring:** Jumper wires.
+
+## Wiring Instructions
+
+Properly wiring the components is critical. Follow this guide carefully.
+
+### Power
+* Connect your external power supply's `+` terminal to the `Vin` (or `VCC`) on the **Waveshare Bus Servo Adapter**.
+* Connect your external power supply's `-` terminal to the `GND` on the **Waveshare Adapter** AND to a `GND` pin on the **ESP32-S3**. A common ground is essential.
+
+### Control Signals
+
+#### Accelerometer (I2C)
+* ESP32 `GPIO 21` (SDA)  -> BMA400 `SDA`
+* ESP32 `GPIO 22` (SCL)  -> BMA400 `SCL`
+* ESP32 `3.3V`          -> BMA400 `VCC`
+* ESP32 `GND`             -> BMA400 `GND`
+
+#### Servo Bus (UART via Waveshare Adapter)
+* **IMPORTANT:** The Waveshare adapter requires a non-standard "straight-through" UART connection, as specified in its documentation.
+* ESP32 `GPIO 17` (UART TX)  -> Waveshare Adapter `TXD`
+* ESP32 `GPIO 16` (UART RX)  -> Waveshare Adapter `RXD`
+* Connect your daisy-chained FeeTech servos to the 3-pin servo bus header on the Waveshare Adapter.
+* Ensure the jumper on the Waveshare adapter is set to position **'A'** for UART control.
 
 ## Software & Dependencies
 
@@ -43,25 +67,7 @@ This project is built using the **ESP-IDF v5.4**. It relies on one managed compo
 
 ## Project Structure
 
-The project is organized with modular drivers to keep the main application logic clean.
-
-
-.
-├── main/
-│   ├── bma400_driver.c
-│   ├── bma400_driver.h
-│   ├── feetech_protocol.c
-│   ├── feetech_protocol.h
-│   ├── led_indicator.c
-│   ├── led_indicator.h
-│   ├── main.c
-│   └── CMakeLists.txt
-├── .gitignore
-├── CMakeLists.txt
-├── idf_component.yml
-└── README.md
-
-
+.├── main/│   ├── bma400_driver.c│   ├── bma400_driver.h│   ├── feetech_protocol.c│   ├── feetech_protocol.h│   ├── led_indicator.c│   ├── led_indicator.h│   ├── main.c│   └── CMakeLists.txt├── .gitignore├── CMakeLists.txt├── idf_component.yml└── README.md
 ## Setup & Build Instructions
 
 1.  **Clone the Repository:**
