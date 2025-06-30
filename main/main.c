@@ -7,6 +7,11 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "driver/uart.h"
+#include "esp_console.h"
+#include "esp_vfs_dev.h"
+#include "linenoise/linenoise.h"
+#include "argtable3/argtable3.h"
+
 
 // Our custom modules
 #include "main.h"
@@ -131,50 +136,183 @@ void update_weights_hebbian(const float* input, float correctness, HiddenLayer* 
     }
 }
 
-void process_serial_command(char* cmd) {
-    // Trim leading/trailing whitespace
-    while(*cmd && isspace((unsigned char)*cmd)) cmd++;
-    char *end = cmd + strlen(cmd) - 1;
-    while(end > cmd && isspace((unsigned char)*end)) end--;
-    end[1] = '\0';
-
-    if (strlen(cmd) == 0) {
-        return;
-    }
-
-    ESP_LOGI(TAG, "Received command: '%s'", cmd);
-    if (strcmp(cmd, "save") == 0) {
-        save_network_to_nvs(g_hl, g_ol, g_pl);
-    } else if (strcmp(cmd, "export") == 0) {
-        printf("\n--- BEGIN NN EXPORT ---\n");
-        printf("{\"hidden_layer\":{\"bias\":[");
-        for(int i=0; i<HIDDEN_NEURONS; i++) printf("%f,", g_hl->hidden_bias[i]);
-        printf("],\"weights\":[");
-        for(int i=0; i<HIDDEN_NEURONS; i++) {
-            printf("[");
-            for(int j=0; j<INPUT_NEURONS; j++) printf("%f,", g_hl->weights[i][j]);
-            printf("],");
-        }
-        printf("]}}\n");
-        printf("--- END NN EXPORT ---\n");
-    } else if (strncmp(cmd, "set_pos", 7) == 0) {
-        int id, pos;
-        if (sscanf(cmd, "set_pos %d %d", &id, &pos) == 2) {
-            ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
-            feetech_write_word(id, REG_GOAL_POSITION, pos);
-        } else {
-            printf("Invalid format. Use: set_pos <id> <position>\n");
-        }
-    } else if (strcmp(cmd, "help") == 0) {
-        printf("Available commands:\n  save\n  export\n  set_pos <id> <pos>\n");
-    } else {
-        printf("Unknown command: %s\n", cmd);
-    }
+// --- Console Command Handlers ---
+static int cmd_save_network(int argc, char **argv) {
+    ESP_LOGI(TAG, "Saving network to NVS...");
+    save_network_to_nvs(g_hl, g_ol, g_pl);
+    ESP_LOGI(TAG, "Network saved.");
+    return 0;
 }
+
+static int cmd_export_network(int argc, char **argv) {
+    printf("\n--- BEGIN NN EXPORT ---\n");
+    // Hidden Layer
+    printf("{\"hidden_layer\":{\"bias\":[");
+    for(int i=0; i<HIDDEN_NEURONS; i++) {
+        printf("%f", g_hl->hidden_bias[i]);
+        if (i < HIDDEN_NEURONS - 1) printf(",");
+    }
+    printf("],\"weights\":[");
+    for(int i=0; i<HIDDEN_NEURONS; i++) {
+        printf("[");
+        for(int j=0; j<INPUT_NEURONS; j++) {
+            printf("%f", g_hl->weights[i][j]);
+            if (j < INPUT_NEURONS - 1) printf(",");
+        }
+        printf("]");
+        if (i < HIDDEN_NEURONS - 1) printf(",");
+    }
+    printf("]},");
+
+    // Output Layer
+    printf("\"output_layer\":{\"bias\":[");
+    for(int i=0; i<OUTPUT_NEURONS; i++) {
+        printf("%f", g_ol->output_bias[i]);
+        if (i < OUTPUT_NEURONS - 1) printf(",");
+    }
+    printf("],\"weights\":[");
+    for(int i=0; i<OUTPUT_NEURONS; i++) {
+        printf("[");
+        for(int j=0; j<HIDDEN_NEURONS; j++) {
+            printf("%f", g_ol->weights[i][j]);
+            if (j < HIDDEN_NEURONS - 1) printf(",");
+        }
+        printf("]");
+        if (i < OUTPUT_NEURONS - 1) printf(",");
+    }
+    printf("]},");
+
+    // Prediction Layer
+    printf("\"prediction_layer\":{\"bias\":[");
+    for(int i=0; i<PRED_NEURONS; i++) {
+        printf("%f", g_pl->pred_bias[i]);
+        if (i < PRED_NEURONS - 1) printf(",");
+    }
+    printf("],\"weights\":[");
+    for(int i=0; i<PRED_NEURONS; i++) {
+        printf("[");
+        for(int j=0; j<HIDDEN_NEURONS; j++) {
+            printf("%f", g_pl->weights[i][j]);
+            if (j < HIDDEN_NEURONS - 1) printf(",");
+        }
+        printf("]");
+        if (i < PRED_NEURONS - 1) printf(",");
+    }
+    printf("]}}\n");
+    printf("--- END NN EXPORT ---\n");
+    return 0;
+}
+
+struct {
+    struct arg_int *id;
+    struct arg_int *pos;
+    struct arg_end *end;
+} set_pos_args;
+
+static int cmd_set_pos(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_pos_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_pos_args.end, argv[0]);
+        return 1;
+    }
+    int id = set_pos_args.id->ival[0];
+    int pos = set_pos_args.pos->ival[0];
+
+    if (id < 1 || id > NUM_SERVOS) {
+        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
+        return 1;
+    }
+    if (pos < SERVO_POS_MIN || pos > SERVO_POS_MAX) {
+        printf("Error: Position must be between %d and %d\n", SERVO_POS_MIN, SERVO_POS_MAX);
+        return 1;
+    }
+
+    ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
+    feetech_write_word(id, REG_GOAL_POSITION, pos);
+    return 0;
+}
+
+void initialize_console() {
+    // Drain stdout before reconfiguring it
+    fflush(stdout);
+    fsync(fileno(stdout));
+
+    // Disable buffering on stdin
+    setvbuf(stdin, NULL, _IONBF, 0);
+
+    // Minicom, screen, idf_monitor send CR when ENTER key is pressed
+    esp_vfs_dev_uart_port_set_rx_line_endings(CONFIG_ESP_CONSOLE_UART_NUM, ESP_LINE_ENDINGS_CR);
+    // Move the caret to the beginning of the next line on '\n'
+    esp_vfs_dev_uart_port_set_tx_line_endings(CONFIG_ESP_CONSOLE_UART_NUM, ESP_LINE_ENDINGS_CRLF);
+
+    // Configure UART. Note that REF_TICK is used so that the baud rate remains
+    // correct while APB frequency is changing in light sleep mode.
+    const uart_config_t uart_config = {
+            .baud_rate = CONFIG_ESP_CONSOLE_UART_BAUDRATE,
+            .data_bits = UART_DATA_8_BITS,
+            .parity = UART_PARITY_DISABLE,
+            .stop_bits = UART_STOP_BITS_1,
+            .source_clk = UART_SCLK_REF_TICK, // Using REF_TICK for light sleep stability
+    };
+    // Install UART driver for interrupt-driven reads and writes
+    ESP_ERROR_CHECK( uart_driver_install(CONFIG_ESP_CONSOLE_UART_NUM,
+            256, 0, 0, NULL, 0) );
+    ESP_ERROR_CHECK( uart_param_config(CONFIG_ESP_CONSOLE_UART_NUM, &uart_config) );
+
+    // Tell VFS to use UART driver
+    esp_vfs_dev_uart_use_driver(CONFIG_ESP_CONSOLE_UART_NUM);
+
+    esp_console_repl_t *repl = NULL;
+    esp_console_repl_config_t repl_config = ESP_CONSOLE_REPL_CONFIG_DEFAULT();
+    repl_config.prompt = "HEBBIAN_ROBOT>";
+    repl_config.max_cmdline_length = 1024; // Increased from default 256
+
+    esp_console_dev_uart_config_t dev_config = ESP_CONSOLE_DEV_UART_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_console_new_repl_uart(&dev_config, &repl_config, &repl));
+
+    // Register commands
+    const esp_console_cmd_t save_cmd = {
+        .command = "save",
+        .help = "Save the neural network weights to NVS",
+        .hint = NULL,
+        .func = &cmd_save_network,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&save_cmd));
+
+    const esp_console_cmd_t export_cmd = {
+        .command = "export",
+        .help = "Export the neural network weights in JSON format",
+        .hint = NULL,
+        .func = &cmd_export_network,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&export_cmd));
+
+    set_pos_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
+    set_pos_args.pos = arg_int1(NULL, NULL, "<pos>", "Position (0-4095)");
+    set_pos_args.end = arg_end(2);
+    const esp_console_cmd_t set_pos_cmd = {
+        .command = "set_pos",
+        .help = "Set a servo to a specific position",
+        .hint = NULL,
+        .func = &cmd_set_pos,
+        .argtable = &set_pos_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_pos_cmd));
+
+    ESP_ERROR_CHECK(esp_console_register_help_command());
+
+    printf("\n =======================================================\n");
+    printf(" |             ESP32 Hebbian Robot Console           |\n");
+    printf(" | Type 'help' to get the list of commands         |\n");
+    printf(" =======================================================\n\n");
+
+    ESP_ERROR_CHECK(esp_console_start_repl(repl));
+}
+
 
 // --- Main Application Loop ---
 void app_main(void) {
-    ESP_LOGI(TAG, "Starting Hebbian Learning Robot Task");
+    ESP_LOGI(TAG, "Starting Hebbian Learning Robot System");
     g_hl = malloc(sizeof(HiddenLayer)); g_ol = malloc(sizeof(OutputLayer)); g_pl = malloc(sizeof(PredictionLayer));
     float* state_t = malloc(sizeof(float) * INPUT_NEURONS); float* state_t_plus_1 = malloc(sizeof(float) * INPUT_NEURONS);
     if (!g_hl || !g_ol || !g_pl || !state_t || !state_t_plus_1) { ESP_LOGE(TAG, "Failed to allocate memory!"); return; }
@@ -184,6 +322,11 @@ void app_main(void) {
     bma400_initialize();
     led_indicator_initialize();
     
+    // Initialize console AFTER other modules that might use UART0 for logging,
+    // especially if they install their own driver.
+    // initialize_console() will reconfigure UART0 for console use.
+    initialize_console();
+
     if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
         ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
         initialize_network(g_hl, g_ol, g_pl);
@@ -192,22 +335,14 @@ void app_main(void) {
     initialize_robot_arm();
     
     long cycle = 0;
-    uint8_t* uart_buf = (uint8_t*) malloc(UART_BUF_SIZE);
-
-    printf("\n\nHEBBIAN ROBOT CONTROL CONSOLE\nType 'help' and press Enter.\n> ");
-    fflush(stdout);
+    // Removed: uint8_t* uart_buf = (uint8_t*) malloc(UART_BUF_SIZE);
+    // Removed: printf("\n\nHEBBIAN ROBOT CONTROL CONSOLE\nType 'help' and press Enter.\n> ");
+    // Removed: fflush(stdout);
 
     while (1) {
-        // 1. Handle Serial Commands (Non-Blocking)
-        int len = uart_read_bytes(UART_NUM_0, uart_buf, UART_BUF_SIZE - 1, 0);
-        if (len > 0) {
-            uart_buf[len] = '\0';
-            process_serial_command((char*)uart_buf);
-            printf("> ");
-            fflush(stdout);
-        }
+        // Serial command handling is now done by esp_console in a separate task.
 
-        // 2. Run one cycle of the learning loop
+        // Run one cycle of the learning loop
         read_sensor_state(state_t);
         forward_pass(state_t, g_hl, g_ol, g_pl);
         execute_on_robot_arm(g_ol->output_activations);
