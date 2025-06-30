@@ -5,8 +5,8 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
-#include "esp_console.h" // Official console component
-#include "esp_vfs_dev.h"
+#include "esp_console.h" 
+#include "driver/uart_vfs.h" // CORRECTED: For uart_vfs_dev_use_driver
 #include "linenoise/linenoise.h"
 
 // Our custom modules
@@ -178,21 +178,18 @@ static void register_console_commands(void) {
 }
 
 void serial_command_task(void *pvParameters) {
-    // Initialize console
     esp_console_config_t console_config = {
             .max_cmdline_args = 8,
             .max_cmdline_length = 256,
     };
     ESP_ERROR_CHECK(esp_console_init(&console_config));
     
-    // Configure linenoise
     linenoiseSetMaxLineLen(256);
-    linenoiseHistorySetMaxLen(0); // No history
+    linenoiseHistorySetMaxLen(0); 
     linenoiseSetMultiLine(1);
     linenoiseSetCompletionCallback(&esp_console_get_completion);
     linenoiseSetHintsCallback((linenoiseHintsCallback*) &esp_console_get_hint);
 
-    // Register our commands
     register_console_commands();
 
     const char* prompt = LOG_COLOR_I "robot> " LOG_RESET_COLOR;
@@ -202,10 +199,9 @@ void serial_command_task(void *pvParameters) {
            " Type 'help' to get the list of commands.\n"
            "-----------------------------------\n");
 
-    // Main loop of the console
     while (true) {
         char *line = linenoise(prompt);
-        if (line == NULL) {
+        if (line == NULL) { 
             continue;
         }
         
@@ -224,7 +220,7 @@ void serial_command_task(void *pvParameters) {
     }
 }
 
-// --- Main Application Loop ---
+
 void app_main(void) {
     ESP_LOGI(TAG, "Starting Hebbian Learning Robot Task");
     g_hl = malloc(sizeof(HiddenLayer)); g_ol = malloc(sizeof(OutputLayer)); g_pl = malloc(sizeof(PredictionLayer));
@@ -236,8 +232,8 @@ void app_main(void) {
     bma400_initialize();
     led_indicator_initialize();
     
-    // Configure UART for console
-    esp_vfs_dev_uart_use_driver(CONFIG_ESP_CONSOLE_UART_NUM);
+    // Set up VFS and console for command input
+    uart_vfs_dev_use_driver(CONFIG_ESP_CONSOLE_UART_NUM); // CORRECTED: Use modern function
 
     if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
         ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
