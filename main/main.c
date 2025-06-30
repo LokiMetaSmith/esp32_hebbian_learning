@@ -38,6 +38,7 @@ SemaphoreHandle_t g_console_mutex;
 
 // --- Forward Declaration for Tasks ---
 void learning_loop_task(void *pvParameters);
+void serial_command_task(void *pvParameters);
 
 // --- Application-Level Hardware Functions ---
 void read_sensor_state(float* sensor_data) {
@@ -228,35 +229,22 @@ void learning_loop_task(void *pvParameters) {
     free(state_t_plus_1);
 }
 
-void app_main(void) {
-    ESP_LOGI(TAG, "Starting Hebbian Learning Robot Task");
-    g_hl = malloc(sizeof(HiddenLayer)); g_ol = malloc(sizeof(OutputLayer)); g_pl = malloc(sizeof(PredictionLayer));
-    if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory for network!"); return; }
-
-    g_console_mutex = xSemaphoreCreateMutex();
-
-    nvs_storage_initialize();
-    feetech_initialize();
-    bma400_initialize();
-    led_indicator_initialize();
-    
+void serial_command_task(void *pvParameters) {
+    // Initialize console
     esp_console_config_t console_config = {
             .max_cmdline_args = 8,
             .max_cmdline_length = 256,
     };
     ESP_ERROR_CHECK(esp_console_init(&console_config));
-    uart_vfs_dev_use_driver(CONFIG_ESP_CONSOLE_UART_NUM);
+    
+    linenoiseSetMaxLineLen(256);
+    linenoiseHistorySetMaxLen(0); 
+    linenoiseSetMultiLine(1);
+    linenoiseSetCompletionCallback(&esp_console_get_completion);
+    linenoiseSetHintsCallback((linenoiseHintsCallback*) &esp_console_get_hint);
+
     register_console_commands();
 
-    if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
-        ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
-        initialize_network(g_hl, g_ol, g_pl);
-    }
-    
-    initialize_robot_arm();
-    
-    xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
-    
     const char* prompt = LOG_COLOR_I "robot> " LOG_RESET_COLOR;
     printf("\n"
            "-----------------------------------\n"
@@ -286,4 +274,31 @@ void app_main(void) {
         }
         linenoiseFree(line);
     }
+}
+
+void app_main(void) {
+    ESP_LOGI(TAG, "Starting Hebbian Learning Robot Task");
+    g_hl = malloc(sizeof(HiddenLayer)); g_ol = malloc(sizeof(OutputLayer)); g_pl = malloc(sizeof(PredictionLayer));
+    if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory for network!"); return; }
+
+    g_console_mutex = xSemaphoreCreateMutex();
+
+    nvs_storage_initialize();
+    feetech_initialize();
+    bma400_initialize();
+    led_indicator_initialize();
+    ESP_LOGE(TAG, "Initializing CONSOLE UART!");
+    uart_vfs_dev_use_driver(CONFIG_ESP_CONSOLE_UART_NUM);
+    ESP_LOGE(TAG, "Initializing NN weights!");
+    if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
+        ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
+        initialize_network(g_hl, g_ol, g_pl);
+    }
+    
+    initialize_robot_arm();
+
+    xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
+    ESP_LOGE(TAG, "Starting Learning_Loop Task!");
+    xTaskCreate(serial_command_task, "serial_task", 4096, NULL, 5, NULL);
+    ESP_LOGE(TAG, "Starting serial_task!");
 }
