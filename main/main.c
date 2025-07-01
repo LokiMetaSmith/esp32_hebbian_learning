@@ -204,33 +204,6 @@ static int cmd_save_network(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_get_current(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&get_current_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, get_current_args.end, argv[0]);
-        return 1;
-    }
-    int id = get_current_args.id->ival[0];
-
-    if (id < 0 || id > 253) { // Servo IDs are typically 0-253
-        printf("Error: Servo ID must be between 0 and 253.\n");
-        return 1;
-    }
-
-    uint16_t raw_current = 0;
-    esp_err_t ret = feetech_read_word((uint8_t)id, REG_PRESENT_CURRENT, &raw_current, 100); // 100ms timeout
-
-    if (ret == ESP_OK) {
-        float current_mA = (float)raw_current * 6.5f; // 1 unit = 6.5mA
-        printf("Servo %d present current: %u (raw) -> %.2f mA (%.3f A)\n", id, raw_current, current_mA, current_mA / 1000.0f);
-    } else if (ret == ESP_ERR_TIMEOUT) {
-        printf("Error: Timeout reading current from servo %d.\n", id);
-    } else {
-        printf("Error: Failed to read current from servo %d (err: %s).\n", id, esp_err_to_name(ret));
-    }
-    return 0;
-}
-
 static int cmd_export_network(int argc, char **argv) {
     printf("\n--- BEGIN NN EXPORT ---\n");
     // Hidden Layer
@@ -302,11 +275,7 @@ struct {
     struct arg_end *end;
 } get_pos_args;
 
-// Arguments for get_current command
-struct {
-    struct arg_int *id;
-    struct arg_end *end;
-} get_current_args;
+// Moved get_current_args definition to be immediately before cmd_get_current
 
 static int cmd_set_pos(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_pos_args);
@@ -355,6 +324,39 @@ static int cmd_get_pos(int argc, char **argv) {
         printf("Error: Timeout reading position from servo %d.\n", id);
     } else {
         printf("Error: Failed to read position from servo %d (err: %s).\n", id, esp_err_to_name(ret));
+    }
+    return 0;
+}
+
+// Arguments for get_current command
+struct {
+    struct arg_int *id;
+    struct arg_end *end;
+} get_current_args;
+
+static int cmd_get_current(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&get_current_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, get_current_args.end, argv[0]);
+        return 1;
+    }
+    int id = get_current_args.id->ival[0];
+
+    if (id < 0 || id > 253) { // Servo IDs are typically 0-253
+        printf("Error: Servo ID must be between 0 and 253.\n");
+        return 1;
+    }
+
+    uint16_t raw_current = 0;
+    esp_err_t ret = feetech_read_word((uint8_t)id, REG_PRESENT_CURRENT, &raw_current, 100); // 100ms timeout
+
+    if (ret == ESP_OK) {
+        float current_mA = (float)raw_current * 6.5f; // 1 unit = 6.5mA
+        printf("Servo %d present current: %u (raw) -> %.2f mA (%.3f A)\n", id, raw_current, current_mA, current_mA / 1000.0f);
+    } else if (ret == ESP_ERR_TIMEOUT) {
+        printf("Error: Timeout reading current from servo %d.\n", id);
+    } else {
+        printf("Error: Failed to read current from servo %d (err: %s).\n", id, esp_err_to_name(ret));
     }
     return 0;
 }
