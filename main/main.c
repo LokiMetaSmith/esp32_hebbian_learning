@@ -58,6 +58,7 @@ void read_sensor_state(float* sensor_data) {
 
     // Read servo feedback: position and load for each servo
     int current_sensor_index = NUM_ACCEL_GYRO_PARAMS; // Start after accel/gyro data
+    float total_current_A_cycle = 0.0f;
 
     for (int i = 0; i < NUM_SERVOS; i++) {
         uint16_t servo_pos = 0;
