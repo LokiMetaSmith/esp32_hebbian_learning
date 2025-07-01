@@ -50,6 +50,10 @@ static uint16_t g_random_walk_max_delta_pos = 50; // Max position change per ste
 static int g_random_walk_interval_ms = 200;       // Interval between random walk steps
 static int64_t g_last_random_walk_time_us = 0;    // Timestamp of the last random walk execution
 
+// --- Static variables for conditional total current logging ---
+static float g_last_logged_total_current_A = -1.0f; // Initialize to ensure first valid reading is logged
+static const float CURRENT_LOGGING_THRESHOLD_A = 0.005f; // Log if change is > 5mA
+
 // --- Application-Level Hardware Functions ---
 void read_sensor_state(float* sensor_data) {
     float ax, ay, az;
@@ -109,7 +113,11 @@ void read_sensor_state(float* sensor_data) {
         }
         vTaskDelay(pdMS_TO_TICKS(10)); // Add 10ms delay after each servo's reads
     }
-    ESP_LOGI(TAG, "Total servo current this cycle: %.3f A", total_current_A_cycle);
+
+    if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
+        ESP_LOGI(TAG, "Total servo current this cycle: %.3f A", total_current_A_cycle);
+        g_last_logged_total_current_A = total_current_A_cycle;
+    }
 }
 
 void initialize_robot_arm() {
