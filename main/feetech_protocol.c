@@ -27,7 +27,8 @@ void feetech_initialize() {
         .source_clk = UART_SCLK_DEFAULT,
     };
     // Install UART driver, and get the queue.
-    uart_driver_install(SERVO_UART_PORT, 256, 0, 0, NULL, 0);
+    // Changed RX buffer size from 0 to 256.
+    uart_driver_install(SERVO_UART_PORT, 256, 256, 0, NULL, 0);
     uart_param_config(SERVO_UART_PORT, &uart_config);
     // Set UART pins.
     uart_set_pin(SERVO_UART_PORT, SERVO_TX_PIN, SERVO_RX_PIN, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE);
