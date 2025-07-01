@@ -12,6 +12,7 @@
 #include "esp_vfs_dev.h"
 #include "linenoise/linenoise.h"
 #include "argtable3/argtable3.h"
+#include "esp_timer.h" // For esp_timer_get_time()
 
 
 // Our custom modules
@@ -42,6 +43,12 @@ PredictionLayer* g_pl;
 static bool g_network_weights_updated = false;
 static float g_best_fitness_achieved = 0.0f;
 static const float MIN_FITNESS_IMPROVEMENT_TO_SAVE = 0.01f;
+
+// --- Global variables for Random Walk feature ---
+static bool g_random_walk_active = false;
+static uint16_t g_random_walk_max_delta_pos = 50; // Max position change per step
+static int g_random_walk_interval_ms = 200;       // Interval between random walk steps
+static int64_t g_last_random_walk_time_us = 0;    // Timestamp of the last random walk execution
 
 // --- Application-Level Hardware Functions ---
 void read_sensor_state(float* sensor_data) {
@@ -200,6 +207,27 @@ static int cmd_save_network(int argc, char **argv) {
         g_network_weights_updated = false; // Reset updated flag after manual save
     } else {
         ESP_LOGE(TAG, "Failed to manually save network to NVS.");
+    }
+    return 0;
+}
+
+static int cmd_random_walk_start(int argc, char **argv) {
+    if (!g_random_walk_active) {
+        g_random_walk_active = true;
+        g_last_random_walk_time_us = esp_timer_get_time(); // Initialize timer for first step
+        ESP_LOGI(TAG, "Random walk started. Max delta: %u, Interval: %d ms", g_random_walk_max_delta_pos, g_random_walk_interval_ms);
+    } else {
+        ESP_LOGI(TAG, "Random walk is already active.");
+    }
+    return 0;
+}
+
+static int cmd_random_walk_stop(int argc, char **argv) {
+    if (g_random_walk_active) {
+        g_random_walk_active = false;
+        ESP_LOGI(TAG, "Random walk stopped.");
+    } else {
+        ESP_LOGI(TAG, "Random walk is not active.");
     }
     return 0;
 }
@@ -443,6 +471,26 @@ void initialize_console() {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_current_cmd));
 
+    // Register random_walk_start command
+    const esp_console_cmd_t random_walk_start_cmd = {
+        .command = "rw_start", // Shorter command name
+        .help = "Start the random walk / baby motion",
+        .hint = NULL,
+        .func = &cmd_random_walk_start,
+        .argtable = NULL
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&random_walk_start_cmd));
+
+    // Register random_walk_stop command
+    const esp_console_cmd_t random_walk_stop_cmd = {
+        .command = "rw_stop", // Shorter command name
+        .help = "Stop the random walk / baby motion",
+        .hint = NULL,
+        .func = &cmd_random_walk_stop,
+        .argtable = NULL
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&random_walk_stop_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n =======================================================\n");
@@ -486,10 +534,42 @@ void app_main(void) {
     while (1) {
         // Serial command handling is now done by esp_console in a separate task.
 
+        // Random Walk Logic
+        if (g_random_walk_active) {
+            if ((esp_timer_get_time() - g_last_random_walk_time_us) / 1000 >= g_random_walk_interval_ms) {
+                ESP_LOGD(TAG, "RandomWalk: Executing step...");
+                for (int i = 0; i < NUM_SERVOS; i++) {
+                    uint16_t current_pos = 0;
+                    // Attempt to read current position to base the walk on
+                    if (feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 20) == ESP_OK) { // 20ms timeout for read
+                        int delta = (rand() % (2 * g_random_walk_max_delta_pos + 1)) - g_random_walk_max_delta_pos;
+                        int new_target_pos_int = (int)current_pos + delta;
+
+                        // Clamp to servo limits
+                        if (new_target_pos_int < SERVO_POS_MIN) new_target_pos_int = SERVO_POS_MIN;
+                        if (new_target_pos_int > SERVO_POS_MAX) new_target_pos_int = SERVO_POS_MAX;
+
+                        uint16_t new_target_pos = (uint16_t)new_target_pos_int;
+
+                        feetech_write_word(servo_ids[i], REG_GOAL_POSITION, new_target_pos);
+                        ESP_LOGD(TAG, "RandomWalk: Servo %d to %u (delta %d from %u)", servo_ids[i], new_target_pos, delta, current_pos);
+                    } else {
+                        ESP_LOGW(TAG, "RandomWalk: Failed to read pos for servo %d, skipping perturbation for this servo.", servo_ids[i]);
+                        // Optionally, could try to command to a random absolute position if read fails,
+                        // but that might be more chaotic. Skipping is safer for now.
+                    }
+                }
+                g_last_random_walk_time_us = esp_timer_get_time();
+            }
+        }
+
         // Run one cycle of the learning loop
-        read_sensor_state(state_t);
+        read_sensor_state(state_t); // Reads current state, including results of random walk if active
         forward_pass(state_t, g_hl, g_ol, g_pl);
-        execute_on_robot_arm(g_ol->output_activations);
+
+        if (!g_random_walk_active) {
+            execute_on_robot_arm(g_ol->output_activations);
+        }
         
         vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
         
