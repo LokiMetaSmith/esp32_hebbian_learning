@@ -47,6 +47,8 @@ void led_indicator_set_color_from_fitness(float fitness) {
     uint8_t green = (uint8_t)(255.0f * fitness);
     uint8_t blue = 0;
 
+    ESP_LOGD(TAG, "Setting LED color from fitness: %f -> R:%d G:%d B:%d", fitness, red, green, blue);
+
     // Set the pixel color
     led_strip_set_pixel(g_led_strip, 0, red, green, blue);
 

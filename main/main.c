@@ -549,7 +549,8 @@ void app_main(void) {
                 for (int i = 0; i < NUM_SERVOS; i++) {
                     uint16_t current_pos = 0;
                     // Attempt to read current position to base the walk on
-                    if (feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 20) == ESP_OK) { // 20ms timeout for read
+                    // Increased timeout for this specific read to 50ms
+                    if (feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 50) == ESP_OK) {
                         int delta = (rand() % (2 * g_random_walk_max_delta_pos + 1)) - g_random_walk_max_delta_pos;
                         int new_target_pos_int = (int)current_pos + delta;
 
@@ -589,6 +590,7 @@ void app_main(void) {
         float correctness = fmaxf(0, 1.0f - (total_error / PRED_NEURONS));
         
         update_weights_hebbian(state_t, correctness, g_hl, g_ol, g_pl);
+        ESP_LOGI(TAG, "Fitness for LED: %f", correctness); // Log fitness value
         led_indicator_set_color_from_fitness(correctness);
 
         // New auto-save logic
