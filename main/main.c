@@ -566,6 +566,7 @@ void app_main(void) {
                         // Optionally, could try to command to a random absolute position if read fails,
                         // but that might be more chaotic. Skipping is safer for now.
                     }
+                    vTaskDelay(pdMS_TO_TICKS(10)); // Delay after each servo perturbation attempt in random walk
                 }
                 g_last_random_walk_time_us = esp_timer_get_time();
             }
