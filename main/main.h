@@ -8,7 +8,7 @@
 
 // --- Neural Network Config ---
 #define NUM_ACCEL_GYRO_PARAMS 6
-#define NUM_SERVO_FEEDBACK_PARAMS 2 // Position and Load for each servo
+#define NUM_SERVO_FEEDBACK_PARAMS 3 // Position, Load, and Current for each servo
 #define INPUT_NEURONS (NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS))
 #define HIDDEN_NEURONS 16 // Can be tuned later
 #define OUTPUT_NEURONS NUM_SERVOS // Output is one action value per servo

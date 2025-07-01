@@ -28,6 +28,7 @@
 #define LEARNING_RATE 0.01f
 #define WEIGHT_DECAY  0.0001f
 #define UART_BUF_SIZE (256)
+#define MAX_EXPECTED_SERVO_CURRENT_A 2.0f // Max expected current per servo in Amperes for normalization
 
 static const char *TAG = "HEBBIAN_ROBOT";
 uint8_t servo_ids[NUM_SERVOS] = {1, 2, 3, 4, 5, 6};
@@ -184,6 +185,33 @@ static int cmd_save_network(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_get_current(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&get_current_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, get_current_args.end, argv[0]);
+        return 1;
+    }
+    int id = get_current_args.id->ival[0];
+
+    if (id < 0 || id > 253) { // Servo IDs are typically 0-253
+        printf("Error: Servo ID must be between 0 and 253.\n");
+        return 1;
+    }
+
+    uint16_t raw_current = 0;
+    esp_err_t ret = feetech_read_word((uint8_t)id, REG_PRESENT_CURRENT, &raw_current, 100); // 100ms timeout
+
+    if (ret == ESP_OK) {
+        float current_mA = (float)raw_current * 6.5f; // 1 unit = 6.5mA
+        printf("Servo %d present current: %u (raw) -> %.2f mA (%.3f A)\n", id, raw_current, current_mA, current_mA / 1000.0f);
+    } else if (ret == ESP_ERR_TIMEOUT) {
+        printf("Error: Timeout reading current from servo %d.\n", id);
+    } else {
+        printf("Error: Failed to read current from servo %d (err: %s).\n", id, esp_err_to_name(ret));
+    }
+    return 0;
+}
+
 static int cmd_export_network(int argc, char **argv) {
     printf("\n--- BEGIN NN EXPORT ---\n");
     // Hidden Layer
@@ -254,6 +282,12 @@ struct {
     struct arg_int *id;
     struct arg_end *end;
 } get_pos_args;
+
+// Arguments for get_current command
+struct {
+    struct arg_int *id;
+    struct arg_end *end;
+} get_current_args;
 
 static int cmd_set_pos(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_pos_args);
@@ -376,6 +410,17 @@ void initialize_console() {
         .argtable = &get_pos_args
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_pos_cmd));
+
+    get_current_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID to query current from");
+    get_current_args.end = arg_end(1);
+    const esp_console_cmd_t get_current_cmd = {
+        .command = "get_current",
+        .help = "Get the current consumption of a servo (in mA)",
+        .hint = NULL,
+        .func = &cmd_get_current,
+        .argtable = &get_current_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_current_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
