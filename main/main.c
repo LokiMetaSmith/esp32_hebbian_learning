@@ -54,6 +54,35 @@ void read_sensor_state(float* sensor_data) {
     sensor_data[3] = 0.0f; 
     sensor_data[4] = 0.0f;
     sensor_data[5] = 0.0f;
+
+    // Read servo feedback: position and load for each servo
+    int current_sensor_index = NUM_ACCEL_GYRO_PARAMS; // Start after accel/gyro data
+
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        uint16_t servo_pos = 0;
+        uint16_t servo_load = 0;
+        esp_err_t pos_err, load_err;
+
+        // Read Present Position
+        pos_err = feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 20); // 20ms timeout
+        if (pos_err == ESP_OK) {
+            // Normalize position (0 to 4095) to 0.0 to 1.0 range
+            sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
+        } else {
+            ESP_LOGW(TAG, "Failed to read position for servo %d (err %d), using 0.0", servo_ids[i], pos_err);
+            sensor_data[current_sensor_index++] = 0.0f; // Neutral value on error (or use last known good)
+        }
+
+        // Read Present Load
+        load_err = feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 20); // 20ms timeout
+        if (load_err == ESP_OK) {
+            // Normalize load (0 to 1000) to 0.0 to 1.0 range
+            sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
+        } else {
+            ESP_LOGW(TAG, "Failed to read load for servo %d (err %d), using 0.0", servo_ids[i], load_err);
+            sensor_data[current_sensor_index++] = 0.0f; // Neutral value on error
+        }
+    }
 }
 
 void initialize_robot_arm() {
@@ -220,6 +249,12 @@ struct {
     struct arg_end *end;
 } set_pos_args;
 
+// Arguments for get_pos command
+struct {
+    struct arg_int *id;
+    struct arg_end *end;
+} get_pos_args;
+
 static int cmd_set_pos(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_pos_args);
     if (nerrors != 0) {
@@ -240,6 +275,34 @@ static int cmd_set_pos(int argc, char **argv) {
 
     ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
     feetech_write_word(id, REG_GOAL_POSITION, pos);
+    return 0;
+}
+
+static int cmd_get_pos(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&get_pos_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, get_pos_args.end, argv[0]);
+        return 1;
+    }
+    int id = get_pos_args.id->ival[0];
+
+    if (id < 0 || id > 253) { // Servo IDs are typically 0-253 (0xFE is broadcast)
+        printf("Error: Servo ID must be between 0 and 253.\n");
+        // Adjust based on actual usable ID range for this project if needed (e.g., 1-NUM_SERVOS)
+        // For now, allowing a broader range for general query.
+        return 1;
+    }
+
+    uint16_t current_position = 0;
+    esp_err_t ret = feetech_read_word((uint8_t)id, REG_PRESENT_POSITION, &current_position, 100); // 100ms timeout
+
+    if (ret == ESP_OK) {
+        printf("Servo %d current position: %u\n", id, current_position);
+    } else if (ret == ESP_ERR_TIMEOUT) {
+        printf("Error: Timeout reading position from servo %d.\n", id);
+    } else {
+        printf("Error: Failed to read position from servo %d (err: %s).\n", id, esp_err_to_name(ret));
+    }
     return 0;
 }
 
@@ -302,6 +365,17 @@ void initialize_console() {
         .argtable = &set_pos_args
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&set_pos_cmd));
+
+    get_pos_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID to query");
+    get_pos_args.end = arg_end(1);
+    const esp_console_cmd_t get_pos_cmd = {
+        .command = "get_pos",
+        .help = "Get the current position of a servo",
+        .hint = NULL,
+        .func = &cmd_get_pos,
+        .argtable = &get_pos_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_pos_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 

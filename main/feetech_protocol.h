@@ -62,5 +62,16 @@ void feetech_write_byte(uint8_t servo_id, uint8_t reg_address, uint8_t value);
  */
 void feetech_write_word(uint8_t servo_id, uint8_t reg_address, uint16_t value);
 
+/**
+ * @brief Reads a 16-bit word (two bytes) from a register on a specific servo.
+ *
+ * @param servo_id The ID of the target servo.
+ * @param reg_address The starting address of the register to read from.
+ * @param value Pointer to store the read 16-bit value (read as little-endian).
+ * @param timeout_ms Timeout in milliseconds for waiting for the response.
+ * @return ESP_OK on success, ESP_ERR_TIMEOUT on timeout, ESP_FAIL on other errors (checksum, servo error).
+ */
+esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *value, uint32_t timeout_ms);
+
 
 #endif // FEETECH_PROTOCOL_H

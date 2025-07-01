@@ -3,11 +3,16 @@
 
 #include <stdint.h>
 
+// --- Application Configuration ---
+#define NUM_SERVOS 6  // Number of servos in the robot arm
+
 // --- Neural Network Config ---
-#define INPUT_NEURONS 6
-#define HIDDEN_NEURONS 16
-#define OUTPUT_NEURONS 6
-#define PRED_NEURONS INPUT_NEURONS
+#define NUM_ACCEL_GYRO_PARAMS 6
+#define NUM_SERVO_FEEDBACK_PARAMS 2 // Position and Load for each servo
+#define INPUT_NEURONS (NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS))
+#define HIDDEN_NEURONS 16 // Can be tuned later
+#define OUTPUT_NEURONS NUM_SERVOS // Output is one action value per servo
+#define PRED_NEURONS INPUT_NEURONS // Prediction layer predicts the next full sensor state
 
 // --- Data Structures ---
 typedef struct {
