@@ -37,6 +37,11 @@ HiddenLayer* g_hl;
 OutputLayer* g_ol;
 PredictionLayer* g_pl;
 
+// --- Global variables for smart network saving ---
+static bool g_network_weights_updated = false;
+static float g_best_fitness_achieved = 0.0f;
+static const float MIN_FITNESS_IMPROVEMENT_TO_SAVE = 0.01f;
+
 // --- Application-Level Hardware Functions ---
 void read_sensor_state(float* sensor_data) {
     float ax, ay, az;
@@ -135,13 +140,18 @@ void update_weights_hebbian(const float* input, float correctness, HiddenLayer* 
             pl->weights[i][j] *= (1.0f - WEIGHT_DECAY);
         }
     }
+    g_network_weights_updated = true; // Mark that weights have been updated
 }
 
 // --- Console Command Handlers ---
 static int cmd_save_network(int argc, char **argv) {
-    ESP_LOGI(TAG, "Saving network to NVS...");
-    save_network_to_nvs(g_hl, g_ol, g_pl);
-    ESP_LOGI(TAG, "Network saved.");
+    ESP_LOGI(TAG, "Manual save: Saving network to NVS...");
+    if (save_network_to_nvs(g_hl, g_ol, g_pl) == ESP_OK) {
+        ESP_LOGI(TAG, "Network manually saved to NVS.");
+        g_network_weights_updated = false; // Reset updated flag after manual save
+    } else {
+        ESP_LOGE(TAG, "Failed to manually save network to NVS.");
+    }
     return 0;
 }
 
@@ -352,9 +362,26 @@ void app_main(void) {
         update_weights_hebbian(state_t, correctness, g_hl, g_ol, g_pl);
         led_indicator_set_color_from_fitness(correctness);
 
-        if (cycle > 0 && cycle % 1200 == 0) {
-            ESP_LOGI(TAG, "Auto-saving network to NVS...");
-            save_network_to_nvs(g_hl, g_ol, g_pl);
+        // New auto-save logic
+        if (g_network_weights_updated) {
+            if (correctness > g_best_fitness_achieved + MIN_FITNESS_IMPROVEMENT_TO_SAVE) {
+                ESP_LOGI(TAG, "Fitness improved significantly (from %.2f to %.2f). Auto-saving network...", g_best_fitness_achieved, correctness);
+                if (save_network_to_nvs(g_hl, g_ol, g_pl) == ESP_OK) {
+                    g_best_fitness_achieved = correctness;
+                    g_network_weights_updated = false; // Reset flag
+                    ESP_LOGI(TAG, "Network auto-saved. Best fitness: %.2f", g_best_fitness_achieved);
+                } else {
+                    ESP_LOGE(TAG, "Failed to auto-save network.");
+                    // g_network_weights_updated remains true, so it might try again later if fitness condition still met.
+                }
+            } else if (correctness > g_best_fitness_achieved) {
+                // Fitness improved, but not significantly enough to save. Update best_fitness anyway.
+                // This ensures g_best_fitness_achieved tracks the actual peak.
+                g_best_fitness_achieved = correctness;
+                // g_network_weights_updated remains true, indicating pending changes not yet saved.
+            }
+            // If correctness <= g_best_fitness_achieved, do nothing with g_best_fitness_achieved.
+            // g_network_weights_updated remains true if it was true.
         }
         cycle++;
     }
