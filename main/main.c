@@ -83,7 +83,25 @@ void read_sensor_state(float* sensor_data) {
             ESP_LOGW(TAG, "Failed to read load for servo %d (err %d), using 0.0", servo_ids[i], load_err);
             sensor_data[current_sensor_index++] = 0.0f; // Neutral value on error
         }
+
+        // Read Present Current
+        uint16_t servo_raw_current = 0;
+        esp_err_t current_err = feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 20); // 20ms timeout
+        if (current_err == ESP_OK) {
+            float current_A = (float)servo_raw_current * 0.0065f; // 1 unit = 6.5mA
+            total_current_A_cycle += current_A;
+            float normalized_current = current_A / MAX_EXPECTED_SERVO_CURRENT_A;
+            // Clamp normalized current to 0.0 - 1.0 range
+            if (normalized_current < 0.0f) normalized_current = 0.0f;
+            if (normalized_current > 1.0f) normalized_current = 1.0f;
+            sensor_data[current_sensor_index++] = normalized_current;
+        } else {
+            ESP_LOGW(TAG, "StateRead: Failed to read current for servo %d (err %s), using 0.0", servo_ids[i], esp_err_to_name(current_err));
+            sensor_data[current_sensor_index++] = 0.0f; // Neutral value on error
+        }
+        vTaskDelay(pdMS_TO_TICKS(10)); // Add 10ms delay after each servo's reads
     }
+    ESP_LOGI(TAG, "Total servo current this cycle: %.3f A", total_current_A_cycle);
 }
 
 void initialize_robot_arm() {
