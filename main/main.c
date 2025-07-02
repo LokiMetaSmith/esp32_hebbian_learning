@@ -587,6 +587,7 @@ void app_main(void) {
 
         float total_error = 0;
         for (int i = 0; i < PRED_NEURONS; i++) { total_error += fabsf(state_t_plus_1[i] - g_pl->pred_activations[i]); }
+        ESP_LOGI(TAG, "Prediction Error: total_error = %f, avg_error_per_neuron = %f", total_error, total_error / PRED_NEURONS);
         float correctness = fmaxf(0, 1.0f - (total_error / PRED_NEURONS));
         
         update_weights_hebbian(state_t, correctness, g_hl, g_ol, g_pl);
