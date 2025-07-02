@@ -28,5 +28,8 @@ typedef struct {
     float pred_bias[PRED_NEURONS];
 } PredictionLayer;
 
+// --- Function Declarations ---
+void perform_random_walk(float* action_output_vector);
+
 
 #endif // MAIN_H
