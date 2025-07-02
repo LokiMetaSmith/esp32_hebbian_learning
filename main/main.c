@@ -285,22 +285,134 @@ static int cmd_save_network(int argc, char **argv) {
 }
 
 static int cmd_export_network(int argc, char **argv) {
-    // ... (Unchanged)
+    printf("\n--- BEGIN NN EXPORT ---\n");
+    printf("{\"hidden_layer\":{\"bias\":[");
+    for(int i=0; i<HIDDEN_NEURONS; i++) {
+        printf("%f", g_hl->hidden_bias[i]);
+        if (i < HIDDEN_NEURONS - 1) printf(",");
+    }
+    printf("],\"weights\":[");
+    for(int i=0; i<HIDDEN_NEURONS; i++) {
+        printf("[");
+        for(int j=0; j<INPUT_NEURONS; j++) {
+            printf("%f", g_hl->weights[i][j]);
+            if (j < INPUT_NEURONS - 1) printf(",");
+        }
+        printf("]");
+        if (i < HIDDEN_NEURONS - 1) printf(",");
+    }
+    printf("]},");
+
+    printf("\"output_layer\":{\"bias\":[");
+    for(int i=0; i<OUTPUT_NEURONS; i++) {
+        printf("%f", g_ol->output_bias[i]);
+        if (i < OUTPUT_NEURONS - 1) printf(",");
+    }
+    printf("],\"weights\":[");
+    for(int i=0; i<OUTPUT_NEURONS; i++) {
+        printf("[");
+        for(int j=0; j<HIDDEN_NEURONS; j++) {
+            printf("%f", g_ol->weights[i][j]);
+            if (j < HIDDEN_NEURONS - 1) printf(",");
+        }
+        printf("]");
+        if (i < OUTPUT_NEURONS - 1) printf(",");
+    }
+    printf("]},");
+
+    printf("\"prediction_layer\":{\"bias\":[");
+    for(int i=0; i<PRED_NEURONS; i++) {
+        printf("%f", g_pl->pred_bias[i]);
+        if (i < PRED_NEURONS - 1) printf(",");
+    }
+    printf("],\"weights\":[");
+    for(int i=0; i<PRED_NEURONS; i++) {
+        printf("[");
+        for(int j=0; j<HIDDEN_NEURONS; j++) {
+            printf("%f", g_pl->weights[i][j]);
+            if (j < HIDDEN_NEURONS - 1) printf(",");
+        }
+        printf("]");
+        if (i < PRED_NEURONS - 1) printf(",");
+    }
+    printf("]}}\n");
+    printf("--- END NN EXPORT ---\n");
     return 0;
 }
 
 static int cmd_set_pos(int argc, char **argv) {
-    // ... (Unchanged)
+    int nerrors = arg_parse(argc, argv, (void **)&set_pos_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_pos_args.end, argv[0]);
+        return 1;
+    }
+    int id = set_pos_args.id->ival[0];
+    int pos = set_pos_args.pos->ival[0];
+
+    if (id < 1 || id > NUM_SERVOS) {
+        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
+        return 1;
+    }
+    if (pos < SERVO_POS_MIN || pos > SERVO_POS_MAX) {
+        printf("Error: Position must be between %d and %d\n", SERVO_POS_MIN, SERVO_POS_MAX);
+        return 1;
+    }
+
+    ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
+    feetech_write_word(id, REG_GOAL_POSITION, pos);
     return 0;
 }
 
 static int cmd_get_pos(int argc, char **argv) {
-    // ... (Unchanged)
+    int nerrors = arg_parse(argc, argv, (void **)&get_pos_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, get_pos_args.end, argv[0]);
+        return 1;
+    }
+    int id = get_pos_args.id->ival[0];
+
+    if (id < 0 || id > 253) {
+        printf("Error: Servo ID must be between 0 and 253.\n");
+        return 1;
+    }
+
+    uint16_t current_position = 0;
+    esp_err_t ret = feetech_read_word((uint8_t)id, REG_PRESENT_POSITION, &current_position, 100);
+
+    if (ret == ESP_OK) {
+        printf("Servo %d current position: %u\n", id, current_position);
+    } else if (ret == ESP_ERR_TIMEOUT) {
+        printf("Error: Timeout reading position from servo %d.\n", id);
+    } else {
+        printf("Error: Failed to read position from servo %d (err: %s).\n", id, esp_err_to_name(ret));
+    }
     return 0;
 }
 
 static int cmd_get_current(int argc, char **argv) {
-    // ... (Unchanged)
+    int nerrors = arg_parse(argc, argv, (void **)&get_current_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, get_current_args.end, argv[0]);
+        return 1;
+    }
+    int id = get_current_args.id->ival[0];
+
+    if (id < 0 || id > 253) {
+        printf("Error: Servo ID must be between 0 and 253.\n");
+        return 1;
+    }
+
+    uint16_t raw_current = 0;
+    esp_err_t ret = feetech_read_word((uint8_t)id, REG_PRESENT_CURRENT, &raw_current, 100);
+
+    if (ret == ESP_OK) {
+        float current_mA = (float)raw_current * 6.5f;
+        printf("Servo %d present current: %u (raw) -> %.2f mA (%.3f A)\n", id, raw_current, current_mA, current_mA / 1000.0f);
+    } else if (ret == ESP_ERR_TIMEOUT) {
+        printf("Error: Timeout reading current from servo %d.\n", id);
+    } else {
+        printf("Error: Failed to read current from servo %d (err: %s).\n", id, esp_err_to_name(ret));
+    }
     return 0;
 }
 
