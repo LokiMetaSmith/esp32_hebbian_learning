@@ -1,7 +1,9 @@
 #include "led_indicator.h"
 #include "led_strip.h"
 #include "esp_log.h"
-#include "driver/gpio.h" // Also add gpio.h here for GPIO_NUM_38
+#include "driver/gpio.h"
+#include "freertos/FreeRTOS.h" // For vTaskDelay
+#include "freertos/task.h"     // For vTaskDelay
 
 // Pin configuration from the ESP32-S3-DevKitC-1 documentation
 #define LED_PIN GPIO_NUM_38
@@ -35,7 +37,41 @@ void led_indicator_initialize() {
 
     // Clear the strip to turn it off initially
     led_strip_clear(g_led_strip);
-    ESP_LOGI(TAG, "LED indicator initialized");
+    led_strip_refresh(g_led_strip); // Apply the clear
+    ESP_LOGI(TAG, "LED indicator initialized and cleared.");
+
+    // Startup light show
+    ESP_LOGI(TAG, "Starting LED startup light show...");
+    vTaskDelay(pdMS_TO_TICKS(100)); // Short delay before show starts
+
+    // Red
+    led_strip_set_pixel(g_led_strip, 0, 50, 0, 0); // Dimmer red for safety/visibility
+    led_strip_refresh(g_led_strip);
+    ESP_LOGI(TAG, "LED: RED");
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // Green
+    led_strip_set_pixel(g_led_strip, 0, 0, 50, 0); // Dimmer green
+    led_strip_refresh(g_led_strip);
+    ESP_LOGI(TAG, "LED: GREEN");
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // Blue
+    led_strip_set_pixel(g_led_strip, 0, 0, 0, 50); // Dimmer blue
+    led_strip_refresh(g_led_strip);
+    ESP_LOGI(TAG, "LED: BLUE");
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // White
+    led_strip_set_pixel(g_led_strip, 0, 50, 50, 50); // Dimmer white
+    led_strip_refresh(g_led_strip);
+    ESP_LOGI(TAG, "LED: WHITE");
+    vTaskDelay(pdMS_TO_TICKS(500));
+
+    // Clear again
+    led_strip_clear(g_led_strip);
+    led_strip_refresh(g_led_strip);
+    ESP_LOGI(TAG, "LED startup light show complete. LED cleared.");
 }
 
 void led_indicator_set_color_from_fitness(float fitness) {
