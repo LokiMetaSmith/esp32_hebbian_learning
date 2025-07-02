@@ -62,6 +62,23 @@ static int cmd_get_current(int argc, char **argv);
 static int cmd_rw_start(int argc, char **argv);
 static int cmd_rw_stop(int argc, char **argv);
 
+// --- argtable3 structs for console commands ---
+static struct {
+    struct arg_int *id;
+    struct arg_end *end;
+} get_current_args;
+
+static struct {
+    struct arg_int *id;
+    struct arg_end *end;
+} get_pos_args;
+
+static struct {
+    struct arg_int *id;
+    struct arg_int *pos;
+    struct arg_end *end;
+} set_pos_args;
+
 
 // --- Application-Level Hardware Functions ---
 void read_sensor_state(float* sensor_data) {
@@ -71,6 +88,7 @@ void read_sensor_state(float* sensor_data) {
     } else {
         // On error, keep old values to prevent sudden jumps
     }
+    // The BMA400 does not have a gyroscope, so we feed 0 for those inputs.
     sensor_data[3] = 0.0f; 
     sensor_data[4] = 0.0f;
     sensor_data[5] = 0.0f;
@@ -123,12 +141,28 @@ float activation_tanh(float x) { return tanhf(x); }
 
 void initialize_network(HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl) {
     ESP_LOGI(TAG, "Initializing network with random weights.");
-    // Initialization logic is correct, no changes needed.
-    // ... (omitted for brevity)
+    for (int i = 0; i < HIDDEN_NEURONS; i++) {
+        hl->hidden_bias[i] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
+        for (int j = 0; j < INPUT_NEURONS; j++) {
+            hl->weights[i][j] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
+        }
+    }
+    for (int i = 0; i < OUTPUT_NEURONS; i++) {
+        ol->output_bias[i] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
+        for (int j = 0; j < HIDDEN_NEURONS; j++) {
+            ol->weights[i][j] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
+        }
+    }
+    for (int i = 0; i < PRED_NEURONS; i++) {
+        pl->pred_bias[i] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
+        for (int j = 0; j < HIDDEN_NEURONS; j++) {
+            pl->weights[i][j] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
+        }
+    }
 }
 
 void forward_pass(const float* input, HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl) {
-    // This function is now only used for prediction, not action generation
+    // This function now predicts the next state based on the current state AND the intended action
     for (int i = 0; i < HIDDEN_NEURONS; i++) {
         float sum = 0;
         dsps_dotprod_f32_ae32(hl->weights[i], input, &sum, INPUT_NEURONS);
@@ -136,8 +170,6 @@ void forward_pass(const float* input, HiddenLayer* hl, OutputLayer* ol, Predicti
         hl->hidden_activations[i] = activation_tanh(sum);
     }
     // The OutputLayer is no longer used to generate actions in the main loop
-    // but we can keep it for potential future use or remove it.
-    // For now, we will still calculate it but not use it.
     for (int i = 0; i < OUTPUT_NEURONS; i++) {
         float sum = 0;
         dsps_dotprod_f32_ae32(ol->weights[i], hl->hidden_activations, &sum, HIDDEN_NEURONS);
@@ -153,56 +185,72 @@ void forward_pass(const float* input, HiddenLayer* hl, OutputLayer* ol, Predicti
 }
 
 void update_weights_hebbian(const float* input, float correctness, HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl) {
-    // This function remains the core learning rule.
-    // ... (omitted for brevity)
+    for (int i = 0; i < HIDDEN_NEURONS; i++) {
+        for (int j = 0; j < INPUT_NEURONS; j++) {
+            float delta = LEARNING_RATE * correctness * hl->hidden_activations[i] * input[j];
+            hl->weights[i][j] += delta;
+            hl->weights[i][j] *= (1.0f - WEIGHT_DECAY);
+        }
+    }
+    for (int i = 0; i < OUTPUT_NEURONS; i++) {
+        for (int j = 0; j < HIDDEN_NEURONS; j++) {
+            float delta = LEARNING_RATE * correctness * ol->output_activations[i] * hl->hidden_activations[j];
+            ol->weights[i][j] += delta;
+            ol->weights[i][j] *= (1.0f - WEIGHT_DECAY);
+        }
+    }
+    for (int i = 0; i < PRED_NEURONS; i++) {
+        for (int j = 0; j < HIDDEN_NEURONS; j++) {
+            float delta = LEARNING_RATE * correctness * pl->pred_activations[i] * hl->hidden_activations[j];
+            pl->weights[i][j] += delta;
+            pl->weights[i][j] *= (1.0f - WEIGHT_DECAY);
+        }
+    }
+    g_network_weights_updated = true;
 }
 
 // --- TASKS & MAIN ---
 
 void learning_loop_task(void *pvParameters) {
     long cycle = 0;
-    float* state_t = malloc(sizeof(float) * INPUT_NEURONS); 
-    float* state_t_plus_1 = malloc(sizeof(float) * INPUT_NEURONS);
-    float* random_action = malloc(sizeof(float) * OUTPUT_NEURONS);
+    float* combined_input = malloc(sizeof(float) * INPUT_NEURONS);
+    float* state_t_plus_1 = malloc(sizeof(float) * PRED_NEURONS);
 
     while (1) {
         if (g_motor_babble_active) {
-            // 1. SENSE current state
-            read_sensor_state(state_t);
+            // 1. SENSE current state (first part of combined_input)
+            read_sensor_state(combined_input);
 
-            // 2. PREDICT the outcome of a random action
-            // Generate a random action vector for the babble
-            for(int i=0; i<OUTPUT_NEURONS; i++){
-                random_action[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Random value between -1 and 1
+            // 2. BABBLE: Generate a random action (second part of combined_input)
+            for(int i = 0; i < OUTPUT_NEURONS; i++){
+                combined_input[NUM_ACCEL_GYRO_PARAMS + NUM_SERVOS*NUM_SERVO_FEEDBACK_PARAMS + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
             }
-            // Temporarily set the network's output to this random action to predict its consequences
-            memcpy(g_ol->output_activations, random_action, sizeof(float) * OUTPUT_NEURONS);
-            forward_pass(state_t, g_hl, g_ol, g_pl); // Run prediction based on this state and intended action
 
-            // 3. ACT: Execute the random action
-            execute_on_robot_arm(random_action);
+            // 3. PREDICT outcome of the babble
+            forward_pass(combined_input, g_hl, g_ol, g_pl);
+
+            // 4. ACT: Execute the random action
+            execute_on_robot_arm(&combined_input[NUM_ACCEL_GYRO_PARAMS + NUM_SERVOS*NUM_SERVO_FEEDBACK_PARAMS]);
             
             vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
             
-            // 4. OBSERVE the new state
+            // 5. OBSERVE the new state
             read_sensor_state(state_t_plus_1);
 
-            // 5. LEARN from the prediction error
+            // 6. LEARN from the prediction error
             float total_error = 0;
             float state_change_magnitude = 0;
             for (int i = 0; i < PRED_NEURONS; i++) { 
                 total_error += fabsf(state_t_plus_1[i] - g_pl->pred_activations[i]); 
-                if (i < NUM_ACCEL_GYRO_PARAMS) { // Only consider accelerometer change for now
-                    state_change_magnitude += fabsf(state_t_plus_1[i] - state_t[i]);
+                if (i < NUM_ACCEL_GYRO_PARAMS) {
+                    state_change_magnitude += fabsf(state_t_plus_1[i] - combined_input[i]);
                 }
             }
             
             float prediction_accuracy = fmaxf(0, 1.0f - (total_error / PRED_NEURONS));
-            // New fitness metric: Reward accuracy AND movement.
-            // The '1 +' term ensures we are always rewarding accuracy, and the second term adds a bonus for predicting large movements correctly.
             float correctness = prediction_accuracy * (1.0f + state_change_magnitude);
             
-            update_weights_hebbian(state_t, correctness, g_hl, g_ol, g_pl);
+            update_weights_hebbian(combined_input, correctness, g_hl, g_ol, g_pl);
             led_indicator_set_color_from_fitness(correctness);
 
             if (g_network_weights_updated) {
@@ -218,46 +266,14 @@ void learning_loop_task(void *pvParameters) {
             }
             cycle++;
         } else {
-            // If motor babble is not active, just yield.
             vTaskDelay(pdMS_TO_TICKS(100));
         }
     }
-    free(state_t);
+    free(combined_input);
     free(state_t_plus_1);
-    free(random_action);
 }
 
 // --- CONSOLE COMMANDS & SETUP ---
-// ... (Command handlers and initialize_console() are unchanged) ...
-
-void app_main(void) {
-    ESP_LOGI(TAG, "Starting Hebbian Learning Robot System");
-    g_hl = malloc(sizeof(HiddenLayer)); g_ol = malloc(sizeof(OutputLayer)); g_pl = malloc(sizeof(PredictionLayer));
-    if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory!"); return; }
-
-    nvs_storage_initialize();
-    feetech_initialize();
-    bma400_initialize();
-    led_indicator_initialize();
-    
-    initialize_console();
-
-    if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
-        ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
-        initialize_network(g_hl, g_ol, g_pl);
-    } else {
-        ESP_LOGI(TAG, "Network loaded successfully from NVS.");
-    }
-    
-    initialize_robot_arm();
-    
-    xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
-    
-    // The console is now started in initialize_console, which blocks app_main.
-    // This is the intended design for this component.
-}
-
-// --- Console Command Implementations ---
 static int cmd_save_network(int argc, char **argv) {
     ESP_LOGI(TAG, "Manual save: Saving network to NVS...");
     if (save_network_to_nvs(g_hl, g_ol, g_pl) == ESP_OK) {
@@ -328,20 +344,20 @@ void initialize_console(void) {
     const esp_console_cmd_t export_cmd = { .command = "export", .help = "Export network in JSON format", .func = &cmd_export_network };
     ESP_ERROR_CHECK(esp_console_cmd_register(&export_cmd));
 
-    set_pos_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID");
-    set_pos_args.pos = arg_int1(NULL, NULL, "<pos>", "Position");
+    set_pos_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
+    set_pos_args.pos = arg_int1(NULL, NULL, "<pos>", "Position (0-4095)");
     set_pos_args.end = arg_end(2);
-    const esp_console_cmd_t set_pos_cmd = { .command = "set_pos", .help = "Set servo position", .func = &cmd_set_pos, .argtable = &set_pos_args };
+    const esp_console_cmd_t set_pos_cmd = { .command = "set_pos", .help = "Set a servo to a specific position", .func = &cmd_set_pos, .argtable = &set_pos_args };
     ESP_ERROR_CHECK(esp_console_cmd_register(&set_pos_cmd));
 
-    get_pos_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID");
+    get_pos_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID to query");
     get_pos_args.end = arg_end(1);
-    const esp_console_cmd_t get_pos_cmd = { .command = "get_pos", .help = "Get servo position", .func = &cmd_get_pos, .argtable = &get_pos_args };
+    const esp_console_cmd_t get_pos_cmd = { .command = "get_pos", .help = "Get the current position of a servo", .func = &cmd_get_pos, .argtable = &get_pos_args };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_pos_cmd));
 
-    get_current_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID");
+    get_current_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID to query current from");
     get_current_args.end = arg_end(1);
-    const esp_console_cmd_t get_current_cmd = { .command = "get_current", .help = "Get servo current", .func = &cmd_get_current, .argtable = &get_current_args };
+    const esp_console_cmd_t get_current_cmd = { .command = "get_current", .help = "Get the current consumption of a servo (in mA)", .func = &cmd_get_current, .argtable = &get_current_args };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_current_cmd));
     
     const esp_console_cmd_t rw_start_cmd = { .command = "rw_start", .help = "Start motor babble for learning", .func = &cmd_rw_start };
@@ -357,4 +373,28 @@ void initialize_console(void) {
     printf(" ===================================\n\n");
 
     ESP_ERROR_CHECK(esp_console_start_repl(repl));
+}
+
+void app_main(void) {
+    ESP_LOGI(TAG, "Starting Hebbian Learning Robot System");
+    g_hl = malloc(sizeof(HiddenLayer)); g_ol = malloc(sizeof(OutputLayer)); g_pl = malloc(sizeof(PredictionLayer));
+    if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory!"); return; }
+
+    nvs_storage_initialize();
+    feetech_initialize();
+    bma400_initialize();
+    led_indicator_initialize();
+    
+    initialize_console();
+
+    if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
+        ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
+        initialize_network(g_hl, g_ol, g_pl);
+    } else {
+        ESP_LOGI(TAG, "Network loaded successfully from NVS.");
+    }
+    
+    initialize_robot_arm();
+    
+    xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
 }
