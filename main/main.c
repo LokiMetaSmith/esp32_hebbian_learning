@@ -77,28 +77,28 @@ void read_sensor_state(float* sensor_data) {
         esp_err_t pos_err, load_err;
 
         // Read Present Position
-        pos_err = feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 20); // 20ms timeout
+        pos_err = feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50); // Increased timeout to 50ms
         if (pos_err == ESP_OK) {
             // Normalize position (0 to 4095) to 0.0 to 1.0 range
             sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
         } else {
-            ESP_LOGW(TAG, "Failed to read position for servo %d (err %d), using 0.0", servo_ids[i], pos_err);
-            sensor_data[current_sensor_index++] = 0.0f; // Neutral value on error (or use last known good)
+            ESP_LOGW(TAG, "StateRead: Failed to read pos for servo %d (err %s), using 0.0", servo_ids[i], esp_err_to_name(pos_err));
+            sensor_data[current_sensor_index++] = 0.0f;
         }
 
         // Read Present Load
-        load_err = feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 20); // 20ms timeout
+        load_err = feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50); // Increased timeout to 50ms
         if (load_err == ESP_OK) {
             // Normalize load (0 to 1000) to 0.0 to 1.0 range
             sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
         } else {
-            ESP_LOGW(TAG, "Failed to read load for servo %d (err %d), using 0.0", servo_ids[i], load_err);
-            sensor_data[current_sensor_index++] = 0.0f; // Neutral value on error
+            ESP_LOGW(TAG, "StateRead: Failed to read load for servo %d (err %s), using 0.0", servo_ids[i], esp_err_to_name(load_err));
+            sensor_data[current_sensor_index++] = 0.0f;
         }
 
         // Read Present Current
         uint16_t servo_raw_current = 0;
-        esp_err_t current_err = feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 20); // 20ms timeout
+        esp_err_t current_err = feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50); // Increased timeout to 50ms
         if (current_err == ESP_OK) {
             float current_A = (float)servo_raw_current * 0.0065f; // 1 unit = 6.5mA
             total_current_A_cycle += current_A;
@@ -111,7 +111,14 @@ void read_sensor_state(float* sensor_data) {
             ESP_LOGW(TAG, "StateRead: Failed to read current for servo %d (err %s), using 0.0", servo_ids[i], esp_err_to_name(current_err));
             sensor_data[current_sensor_index++] = 0.0f; // Neutral value on error
         }
-        vTaskDelay(pdMS_TO_TICKS(10)); // Add 10ms delay after each servo's reads
+
+        if (i == 0) { // Log normalized inputs for the first servo
+            ESP_LOGD(TAG, "Servo 0 Normed Inputs: Pos=%.3f, Load=%.3f, Curr=%.3f",
+                     sensor_data[NUM_ACCEL_GYRO_PARAMS],      // Servo 0 Normalized Position
+                     sensor_data[NUM_ACCEL_GYRO_PARAMS + 1],  // Servo 0 Normalized Load
+                     sensor_data[NUM_ACCEL_GYRO_PARAMS + 2]); // Servo 0 Normalized Current
+        }
+        vTaskDelay(pdMS_TO_TICKS(20)); // Increased delay after each servo's reads to 20ms
     }
 
     if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
@@ -130,6 +137,9 @@ void initialize_robot_arm() {
 
 void execute_on_robot_arm(const float* action_vector) {
     for (int i = 0; i < NUM_SERVOS; i++) {
+        if (i == 0) { // Log raw NN output for the first servo
+            ESP_LOGD(TAG, "Servo 0 Raw NN Output: %.3f", action_vector[i]);
+        }
         float scaled_action = (action_vector[i] + 1.0f) / 2.0f;
         uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_action * (SERVO_POS_MAX - SERVO_POS_MIN));
         feetech_write_word(servo_ids[i], REG_GOAL_POSITION, goal_position);
@@ -573,7 +583,7 @@ void app_main(void) {
                         // Optionally, could try to command to a random absolute position if read fails,
                         // but that might be more chaotic. Skipping is safer for now.
                     }
-                    vTaskDelay(pdMS_TO_TICKS(10)); // Delay after each servo perturbation attempt in random walk
+                    vTaskDelay(pdMS_TO_TICKS(20)); // Increased delay after each servo perturbation attempt in random walk
                 }
                 g_last_random_walk_time_us = esp_timer_get_time();
             }
