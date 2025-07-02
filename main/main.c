@@ -87,6 +87,12 @@ static struct {
     struct arg_end *end;
 } set_pos_args;
 
+static struct {
+    struct arg_int *delta_pos;
+    struct arg_int *interval_ms;
+    struct arg_end *end;
+} rw_set_params_args;
+
 
 // --- Application-Level Hardware Functions ---
 void read_sensor_state(float* sensor_data) {
@@ -220,6 +226,46 @@ void update_weights_hebbian(const float* input, float correctness, HiddenLayer* 
     g_network_weights_updated = true;
 }
 
+// --- RANDOM WALK FUNCTION ---
+// action_output_vector should point to the segment of combined_input where actions are stored.
+void perform_random_walk(float* action_output_vector) {
+    int64_t current_time_us = esp_timer_get_time();
+    if ((current_time_us - g_last_random_walk_time_us) < (g_random_walk_interval_ms * 1000LL)) {
+        // If not time yet, we should probably fill action_output_vector with "no action" or current action
+        // For now, let's assume it's okay if it's not updated every cycle if no walk happens.
+        // Alternatively, the calling function should handle not calling forward_pass if no action was decided.
+        return; 
+    }
+
+    // ESP_LOGI(TAG, "Performing random walk step...");
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        uint16_t current_pos = 0;
+        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 5); // 5ms timeout
+
+        int delta_pos = (rand() % (2 * g_random_walk_max_delta_pos + 1)) - g_random_walk_max_delta_pos;
+        int new_pos_signed = (int)current_pos + delta_pos;
+
+        uint16_t new_goal_pos;
+        if (new_pos_signed < SERVO_POS_MIN) {
+            new_goal_pos = SERVO_POS_MIN;
+        } else if (new_pos_signed > SERVO_POS_MAX) {
+            new_goal_pos = SERVO_POS_MAX;
+        } else {
+            new_goal_pos = (uint16_t)new_pos_signed;
+        }
+
+        feetech_write_word(servo_ids[i], REG_GOAL_POSITION, new_goal_pos);
+        
+        // Store the normalized action in the output vector
+        if (action_output_vector) {
+            action_output_vector[i] = ((float)new_goal_pos - SERVO_POS_MIN) / (SERVO_POS_MAX - SERVO_POS_MIN) * 2.0f - 1.0f;
+        }
+        // vTaskDelay(pdMS_TO_TICKS(5)); 
+    }
+    g_last_random_walk_time_us = current_time_us;
+}
+
+
 // --- TASKS & MAIN ---
 
 void learning_loop_task(void *pvParameters) {
@@ -234,10 +280,12 @@ void learning_loop_task(void *pvParameters) {
 
             // 2. BABBLE: Generate a random action and place it in the combined_input vector
             int action_vector_start_index = NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS);
-            for(int i = 0; i < OUTPUT_NEURONS; i++){
-                combined_input[action_vector_start_index + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+            perform_random_walk(combined_input + action_vector_start_index);
+            if(g_best_fitness_achieved > 0.8f)
+                for(int i = 0; i < OUTPUT_NEURONS; i++){
+                    combined_input[action_vector_start_index + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+                }
             }
-
             // 3. PREDICT outcome of the babble
             forward_pass(combined_input, g_hl, g_ol, g_pl);
 
@@ -451,6 +499,34 @@ static int cmd_rw_stop(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_rw_set_params(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&rw_set_params_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, rw_set_params_args.end, argv[0]);
+        return 1;
+    }
+    int delta_pos = rw_set_params_args.delta_pos->ival[0];
+    int interval_ms = rw_set_params_args.interval_ms->ival[0];
+
+    if (delta_pos <= 0 || delta_pos > 1000) { // Max reasonable delta
+        printf("Error: Max delta position must be between 1 and 1000.\n");
+        return 1;
+    }
+    if (interval_ms <= 0 || interval_ms > 60000) { // Max reasonable interval
+        printf("Error: Interval MS must be between 1 and 60000.\n");
+        return 1;
+    }
+
+    g_random_walk_max_delta_pos = (uint16_t)delta_pos;
+    g_random_walk_interval_ms = interval_ms;
+    g_last_random_walk_time_us = 0; // Reset timer to apply new interval immediately if needed
+
+    ESP_LOGI(TAG, "Random walk params updated: max_delta_pos=%u, interval_ms=%d",
+             g_random_walk_max_delta_pos, g_random_walk_interval_ms);
+    printf("Random walk parameters updated.\n");
+    return 0;
+}
+
 void initialize_console(void) {
     fflush(stdout);
     fsync(fileno(stdout));
@@ -492,6 +568,17 @@ void initialize_console(void) {
 
     const esp_console_cmd_t rw_stop_cmd = { .command = "rw_stop", .help = "Stop motor babble", .func = &cmd_rw_stop };
     ESP_ERROR_CHECK(esp_console_cmd_register(&rw_stop_cmd));
+
+    rw_set_params_args.delta_pos = arg_int1(NULL, NULL, "<delta_pos>", "Max position change per step (1-1000)");
+    rw_set_params_args.interval_ms = arg_int1(NULL, NULL, "<interval_ms>", "Interval between steps in ms (1-60000)");
+    rw_set_params_args.end = arg_end(2);
+    const esp_console_cmd_t rw_set_params_cmd = {
+        .command = "rw_set_params",
+        .help = "Set random walk parameters: <max_delta_pos> <interval_ms>",
+        .func = &cmd_rw_set_params,
+        .argtable = &rw_set_params_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&rw_set_params_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
