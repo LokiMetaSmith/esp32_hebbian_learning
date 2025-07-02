@@ -14,6 +14,7 @@ static const char *TAG = "LED_INDICATOR";
 static led_strip_handle_t g_led_strip;
 
 void led_indicator_initialize() {
+    esp_log_level_set(TAG, ESP_LOG_INFO); // Ensure INFO logs for this TAG are visible for startup show
     ESP_LOGI(TAG, "Initializing RGB LED indicator");
 
     // LED strip general configuration - CORRECTED FOR NEW API

@@ -220,6 +220,7 @@ static int cmd_save_network(int argc, char **argv) {
 }
 
 static int cmd_random_walk_start(int argc, char **argv) {
+    ESP_LOGE(TAG, "!!! CMD_RANDOM_WALK_START EXECUTED UNEXPECTEDLY? !!!");
     if (!g_random_walk_active) {
         g_random_walk_active = true;
         g_last_random_walk_time_us = esp_timer_get_time(); // Initialize timer for first step
@@ -536,6 +537,9 @@ void app_main(void) {
     
     initialize_robot_arm();
     
+    g_random_walk_active = false; // Defensive reset before main loop
+    ESP_LOGI(TAG, "Initial g_random_walk_active state before main loop: %s", g_random_walk_active ? "true" : "false");
+
     long cycle = 0;
     // Removed: uint8_t* uart_buf = (uint8_t*) malloc(UART_BUF_SIZE);
     // Removed: printf("\n\nHEBBIAN ROBOT CONTROL CONSOLE\nType 'help' and press Enter.\n> ");
