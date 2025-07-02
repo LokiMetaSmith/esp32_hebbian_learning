@@ -527,9 +527,14 @@ void app_main(void) {
     // initialize_console() will reconfigure UART0 for console use.
     initialize_console();
 
-    if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
-        ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
+    if (true /* FORCED RE-INIT || load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK */) { // Temporarily force re-initialization
+        ESP_LOGW(TAG, "Forcing network re-initialization (temporary measure for NaN debug).");
         initialize_network(g_hl, g_ol, g_pl);
+        // Optionally, save this fresh network immediately to overwrite potential NaN in NVS
+        // save_network_to_nvs(g_hl, g_ol, g_pl);
+    } else {
+        // This block will not be reached with the current forced re-init
+        ESP_LOGI(TAG, "Network loaded successfully from NVS.");
     }
     
     initialize_robot_arm();
