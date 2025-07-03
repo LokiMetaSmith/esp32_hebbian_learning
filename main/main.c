@@ -299,29 +299,45 @@ void learning_loop_task(void *pvParameters) {
     float* combined_input = malloc(sizeof(float) * INPUT_NEURONS);
     float* state_t_plus_1 = malloc(sizeof(float) * PRED_NEURONS);
 
+    if (!combined_input || !state_t_plus_1) {
+        ESP_LOGE(TAG, "Failed to allocate memory for learning_loop_task buffers!");
+        // If memory allocation fails, there's no point in continuing this task.
+        // Consider how to handle this error more gracefully if needed (e.g. global error flag).
+        vTaskDelete(NULL);
+        return; // Important to return after vTaskDelete if it's not the last line.
+    }
+
     while (1) {
         if (g_learning_loop_active) {
             // 1. SENSE current state (first part of combined_input)
             read_sensor_state(combined_input);
 
-            // 2. BABBLE: Generate a random action and place it in the combined_input vector
+            // 2. BABBLE: Generate an action and place it in the combined_input vector
             int action_vector_start_index = NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS);
-            perform_random_walk(combined_input + action_vector_start_index);
-            if(g_best_fitness_achieved > 0.8f)
-            {
-                for(int i = 0; i < OUTPUT_NEURONS; i++){
+
+            // Decide on action generation strategy
+            if (g_best_fitness_achieved > 0.8f) {
+                // Generate fully random actions if fitness is high
+                for (int i = 0; i < OUTPUT_NEURONS; i++) {
                     combined_input[action_vector_start_index + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
                 }
+                // Execute these new random actions
+                execute_on_robot_arm(&combined_input[action_vector_start_index]);
+            } else {
+                // Otherwise, use perform_random_walk for exploration
+                // perform_random_walk now executes the moves directly.
+                // We call it to get the action into combined_input for the network prediction,
+                // and it also moves the robot.
+                perform_random_walk(combined_input + action_vector_start_index);
             }
-            // 3. PREDICT outcome of the babble
-            forward_pass(combined_input, g_hl, g_ol, g_pl);
 
-            // 4. ACT: Execute the random action
-            execute_on_robot_arm(&combined_input[action_vector_start_index]);
+            // 3. PREDICT outcome based on the state and the chosen action
+            forward_pass(combined_input, g_hl, g_ol, g_pl);
             
+            // 4. DELAY to allow action to complete and state to change
             vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
             
-            // 5. OBSERVE the new state
+            // 5. OBSERVE the new state resulting from the action
             read_sensor_state(state_t_plus_1);
 
             // 6. LEARN from the prediction error
@@ -329,12 +345,13 @@ void learning_loop_task(void *pvParameters) {
             float state_change_magnitude = 0;
             for (int i = 0; i < PRED_NEURONS; i++) { 
                 total_error += fabsf(state_t_plus_1[i] - g_pl->pred_activations[i]); 
-                if (i < NUM_ACCEL_GYRO_PARAMS) {
-                    state_change_magnitude += fabsf(state_t_plus_1[i] - combined_input[i]);
+                if (i < NUM_ACCEL_GYRO_PARAMS) { // Consider only accelerometer/gyro changes for magnitude
+                    state_change_magnitude += fabsf(state_t_plus_1[i] - combined_input[i]); // Compare new sensor state to old sensor state part of combined_input
                 }
             }
             
             float prediction_accuracy = fmaxf(0, 1.0f - (total_error / PRED_NEURONS));
+            // Correctness boosted by how much the state changed, encouraging more dynamic actions
             float correctness = prediction_accuracy * (1.0f + state_change_magnitude);
             
             update_weights_hebbian(combined_input, correctness, g_hl, g_ol, g_pl);
@@ -343,24 +360,29 @@ void learning_loop_task(void *pvParameters) {
             if (g_network_weights_updated) {
                 if (correctness > g_best_fitness_achieved + MIN_FITNESS_IMPROVEMENT_TO_SAVE) {
                     if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    ESP_LOGI(TAG, "Fitness improved (%.2f -> %.2f). Auto-saving...", g_best_fitness_achieved, correctness);
+                        ESP_LOGI(TAG, "Fitness improved (%.2f -> %.2f). Auto-saving...", g_best_fitness_achieved, correctness);
                         xSemaphoreGive(g_console_mutex);
                     }
                     if (save_network_to_nvs(g_hl, g_ol, g_pl) == ESP_OK) {
                         g_best_fitness_achieved = correctness;
-                        g_network_weights_updated = false;
+                        g_network_weights_updated = false; // Reset flag after successful save
                     }
                 } else if (correctness > g_best_fitness_achieved) {
+                    // Update best_fitness even if not saved, to track actual best
                     g_best_fitness_achieved = correctness;
                 }
             }
             cycle++;
         } else {
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(100)); // Sleep when not active
         }
-    }
+    } // End while(1)
+
+    // This part of the code will not be reached due to the infinite while(1) loop,
+    // but it's good practice for resource cleanup if the loop could terminate.
     free(combined_input);
     free(state_t_plus_1);
+    vTaskDelete(NULL); // Task should delete itself if it ever exits the loop.
 }
 
 // --- CONSOLE COMMANDS & SETUP ---
@@ -531,7 +553,7 @@ static int cmd_rw_start(int argc, char **argv) {
         g_random_walk_active = true;
         // Check if task needs to be created
         if (g_random_walk_task_handle == NULL) {
-            xTaskCreate(random_walk_task_fn, "random_walk_task", 2048, NULL, 5, &g_random_walk_task_handle);
+            xTaskCreate(random_walk_task_fn, "random_walk_task", 3072, NULL, 5, &g_random_walk_task_handle); // Increased stack size
             ESP_LOGI(TAG, "Random Walk task created and started.");
         } else {
             // Task handle exists, check its state. If it was stopped and self-deleted, the handle might be stale.
