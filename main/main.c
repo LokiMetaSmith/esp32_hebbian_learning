@@ -282,6 +282,7 @@ void learning_loop_task(void *pvParameters) {
             int action_vector_start_index = NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS);
             perform_random_walk(combined_input + action_vector_start_index);
             if(g_best_fitness_achieved > 0.8f)
+            {
                 for(int i = 0; i < OUTPUT_NEURONS; i++){
                     combined_input[action_vector_start_index + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
                 }
