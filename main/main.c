@@ -167,9 +167,24 @@ void initialize_robot_arm() {
 }
 
 void execute_on_robot_arm(const float* action_vector) {
+    // action_vector contains NUM_SERVOS positions then NUM_SERVOS accelerations
     for (int i = 0; i < NUM_SERVOS; i++) {
-        float scaled_action = (action_vector[i] + 1.0f) / 2.0f;
-        uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_action * (SERVO_POS_MAX - SERVO_POS_MIN));
+        // Decode and set acceleration
+        float norm_accel = action_vector[NUM_SERVOS + i]; // Normalized acceleration from NN [-1, 1]
+        uint8_t hw_accel = (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 100.0f); // Scale to 0-100
+        if (hw_accel > 254) hw_accel = 254; // Clamp to max hardware value if necessary (though 100 is current max)
+
+        feetech_write_byte(servo_ids[i], REG_ACCELERATION, hw_accel);
+        // It's often good to have a small delay after sending a command before the next,
+        // but critical for acceleration to be set before position.
+        // The main loop delay should handle overall timing. A tiny delay here might be okay if needed.
+        // vTaskDelay(pdMS_TO_TICKS(1)); // Optional: very short delay
+
+        // Decode and set position
+        float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
+        float scaled_pos = (norm_pos + 1.0f) / 2.0f; // Scale to 0-1
+        uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
+
         feetech_write_word(servo_ids[i], REG_GOAL_POSITION, goal_position);
     }
 }
@@ -179,18 +194,21 @@ float activation_tanh(float x) { return tanhf(x); }
 
 void initialize_network(HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl) {
     ESP_LOGI(TAG, "Initializing network with random weights.");
+    // Hidden Layer
     for (int i = 0; i < HIDDEN_NEURONS; i++) {
         hl->hidden_bias[i] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
-        for (int j = 0; j < INPUT_NEURONS; j++) {
+        for (int j = 0; j < INPUT_NEURONS; j++) { // INPUT_NEURONS has changed
             hl->weights[i][j] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
         }
     }
-    for (int i = 0; i < OUTPUT_NEURONS; i++) {
+    // Output Layer (now includes accelerations)
+    for (int i = 0; i < OUTPUT_NEURONS; i++) { // OUTPUT_NEURONS has changed (NUM_SERVOS * 2)
         ol->output_bias[i] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
         for (int j = 0; j < HIDDEN_NEURONS; j++) {
             ol->weights[i][j] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
         }
     }
+    // Prediction Layer (structure unchanged, but its inputs from hidden layer are effectively wider)
     for (int i = 0; i < PRED_NEURONS; i++) {
         pl->pred_bias[i] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
         for (int j = 0; j < HIDDEN_NEURONS; j++) {
@@ -328,26 +346,39 @@ void learning_loop_task(void *pvParameters) {
             // 1. SENSE current state (first part of combined_input)
             read_sensor_state(combined_input);
 
-            // 2. BABBLE: Generate an action and place it in the combined_input vector
+            // 2. BABBLE: Generate an action (positions and accelerations) and place it in the combined_input vector
             int action_vector_start_index = NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS);
+            float* action_part = combined_input + action_vector_start_index; // Pointer to the start of action data
 
-            // Decide on action generation strategy
             if (g_best_fitness_achieved > 0.8f) {
-                // Generate fully random actions if fitness is high
-                for (int i = 0; i < OUTPUT_NEURONS; i++) {
-                    combined_input[action_vector_start_index + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+                // Generate fully random actions (positions and accelerations) if fitness is high
+                for (int i = 0; i < NUM_ACTION_PARAMS; i++) { // NUM_ACTION_PARAMS is NUM_SERVOS * 2
+                    action_part[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
                 }
-                // Execute these new random actions
-                execute_on_robot_arm(&combined_input[action_vector_start_index]);
+                // Execute these new random actions (positions and accelerations)
+                execute_on_robot_arm(action_part);
             } else {
-                // Otherwise, use perform_random_walk for exploration
-                // perform_random_walk now executes the moves directly.
-                // We call it to get the action into combined_input for the network prediction,
-                // and it also moves the robot.
-                perform_random_walk(combined_input + action_vector_start_index);
+                // Otherwise, use perform_random_walk for position exploration,
+                // and generate random accelerations separately.
+
+                // perform_random_walk fills the first NUM_SERVOS elements of action_part with positions
+                // and also executes the moves with current g_servo_acceleration (which is fine for this phase).
+                perform_random_walk(action_part);
+
+                // Now, generate and store random accelerations for the learning input
+                for (int i = 0; i < NUM_SERVOS; i++) {
+                    action_part[NUM_SERVOS + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized accel
+                }
+                // Note: The accelerations set by execute_on_robot_arm in the next step will override
+                // the g_servo_acceleration used by perform_random_walk for this learning cycle's execution.
+                // This is a bit indirect but means the NN learns based on accelerations it *would* set.
+                // For more direct control, perform_random_walk would need not to execute.
+                // For now, we will execute the full action_part (including newly random accelerations)
+                // via execute_on_robot_arm below, which will set the new accelerations.
+                execute_on_robot_arm(action_part);
             }
 
-            // 3. PREDICT outcome based on the state and the chosen action
+            // 3. PREDICT outcome based on the state and the chosen action (now including accelerations)
             forward_pass(combined_input, g_hl, g_ol, g_pl);
             
             // 4. DELAY to allow action to complete and state to change
@@ -437,6 +468,7 @@ static int cmd_export_network(int argc, char **argv) {
         if (i < OUTPUT_NEURONS - 1) printf(",");
     }
     printf("],\"weights\":[");
+    // OutputLayer weights: OUTPUT_NEURONS is now NUM_SERVOS * 2
     for(int i=0; i<OUTPUT_NEURONS; i++) {
         printf("[");
         for(int j=0; j<HIDDEN_NEURONS; j++) {
@@ -566,16 +598,21 @@ static int cmd_babble_stop(int argc, char **argv) {
 
 static int cmd_rw_start(int argc, char **argv) {
     if (!g_random_walk_active) {
+        ESP_LOGI(TAG, "Starting standalone random walk. Setting acceleration to global value: %u", g_servo_acceleration);
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
+            vTaskDelay(pdMS_TO_TICKS(5)); // Small delay
+        }
+
         g_random_walk_active = true;
-        // Check if task needs to be created
         if (g_random_walk_task_handle == NULL) {
-            xTaskCreate(random_walk_task_fn, "random_walk_task", 3072, NULL, 5, &g_random_walk_task_handle); // Increased stack size
-            ESP_LOGI(TAG, "Random Walk task created and started.");
+            xTaskCreate(random_walk_task_fn, "random_walk_task", 3072, NULL, 5, &g_random_walk_task_handle);
+            ESP_LOGI(TAG, "Random Walk task created and resumed/started.");
         } else {
-            // Task handle exists, check its state. If it was stopped and self-deleted, the handle might be stale.
-            // For simplicity, we assume if handle is not NULL, it's either running or will resume due to flag.
-            // A more robust check might involve eTaskGetState if needed, but vTaskDelete(NULL) in task clears handle effectively.
-            ESP_LOGI(TAG, "Random Walk (standalone) started.");
+            // If task handle exists, it might be suspended or will pick up the flag.
+            // For simplicity, we don't explicitly resume if it were suspended.
+            // The task loop itself checks g_random_walk_active.
+            ESP_LOGI(TAG, "Random Walk (standalone) resumed/started.");
         }
     } else {
         ESP_LOGI(TAG, "Random Walk (standalone) is already active.");
