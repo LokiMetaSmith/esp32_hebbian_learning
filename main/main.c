@@ -59,12 +59,17 @@ static int64_t g_last_random_walk_time_us = 0;
 static float g_last_logged_total_current_A = -1.0f;
 static const float CURRENT_LOGGING_THRESHOLD_A = 0.005f;
 
+// --- Servo Configuration ---
+#define DEFAULT_SERVO_ACCELERATION 50 // Default acceleration value (0-254, 0=instant)
+static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
+
 // --- Mutex for protecting console output ---
 SemaphoreHandle_t g_console_mutex;
 
 // --- Forward Declarations ---
 void learning_loop_task(void *pvParameters);
 void initialize_console(void);
+static int cmd_set_accel(int argc, char **argv); // New command
 static int cmd_save_network(int argc, char **argv);
 static int cmd_export_network(int argc, char **argv);
 static int cmd_set_pos(int argc, char **argv);
@@ -97,6 +102,11 @@ static struct {
     struct arg_int *interval_ms;
     struct arg_end *end;
 } rw_set_params_args;
+
+static struct {
+    struct arg_int *value;
+    struct arg_end *end;
+} set_accel_args;
 
 
 // --- Application-Level Hardware Functions ---
@@ -143,11 +153,17 @@ void read_sensor_state(float* sensor_data) {
 }
 
 void initialize_robot_arm() {
-    ESP_LOGI(TAG, "Enabling torque on all servos.");
+    ESP_LOGI(TAG, "Initializing servos: Setting acceleration and enabling torque.");
     for (int i = 0; i < NUM_SERVOS; i++) {
+        // Set acceleration
+        feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
+        vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after setting acceleration
+
+        // Enable torque
         feetech_write_byte(servo_ids[i], REG_TORQUE_ENABLE, 1);
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after enabling torque
     }
+    ESP_LOGI(TAG, "Servos initialized with acceleration %d and torque enabled.", g_servo_acceleration);
 }
 
 void execute_on_robot_arm(const float* action_vector) {
@@ -580,6 +596,30 @@ static int cmd_rw_stop(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_set_accel(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_accel_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_accel_args.end, argv[0]);
+        return 1;
+    }
+    int accel_val = set_accel_args.value->ival[0];
+
+    if (accel_val < 0 || accel_val > 254) { // Typical range for Feetech servo acceleration
+        printf("Error: Acceleration value must be between 0 and 254.\n");
+        return 1;
+    }
+
+    g_servo_acceleration = (uint8_t)accel_val;
+    ESP_LOGI(TAG, "Setting servo acceleration to %u for all servos.", g_servo_acceleration);
+
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
+        vTaskDelay(pdMS_TO_TICKS(5)); // Small delay between commands
+    }
+    printf("Servo acceleration set to %u for all servos.\n", g_servo_acceleration);
+    return 0;
+}
+
 
 static int cmd_rw_set_params(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&rw_set_params_args);
@@ -658,6 +698,16 @@ void initialize_console(void) {
 
     const esp_console_cmd_t rw_stop_cmd = { .command = "rw_stop", .help = "Stop standalone random walk", .func = &cmd_rw_stop };
     ESP_ERROR_CHECK(esp_console_cmd_register(&rw_stop_cmd));
+
+    set_accel_args.value = arg_int1(NULL, NULL, "<value>", "Acceleration (0-254, 0=instant, 254=slowest)");
+    set_accel_args.end = arg_end(1);
+    const esp_console_cmd_t set_accel_cmd = {
+        .command = "set_accel",
+        .help = "Set acceleration for all servos",
+        .func = &cmd_set_accel,
+        .argtable = &set_accel_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_accel_cmd));
 
     rw_set_params_args.delta_pos = arg_int1(NULL, NULL, "<delta_pos>", "Max position change per step (1-1000)");
     rw_set_params_args.interval_ms = arg_int1(NULL, NULL, "<interval_ms>", "Interval between steps in ms (1-60000)");
