@@ -45,8 +45,11 @@ static bool g_network_weights_updated = false;
 static float g_best_fitness_achieved = 0.0f;
 static const float MIN_FITNESS_IMPROVEMENT_TO_SAVE = 0.01f;
 
-// --- Global flag for motor babble ---
-static bool g_motor_babble_active = false;
+// --- Global flag for learning loop ---
+static bool g_learning_loop_active = false;
+// --- Global flag for standalone random walk ---
+static bool g_random_walk_active = false;
+static TaskHandle_t g_random_walk_task_handle = NULL;
 // CORRECTED: Slower and smaller random walk parameters
 static uint16_t g_random_walk_max_delta_pos = 15; // Smaller position change per step
 static int g_random_walk_interval_ms = 500;      // Longer interval between steps
@@ -67,6 +70,8 @@ static int cmd_export_network(int argc, char **argv);
 static int cmd_set_pos(int argc, char **argv);
 static int cmd_get_pos(int argc, char **argv);
 static int cmd_get_current(int argc, char **argv);
+static int cmd_babble_start(int argc, char **argv);
+static int cmd_babble_stop(int argc, char **argv);
 static int cmd_rw_start(int argc, char **argv);
 static int cmd_rw_stop(int argc, char **argv);
 
@@ -112,14 +117,14 @@ void read_sensor_state(float* sensor_data) {
 
     for (int i = 0; i < NUM_SERVOS; i++) {
         uint16_t servo_pos = 0, servo_load = 0;
-        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 20);
-        feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 20);
+        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50); // Increased timeout
+        feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);    // Increased timeout
         
         sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
         sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
         
         uint16_t servo_raw_current = 0;
-        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 20) == ESP_OK) {
+        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) { // Increased timeout
             float current_A = (float)servo_raw_current * 0.0065f;
             total_current_A_cycle += current_A;
             sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
@@ -228,19 +233,27 @@ void update_weights_hebbian(const float* input, float correctness, HiddenLayer* 
 
 // --- RANDOM WALK FUNCTION ---
 // action_output_vector should point to the segment of combined_input where actions are stored.
+// If action_output_vector is NULL, actions are not stored (used for standalone random walk).
 void perform_random_walk(float* action_output_vector) {
     int64_t current_time_us = esp_timer_get_time();
     if ((current_time_us - g_last_random_walk_time_us) < (g_random_walk_interval_ms * 1000LL)) {
-        // If not time yet, we should probably fill action_output_vector with "no action" or current action
-        // For now, let's assume it's okay if it's not updated every cycle if no walk happens.
-        // Alternatively, the calling function should handle not calling forward_pass if no action was decided.
-        return; 
+        // If not time yet, do nothing.
+        // If action_output_vector is provided (learning loop), it means no new action is generated this cycle.
+        // The learning loop should ideally handle this by not calling forward_pass or by using a "neutral" action.
+        // For standalone random walk, this just means no servo movement in this check.
+        return;
     }
 
     // ESP_LOGI(TAG, "Performing random walk step...");
     for (int i = 0; i < NUM_SERVOS; i++) {
         uint16_t current_pos = 0;
-        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 5); // 5ms timeout
+        // Use a slightly longer timeout for reading position in random walk as it's less critical for timing than the learning loop
+        esp_err_t read_status = feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 75);
+
+        if (read_status != ESP_OK) {
+            ESP_LOGW(TAG, "RW: Failed to read pos for servo %d, skipping its move.", servo_ids[i]);
+            continue; // Skip this servo if read fails
+        }
 
         int delta_pos = (rand() % (2 * g_random_walk_max_delta_pos + 1)) - g_random_walk_max_delta_pos;
         int new_pos_signed = (int)current_pos + delta_pos;
@@ -256,10 +269,10 @@ void perform_random_walk(float* action_output_vector) {
 
         feetech_write_word(servo_ids[i], REG_GOAL_POSITION, new_goal_pos);
         
-        // Store the normalized action in the output vector
         if (action_output_vector) {
             action_output_vector[i] = ((float)new_goal_pos - SERVO_POS_MIN) / (SERVO_POS_MAX - SERVO_POS_MIN) * 2.0f - 1.0f;
         }
+        // A small delay per servo might be good for bus traffic, but g_random_walk_interval_ms controls overall frequency
         // vTaskDelay(pdMS_TO_TICKS(5)); 
     }
     g_last_random_walk_time_us = current_time_us;
@@ -268,13 +281,26 @@ void perform_random_walk(float* action_output_vector) {
 
 // --- TASKS & MAIN ---
 
+// Task for standalone random walk
+void random_walk_task_fn(void *pvParameters) {
+    ESP_LOGI(TAG, "Random Walk Task started.");
+    while (g_random_walk_active) {
+        perform_random_walk(NULL); // Pass NULL as no action vector needed for learning
+        // The delay is implicitly handled by g_last_random_walk_time_us inside perform_random_walk
+        // However, we need a yield here to prevent busy-waiting if interval is short or no move happens
+        vTaskDelay(pdMS_TO_TICKS(10)); // Yield for other tasks
+    }
+    ESP_LOGI(TAG, "Random Walk Task stopped.");
+    vTaskDelete(NULL); // Delete self
+}
+
 void learning_loop_task(void *pvParameters) {
     long cycle = 0;
     float* combined_input = malloc(sizeof(float) * INPUT_NEURONS);
     float* state_t_plus_1 = malloc(sizeof(float) * PRED_NEURONS);
 
     while (1) {
-        if (g_motor_babble_active) {
+        if (g_learning_loop_active) {
             // 1. SENSE current state (first part of combined_input)
             read_sensor_state(combined_input);
 
@@ -480,25 +506,58 @@ static int cmd_get_current(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_rw_start(int argc, char **argv) {
-    if (!g_motor_babble_active) {
-        g_motor_babble_active = true;
-        ESP_LOGI(TAG, "Motor babble started.");
+static int cmd_babble_start(int argc, char **argv) {
+    if (!g_learning_loop_active) {
+        g_learning_loop_active = true;
+        ESP_LOGI(TAG, "Learning loop (motor babble) started.");
     } else {
-        ESP_LOGI(TAG, "Motor babble is already active.");
+        ESP_LOGI(TAG, "Learning loop (motor babble) is already active.");
+    }
+    return 0;
+}
+
+static int cmd_babble_stop(int argc, char **argv) {
+    if (g_learning_loop_active) {
+        g_learning_loop_active = false;
+        ESP_LOGI(TAG, "Learning loop (motor babble) stopped.");
+    } else {
+        ESP_LOGI(TAG, "Learning loop (motor babble) is not active.");
+    }
+    return 0;
+}
+
+static int cmd_rw_start(int argc, char **argv) {
+    if (!g_random_walk_active) {
+        g_random_walk_active = true;
+        // Check if task needs to be created
+        if (g_random_walk_task_handle == NULL) {
+            xTaskCreate(random_walk_task_fn, "random_walk_task", 2048, NULL, 5, &g_random_walk_task_handle);
+            ESP_LOGI(TAG, "Random Walk task created and started.");
+        } else {
+            // Task handle exists, check its state. If it was stopped and self-deleted, the handle might be stale.
+            // For simplicity, we assume if handle is not NULL, it's either running or will resume due to flag.
+            // A more robust check might involve eTaskGetState if needed, but vTaskDelete(NULL) in task clears handle effectively.
+            ESP_LOGI(TAG, "Random Walk (standalone) started.");
+        }
+    } else {
+        ESP_LOGI(TAG, "Random Walk (standalone) is already active.");
     }
     return 0;
 }
 
 static int cmd_rw_stop(int argc, char **argv) {
-    if (g_motor_babble_active) {
-        g_motor_babble_active = false;
-        ESP_LOGI(TAG, "Motor babble stopped.");
+    if (g_random_walk_active) {
+        g_random_walk_active = false;
+        // The task will see the flag and delete itself.
+        // We set the handle to NULL so it can be recreated.
+        g_random_walk_task_handle = NULL;
+        ESP_LOGI(TAG, "Random Walk (standalone) stopped.");
     } else {
-        ESP_LOGI(TAG, "Motor babble is not active.");
+        ESP_LOGI(TAG, "Random Walk (standalone) is not active.");
     }
     return 0;
 }
+
 
 static int cmd_rw_set_params(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&rw_set_params_args);
@@ -564,10 +623,18 @@ void initialize_console(void) {
     const esp_console_cmd_t get_current_cmd = { .command = "get_current", .help = "Get the current consumption of a servo (in mA)", .func = &cmd_get_current, .argtable = &get_current_args };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_current_cmd));
     
-    const esp_console_cmd_t rw_start_cmd = { .command = "rw_start", .help = "Start motor babble for learning", .func = &cmd_rw_start };
+    // Renamed commands for babble (learning loop)
+    const esp_console_cmd_t babble_start_cmd = { .command = "babble_start", .help = "Start learning loop (motor babble)", .func = &cmd_babble_start };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&babble_start_cmd));
+
+    const esp_console_cmd_t babble_stop_cmd = { .command = "babble_stop", .help = "Stop learning loop (motor babble)", .func = &cmd_babble_stop };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&babble_stop_cmd));
+
+    // New commands for standalone random walk
+    const esp_console_cmd_t rw_start_cmd = { .command = "rw_start", .help = "Start standalone random walk", .func = &cmd_rw_start };
     ESP_ERROR_CHECK(esp_console_cmd_register(&rw_start_cmd));
 
-    const esp_console_cmd_t rw_stop_cmd = { .command = "rw_stop", .help = "Stop motor babble", .func = &cmd_rw_stop };
+    const esp_console_cmd_t rw_stop_cmd = { .command = "rw_stop", .help = "Stop standalone random walk", .func = &cmd_rw_stop };
     ESP_ERROR_CHECK(esp_console_cmd_register(&rw_stop_cmd));
 
     rw_set_params_args.delta_pos = arg_int1(NULL, NULL, "<delta_pos>", "Max position change per step (1-1000)");
