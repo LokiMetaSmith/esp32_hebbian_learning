@@ -112,14 +112,14 @@ void read_sensor_state(float* sensor_data) {
 
     for (int i = 0; i < NUM_SERVOS; i++) {
         uint16_t servo_pos = 0, servo_load = 0;
-        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 20);
-        feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 20);
+        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50);
+        feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);
         
         sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
         sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
         
         uint16_t servo_raw_current = 0;
-        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 20) == ESP_OK) {
+        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) {
             float current_A = (float)servo_raw_current * 0.0065f;
             total_current_A_cycle += current_A;
             sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
@@ -240,7 +240,7 @@ void perform_random_walk(float* action_output_vector) {
     // ESP_LOGI(TAG, "Performing random walk step...");
     for (int i = 0; i < NUM_SERVOS; i++) {
         uint16_t current_pos = 0;
-        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 5); // 5ms timeout
+        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 50); // 5ms timeout
 
         int delta_pos = (rand() % (2 * g_random_walk_max_delta_pos + 1)) - g_random_walk_max_delta_pos;
         int new_pos_signed = (int)current_pos + delta_pos;
@@ -280,12 +280,16 @@ void learning_loop_task(void *pvParameters) {
 
             // 2. BABBLE: Generate a random action and place it in the combined_input vector
             int action_vector_start_index = NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS);
-            perform_random_walk(combined_input + action_vector_start_index);
-            if(g_best_fitness_achieved > 0.8f)
+            
+            if(g_best_fitness_achieved > 5.8f)
             {
                 for(int i = 0; i < OUTPUT_NEURONS; i++){
                     combined_input[action_vector_start_index + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
                 }
+            }
+            else
+            {
+                perform_random_walk(&combined_input[action_vector_start_index]);
             }
             // 3. PREDICT outcome of the babble
             forward_pass(combined_input, g_hl, g_ol, g_pl);
