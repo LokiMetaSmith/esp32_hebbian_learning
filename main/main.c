@@ -594,8 +594,8 @@ static int cmd_rw_set_params(int argc, char **argv) {
         printf("Error: Max delta position must be between 1 and 1000.\n");
         return 1;
     }
-    if (interval_ms <= 0 || interval_ms > 60000) { // Max reasonable interval
-        printf("Error: Interval MS must be between 1 and 60000.\n");
+    if (interval_ms < 20 || interval_ms > 60000) { // Enforce minimum interval of 20ms
+        printf("Error: Interval MS must be between 20 and 60000.\n");
         return 1;
     }
 
