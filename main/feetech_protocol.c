@@ -5,7 +5,7 @@
 
 // Extern declaration for the mutex defined in main.c
 extern SemaphoreHandle_t g_servo_uart_mutex;
-static const TickType_t xMutexTicksToWait = pdMS_TO_TICKS(20); // 20ms timeout for mutex acquisition
+static const TickType_t xMutexTicksToWait = pdMS_TO_TICKS(150); // Increased timeout for mutex acquisition
 
 static const char *TAG = "FEETECH_PROTOCOL";
 
