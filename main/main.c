@@ -79,6 +79,7 @@ static int cmd_babble_start(int argc, char **argv);
 static int cmd_babble_stop(int argc, char **argv);
 static int cmd_rw_start(int argc, char **argv);
 static int cmd_rw_stop(int argc, char **argv);
+static int cmd_get_accel_raw(int argc, char **argv); // New command
 
 // --- argtable3 structs for console commands ---
 static struct {
@@ -443,6 +444,17 @@ static int cmd_save_network(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_get_accel_raw(int argc, char **argv) {
+    float ax, ay, az;
+    if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
+        printf("Raw Accelerometer: X=%.4f, Y=%.4f, Z=%.4f (G)\n", ax, ay, az);
+    } else {
+        printf("Error: Failed to read accelerometer data.\n");
+        return 1;
+    }
+    return 0;
+}
+
 static int cmd_export_network(int argc, char **argv) {
     printf("\n--- BEGIN NN EXPORT ---\n");
     printf("{\"hidden_layer\":{\"bias\":[");
@@ -756,6 +768,14 @@ void initialize_console(void) {
         .argtable = &rw_set_params_args
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&rw_set_params_cmd));
+
+    const esp_console_cmd_t get_accel_raw_cmd = {
+        .command = "get_accel_raw",
+        .help = "Get raw accelerometer values (X, Y, Z in G)",
+        .func = &cmd_get_accel_raw,
+        .argtable = NULL
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_accel_raw_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
