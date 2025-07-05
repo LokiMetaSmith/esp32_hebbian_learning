@@ -65,6 +65,7 @@ static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
 
 // --- Mutex for protecting console output ---
 SemaphoreHandle_t g_console_mutex;
+SemaphoreHandle_t g_servo_uart_mutex; // Mutex for servo UART operations
 
 // --- Forward Declarations ---
 void learning_loop_task(void *pvParameters);
@@ -127,14 +128,14 @@ void read_sensor_state(float* sensor_data) {
 
     for (int i = 0; i < NUM_SERVOS; i++) {
         uint16_t servo_pos = 0, servo_load = 0;
-        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50); // Increased timeout
-        feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);    // Increased timeout
+        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 100); // Standardized timeout
+        feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 100);    // Standardized timeout
         
         sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
         sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
         
         uint16_t servo_raw_current = 0;
-        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) { // Increased timeout
+        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 100) == ESP_OK) { // Standardized timeout
             float current_A = (float)servo_raw_current * 0.0065f;
             total_current_A_cycle += current_A;
             sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
@@ -281,8 +282,8 @@ void perform_random_walk(float* action_output_vector) {
     // ESP_LOGI(TAG, "Performing random walk step...");
     for (int i = 0; i < NUM_SERVOS; i++) {
         uint16_t current_pos = 0;
-        // Use a slightly longer timeout for reading position in random walk as it's less critical for timing than the learning loop
-        esp_err_t read_status = feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 75);
+        // Standardized timeout
+        esp_err_t read_status = feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 100);
 
         if (read_status != ESP_OK) {
             ESP_LOGW(TAG, "RW: Failed to read pos for servo %d, skipping its move.", servo_ids[i]);
@@ -772,6 +773,12 @@ void app_main(void) {
     if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory!"); return; }
 
     g_console_mutex = xSemaphoreCreateMutex();
+    g_servo_uart_mutex = xSemaphoreCreateMutex();
+    if (g_servo_uart_mutex == NULL) {
+        ESP_LOGE(TAG, "Failed to create servo UART mutex!");
+        // Handle error: perhaps by not starting tasks that use servos or halting.
+        return;
+    }
 
     nvs_storage_initialize();
     feetech_initialize();
