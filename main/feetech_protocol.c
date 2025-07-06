@@ -5,7 +5,7 @@
 
 // Extern declaration for the mutex defined in main.c
 extern SemaphoreHandle_t g_servo_uart_mutex;
-static const TickType_t xMutexTicksToWait = pdMS_TO_TICKS(150); // Increased timeout for mutex acquisition
+static const TickType_t xMutexTicksToWait = pdMS_TO_TICKS(150); // Timeout for mutex acquisition
 
 static const char *TAG = "FEETECH_PROTOCOL";
 
@@ -63,60 +63,78 @@ void feetech_write_byte(uint8_t servo_id, uint8_t reg_address, uint8_t value) {
         xSemaphoreGive(g_servo_uart_mutex);
     } else {
         ESP_LOGE(TAG, "feetech_write_byte: Could not obtain mutex for servo %d", servo_id);
+        // Note: This function is void, so no error code to return, but operation failed.
     }
 }
 
 void feetech_write_word(uint8_t servo_id, uint8_t reg_address, uint16_t value) {
     if (xSemaphoreTake(g_servo_uart_mutex, xMutexTicksToWait) == pdTRUE) {
         if (reg_address == REG_GOAL_POSITION) {
-            uint8_t packet[13];
-            uint8_t params[7];
-            uint8_t length = 7 + 2;
+        // Special handling for REG_GOAL_POSITION to write 6 data bytes:
+        // Position (2 bytes), Time (2 bytes = 0), Speed (2 bytes = 0)
+        uint8_t packet[13]; // 2(header) + 1(id) + 1(length) + 1(inst) + 7(params: reg,posL,posH,timeL,timeH,speedL,speedH) + 1(checksum)
+        uint8_t params[7];  // Parameters for checksum: reg_addr, pos_L, pos_H, time_L, time_H, speed_L, speed_H
+        uint8_t length = 7 + 2; // 7 actual data parameters + Inst byte + Checksum byte
 
-            params[0] = reg_address;
-            params[1] = value & 0xFF;
-            params[2] = (value >> 8) & 0xFF;
-            params[3] = 0x00;
-            params[4] = 0x00;
-            params[5] = 0x00;
-            params[6] = 0x00;
+        params[0] = reg_address;
+        // Position (Little-Endian)
+        params[1] = value & 0xFF;         // pos_L
+        params[2] = (value >> 8) & 0xFF;  // pos_H
+        // Time to reach goal (Little-Endian, set to 0 for now)
+        params[3] = 0x00;                 // time_L
+        params[4] = 0x00;                 // time_H
+        // Speed (Little-Endian, set to 0 for now, often means max speed)
+        params[5] = 0x00;                 // speed_L
+        params[6] = 0x00;                 // speed_H
 
-            packet[0] = 0xFF; packet[1] = 0xFF; packet[2] = servo_id;
-            packet[3] = length; packet[4] = SCS_INST_WRITE;
-            for (int i = 0; i < 7; i++) { packet[5 + i] = params[i]; }
-            packet[12] = calculate_checksum(servo_id, length, SCS_INST_WRITE, params);
-            uart_write_bytes(SERVO_UART_PORT, (const char*)packet, sizeof(packet));
-        } else {
-            uint8_t packet[9];
-            uint8_t params[3];
-            uint8_t length = 3 + 2;
-
-            params[0] = reg_address;
-            params[1] = value & 0xFF;
-            params[2] = (value >> 8) & 0xFF;
-
-            packet[0] = 0xFF; packet[1] = 0xFF; packet[2] = servo_id;
-            packet[3] = length; packet[4] = SCS_INST_WRITE;
-            packet[5] = params[0]; packet[6] = params[1]; packet[7] = params[2];
-            packet[8] = calculate_checksum(servo_id, length, SCS_INST_WRITE, params);
-            uart_write_bytes(SERVO_UART_PORT, (const char*)packet, sizeof(packet));
+        packet[0] = 0xFF;
+        packet[1] = 0xFF;
+        packet[2] = servo_id;
+        packet[3] = length; // Should be 9
+        packet[4] = SCS_INST_WRITE;
+        for (int i = 0; i < 7; i++) {
+            packet[5 + i] = params[i];
         }
-        xSemaphoreGive(g_servo_uart_mutex);
+        packet[12] = calculate_checksum(servo_id, length, SCS_INST_WRITE, params);
+
+        uart_write_bytes(SERVO_UART_PORT, (const char*)packet, sizeof(packet));
+
     } else {
-        ESP_LOGE(TAG, "feetech_write_word: Could not obtain mutex for servo %d", servo_id);
+        // Standard 2-byte write for other word-sized registers
+        uint8_t packet[9]; // 2(header) + 1(id) + 1(length) + 1(inst) + 3(params: reg,valL,valH) + 1(checksum)
+        uint8_t params[3]; // Parameters for checksum: reg_addr, val_L, val_H
+        uint8_t length = 3 + 2; // 3 actual data parameters + Inst byte + Checksum byte
+
+        params[0] = reg_address;
+        // Split the 16-bit value into two 8-bit bytes (Little-Endian)
+        params[1] = value & 0xFF; // Low byte
+        params[2] = (value >> 8) & 0xFF; // High byte
+
+        packet[0] = 0xFF;
+        packet[1] = 0xFF;
+        packet[2] = servo_id;
+        packet[3] = length; // Should be 5
+        packet[4] = SCS_INST_WRITE;
+        packet[5] = params[0];
+        packet[6] = params[1];
+        packet[7] = params[2];
+        packet[8] = calculate_checksum(servo_id, length, SCS_INST_WRITE, params);
+
+        uart_write_bytes(SERVO_UART_PORT, (const char*)packet, sizeof(packet));
     }
+    xSemaphoreGive(g_servo_uart_mutex); // ADDED MISSING GIVE
 }
 
 esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *value, uint32_t timeout_ms) {
-    esp_err_t ret = ESP_FAIL; // Default return status
+    esp_err_t ret = ESP_FAIL; // Default return status, to be updated on success
 
     if (value == NULL) {
-        return ESP_ERR_INVALID_ARG;
+        return ESP_ERR_INVALID_ARG; // Mutex not taken yet
     }
 
     if (xSemaphoreTake(g_servo_uart_mutex, xMutexTicksToWait) != pdTRUE) {
         ESP_LOGE(TAG, "ReadCmd: Could not obtain mutex for servo %d", servo_id);
-        return ESP_ERR_TIMEOUT; // Or a more specific mutex error
+        return ESP_ERR_TIMEOUT; // Mutex acquisition failed
     }
 
     // Command Packet:
@@ -146,7 +164,8 @@ esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *val
     int bytes_written = uart_write_bytes(SERVO_UART_PORT, (const char*)command_packet, sizeof(command_packet));
     if (bytes_written != sizeof(command_packet)) {
         ESP_LOGE(TAG, "ReadCmd: Failed to write command for servo %d. Wrote %d bytes.", servo_id, bytes_written);
-        return ESP_FAIL;
+        // ret is already ESP_FAIL
+        goto release_mutex_label;
     }
 
     // Expected Response Packet Structure (when reading 2 bytes of data):
@@ -160,26 +179,30 @@ esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *val
 
     if (bytes_read < expected_response_size) {
         ESP_LOGE(TAG, "ReadCmd: Timeout or insufficient data from servo %d. Expected %d, got %d bytes.", servo_id, expected_response_size, bytes_read);
-        return ESP_ERR_TIMEOUT;
+        ret = ESP_ERR_TIMEOUT;
+        goto release_mutex_label;
     }
 
     // Validate response packet header
     if (response_packet[0] != 0xFF || response_packet[1] != 0xFF) {
         ESP_LOGE(TAG, "ReadCmd: Invalid response header from servo %d. Got: %02X %02X", servo_id, response_packet[0], response_packet[1]);
-        return ESP_FAIL;
+        // ret is already ESP_FAIL
+        goto release_mutex_label;
     }
 
     // Validate ID
     if (response_packet[2] != servo_id) {
         ESP_LOGE(TAG, "ReadCmd: Response ID mismatch for servo %d. Expected %d, got %d", servo_id, servo_id, response_packet[2]);
-        return ESP_FAIL;
+        // ret is already ESP_FAIL
+        goto release_mutex_label;
     }
 
     // Validate reported length in packet. For reading 2 data bytes, Length field should be 4.
     uint8_t resp_packet_field_length = response_packet[3];
     if (resp_packet_field_length != 4) {
         ESP_LOGE(TAG, "ReadCmd: Invalid response packet Length field from servo %d. Expected 4, got %d", servo_id, resp_packet_field_length);
-        return ESP_FAIL;
+        // ret is already ESP_FAIL
+        goto release_mutex_label;
     }
 
     // Calculate checksum for the received response.
@@ -201,7 +224,8 @@ esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *val
     if (received_checksum != calculated_response_checksum) {
         ESP_LOGE(TAG, "ReadCmd: Response checksum error for servo %d. Expected %02X, got %02X", servo_id, calculated_response_checksum, received_checksum);
         ESP_LOG_BUFFER_HEXDUMP(TAG, response_packet, bytes_read, ESP_LOG_ERROR);
-        return ESP_FAIL;
+        // ret is already ESP_FAIL
+        goto release_mutex_label;
     }
 
     // Check servo error byte in the response
@@ -209,15 +233,16 @@ esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *val
     if (servo_error_code != 0) {
         ESP_LOGE(TAG, "ReadCmd: Servo %d reported error code: 0x%02X", servo_id, servo_error_code);
         // TODO: Map servo_error_code to specific ESP error codes if a list of FeeTech errors is available.
-        return ESP_FAIL; // Generic failure for now
+        // ret is already ESP_FAIL
+        goto release_mutex_label;
     }
 
     // Extract data (Little-Endian for STS servos)
     *value = (uint16_t)response_packet[5] | ((uint16_t)response_packet[6] << 8);
 
     ret = ESP_OK; // Set success
-    // Fall-through to release mutex and return
-//ErrorExit: // Label for goto cleanup, not strictly needed with current structure but good for more complex error paths
+
+release_mutex_label:
     xSemaphoreGive(g_servo_uart_mutex);
     return ret;
 }

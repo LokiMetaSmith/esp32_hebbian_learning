@@ -65,7 +65,7 @@ static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
 
 // --- Mutex for protecting console output ---
 SemaphoreHandle_t g_console_mutex;
-SemaphoreHandle_t g_servo_uart_mutex; // Mutex for servo UART operations
+static SemaphoreHandle_t g_servo_uart_mutex; // Mutex for servo UART operations
 
 // --- Forward Declarations ---
 void learning_loop_task(void *pvParameters);
@@ -795,9 +795,8 @@ void app_main(void) {
     g_console_mutex = xSemaphoreCreateMutex();
     g_servo_uart_mutex = xSemaphoreCreateMutex();
     if (g_servo_uart_mutex == NULL) {
-        ESP_LOGE(TAG, "Failed to create servo UART mutex!");
-        // Handle error: perhaps by not starting tasks that use servos or halting.
-        return;
+        ESP_LOGE(TAG, "Failed to create servo UART mutex! Halting.");
+        while(1); // Halt
     }
 
     nvs_storage_initialize();
