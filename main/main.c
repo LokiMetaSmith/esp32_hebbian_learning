@@ -177,9 +177,9 @@ void initialize_robot_arm() {
         // This command structure might differ slightly for some Feetech servos if it's a word.
         // Assuming REG_MAX_TORQUE (0x23) is the correct address for the value and it's a WORD.
         // The register 0x22 is often Torque Limit Enable / Torque ON/OFF.
-        // For STS servos, Torque Limit is often REG_TORQUE_LIMIT (0x22 and 0x23 for L/H bytes).
-        // Let's assume REG_TORQUE_LIMIT (word access at 0x22) is what we want.
-        feetech_write_word(servo_ids[i], REG_TORQUE_LIMIT_L, SERVO_MAX_TORQUE_VALUE); // REG_TORQUE_LIMIT_L is 0x22
+        // For STS servos, Torque Limit is REG_TORQUE_LIMIT (address 48 for L byte, 49 for H byte).
+        // feetech_write_word handles writing L/H bytes correctly when given the starting address (48).
+        feetech_write_word(servo_ids[i], REG_TORQUE_LIMIT, SERVO_MAX_TORQUE_VALUE);
         vTaskDelay(pdMS_TO_TICKS(10));
 
         // Set default acceleration
