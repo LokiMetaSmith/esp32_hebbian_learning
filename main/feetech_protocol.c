@@ -214,3 +214,4 @@ esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *val
 
     return ESP_OK;
 }
+}
