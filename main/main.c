@@ -131,25 +131,27 @@ void read_sensor_state(float* sensor_data) {
     for (int i = 0; i < NUM_SERVOS; i++) {
         uint16_t servo_pos_raw = 0;
         // Default normalized position to mid-range (0.5f) if read fails
-        if (feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos_raw, 75) == ESP_OK) { // Timeout increased to 75ms
+        if (feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos_raw, 75) == ESP_OK) { // Timeout used by feetech_read_word
             sensor_data[current_sensor_index++] = (float)servo_pos_raw / SERVO_POS_MAX;
         } else {
             ESP_LOGW(TAG, "read_sensor_state: Failed to read position for servo %d. Using default.", servo_ids[i]);
             sensor_data[current_sensor_index++] = 0.5f; // Default normalized position (mid-range)
         }
+        vTaskDelay(pdMS_TO_TICKS(10)); // Delay after reading position
 
         uint16_t servo_load_raw = 0;
         // Default normalized load to 0.0f if read fails
-        if (feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load_raw, 75) == ESP_OK) { // Timeout increased to 75ms
+        if (feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load_raw, 75) == ESP_OK) { // Timeout used by feetech_read_word
             sensor_data[current_sensor_index++] = (float)servo_load_raw / 1000.0f; // Max load is 1000 for normalization
         } else {
             ESP_LOGW(TAG, "read_sensor_state: Failed to read load for servo %d. Using default.", servo_ids[i]);
             sensor_data[current_sensor_index++] = 0.0f; // Default normalized load
         }
+        vTaskDelay(pdMS_TO_TICKS(10)); // Delay after reading load
         
         uint16_t servo_raw_current = 0;
         // Default normalized current to 0.0f if read fails
-        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 75) == ESP_OK) { // Timeout increased to 75ms
+        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 75) == ESP_OK) { // Timeout used by feetech_read_word
             float current_A = (float)servo_raw_current * 0.0065f; // 6.5mA per unit for STS servos
             total_current_A_cycle += current_A;
             sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A); // Normalize and cap
@@ -157,6 +159,7 @@ void read_sensor_state(float* sensor_data) {
             ESP_LOGW(TAG, "read_sensor_state: Failed to read current for servo %d. Using default.", servo_ids[i]);
             sensor_data[current_sensor_index++] = 0.0f; // Default normalized current
         }
+        vTaskDelay(pdMS_TO_TICKS(10)); // Delay after reading current
     }
 
     // Log total current only if it has changed significantly or if it's the first log attempt.
@@ -205,7 +208,7 @@ void execute_on_robot_arm(const float* action_vector) {
         if (hw_accel > 254) hw_accel = 254; // Clamp, though 250 is the max from calculation
 
         feetech_write_byte(servo_ids[i], REG_ACCELERATION, hw_accel);
-        // vTaskDelay(pdMS_TO_TICKS(1)); // Optional: very short delay if needed between commands
+        vTaskDelay(pdMS_TO_TICKS(10)); // Delay after setting acceleration
 
         // Decode and set position
         float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
@@ -213,6 +216,7 @@ void execute_on_robot_arm(const float* action_vector) {
         uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
 
         feetech_write_word(servo_ids[i], REG_GOAL_POSITION, goal_position);
+        vTaskDelay(pdMS_TO_TICKS(10)); // Delay after setting position
     }
 }
 
