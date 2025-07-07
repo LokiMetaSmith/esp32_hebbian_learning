@@ -60,7 +60,8 @@ static float g_last_logged_total_current_A = -1.0f;
 static const float CURRENT_LOGGING_THRESHOLD_A = 0.005f;
 
 // --- Servo Configuration ---
-#define DEFAULT_SERVO_ACCELERATION 50 // Default acceleration value (0-254, 0=instant)
+#define DEFAULT_SERVO_ACCELERATION 250 // Default acceleration value (0-254, 0=instant, 250=very slow)
+#define SERVO_MAX_TORQUE_VALUE 100   // Max torque value (0-1000, e.g., 100 is 10% of max)
 static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
 
 // --- Mutex for protecting console output ---
@@ -170,32 +171,41 @@ void read_sensor_state(float* sensor_data) {
 }
 
 void initialize_robot_arm() {
-    ESP_LOGI(TAG, "Initializing servos: Setting acceleration and enabling torque.");
+    ESP_LOGI(TAG, "Initializing servos: Setting Max Torque, default acceleration, and enabling torque.");
     for (int i = 0; i < NUM_SERVOS; i++) {
-        // Set acceleration
-        feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
-        vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after setting acceleration
+        // Set Max Torque (Register 0x23, value 0-1000)
+        // This command structure might differ slightly for some Feetech servos if it's a word.
+        // Assuming REG_MAX_TORQUE (0x23) is the correct address for the value and it's a WORD.
+        // The register 0x22 is often Torque Limit Enable / Torque ON/OFF.
+        // For STS servos, Torque Limit is often REG_TORQUE_LIMIT (0x22 and 0x23 for L/H bytes).
+        // Let's assume REG_TORQUE_LIMIT (word access at 0x22) is what we want.
+        feetech_write_word(servo_ids[i], REG_TORQUE_LIMIT_L, SERVO_MAX_TORQUE_VALUE); // REG_TORQUE_LIMIT_L is 0x22
+        vTaskDelay(pdMS_TO_TICKS(10));
 
-        // Enable torque
+        // Set default acceleration
+        feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
+        vTaskDelay(pdMS_TO_TICKS(10));
+
+        // Enable torque (Register 0x28 for STS series)
         feetech_write_byte(servo_ids[i], REG_TORQUE_ENABLE, 1);
-        vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after enabling torque
+        vTaskDelay(pdMS_TO_TICKS(10));
     }
-    ESP_LOGI(TAG, "Servos initialized with acceleration %d and torque enabled.", g_servo_acceleration);
+    ESP_LOGI(TAG, "Servos initialized with Max Torque %d, acceleration %d, and torque enabled.", SERVO_MAX_TORQUE_VALUE, g_servo_acceleration);
 }
 
 void execute_on_robot_arm(const float* action_vector) {
     // action_vector contains NUM_SERVOS positions then NUM_SERVOS accelerations
     for (int i = 0; i < NUM_SERVOS; i++) {
-        // Decode and set acceleration
+        // Decode and set acceleration from NN output
         float norm_accel = action_vector[NUM_SERVOS + i]; // Normalized acceleration from NN [-1, 1]
-        uint8_t hw_accel = (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 100.0f); // Scale to 0-100
-        if (hw_accel > 254) hw_accel = 254; // Clamp to max hardware value if necessary (though 100 is current max)
+        // Map NN output [-1, 1] to hardware acceleration range [200, 250] (slowest range)
+        // -1 maps to 200 (relatively faster within the slow range)
+        //  1 maps to 250 (slowest within the slow range)
+        uint8_t hw_accel = 200 + (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 50.0f);
+        if (hw_accel > 254) hw_accel = 254; // Clamp, though 250 is the max from calculation
 
         feetech_write_byte(servo_ids[i], REG_ACCELERATION, hw_accel);
-        // It's often good to have a small delay after sending a command before the next,
-        // but critical for acceleration to be set before position.
-        // The main loop delay should handle overall timing. A tiny delay here might be okay if needed.
-        // vTaskDelay(pdMS_TO_TICKS(1)); // Optional: very short delay
+        // vTaskDelay(pdMS_TO_TICKS(1)); // Optional: very short delay if needed between commands
 
         // Decode and set position
         float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
