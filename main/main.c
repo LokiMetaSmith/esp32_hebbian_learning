@@ -72,6 +72,7 @@ void initialize_console(void);
 static int cmd_set_accel(int argc, char **argv); // New command
 static int cmd_save_network(int argc, char **argv);
 static int cmd_export_network(int argc, char **argv);
+static int cmd_reset_network(int argc, char **argv);  // New command
 static int cmd_set_pos(int argc, char **argv);
 static int cmd_get_pos(int argc, char **argv);
 static int cmd_get_current(int argc, char **argv);
@@ -455,6 +456,15 @@ static int cmd_get_accel_raw(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_reset_network(int argc, char **argv) {
+    /* FORCED RE-INIT || load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK */ 
+    g_hl = malloc(sizeof(HiddenLayer)); g_ol = malloc(sizeof(OutputLayer)); g_pl = malloc(sizeof(PredictionLayer));
+    initialize_network(g_hl, g_ol, g_pl);
+    save_network_to_nvs(g_hl, g_ol, g_pl);
+	printf("Forcing network re-initialization");
+	return 0;
+}
+
 static int cmd_export_network(int argc, char **argv) {
     printf("\n--- BEGIN NN EXPORT ---\n");
     printf("{\"hidden_layer\":{\"bias\":[");
@@ -718,6 +728,9 @@ void initialize_console(void) {
     const esp_console_cmd_t export_cmd = { .command = "export", .help = "Export network in JSON format", .func = &cmd_export_network };
     ESP_ERROR_CHECK(esp_console_cmd_register(&export_cmd));
 
+    const esp_console_cmd_t reset_nn_cmd = { .command = "reset_nn", .help = "Resets NN to random", .func =&cmd_reset_network };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&reset_nn_cmd));
+    
     set_pos_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
     set_pos_args.pos = arg_int1(NULL, NULL, "<pos>", "Position (0-4095)");
     set_pos_args.end = arg_end(2);
