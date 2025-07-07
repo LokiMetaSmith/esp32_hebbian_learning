@@ -9,12 +9,18 @@
 // --- Neural Network Config ---
 #define NUM_ACCEL_GYRO_PARAMS 6
 #define NUM_SERVO_FEEDBACK_PARAMS 3 // Position, Load, and Current for each servo
-#define OUTPUT_NEURONS NUM_SERVOS // One output per servo
 
-// CORRECTED: The input to the network is now the current sensor state PLUS the intended action vector.
-#define INPUT_NEURONS (NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS) + OUTPUT_NEURONS)
+// Action parameters: NUM_SERVOS for position, NUM_SERVOS for acceleration
+#define NUM_ACTION_PARAMS (NUM_SERVOS * 2)
+
+// Output neurons from the network's output layer, matching action parameters
+#define OUTPUT_NEURONS NUM_ACTION_PARAMS
+
+// Input to the network: current sensor state PLUS the intended action vector (positions & accelerations).
+#define INPUT_NEURONS (NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS) + NUM_ACTION_PARAMS)
 #define HIDDEN_NEURONS 16
-#define PRED_NEURONS (NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS)) // Predicts the next sensor state only
+// Prediction layer predicts the next sensor state only (does not predict actions themselves)
+#define PRED_NEURONS (NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS))
 
 // --- Data Structures ---
 typedef struct {

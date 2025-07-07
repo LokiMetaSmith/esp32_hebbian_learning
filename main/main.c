@@ -45,8 +45,11 @@ static bool g_network_weights_updated = false;
 static float g_best_fitness_achieved = 0.0f;
 static const float MIN_FITNESS_IMPROVEMENT_TO_SAVE = 0.01f;
 
-// --- Global flag for motor babble ---
-static bool g_motor_babble_active = false;
+// --- Global flag for learning loop ---
+static bool g_learning_loop_active = false;
+// --- Global flag for standalone random walk ---
+static bool g_random_walk_active = false;
+static TaskHandle_t g_random_walk_task_handle = NULL;
 // CORRECTED: Slower and smaller random walk parameters
 static uint16_t g_random_walk_max_delta_pos = 15; // Smaller position change per step
 static int g_random_walk_interval_ms = 500;      // Longer interval between steps
@@ -56,19 +59,28 @@ static int64_t g_last_random_walk_time_us = 0;
 static float g_last_logged_total_current_A = -1.0f;
 static const float CURRENT_LOGGING_THRESHOLD_A = 0.005f;
 
+// --- Servo Configuration ---
+#define DEFAULT_SERVO_ACCELERATION 50 // Default acceleration value (0-254, 0=instant)
+static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
+
 // --- Mutex for protecting console output ---
 SemaphoreHandle_t g_console_mutex;
 
 // --- Forward Declarations ---
 void learning_loop_task(void *pvParameters);
 void initialize_console(void);
+static int cmd_set_accel(int argc, char **argv); // New command
 static int cmd_save_network(int argc, char **argv);
 static int cmd_export_network(int argc, char **argv);
+static int cmd_reset_network(int argc, char **argv);  // New command
 static int cmd_set_pos(int argc, char **argv);
 static int cmd_get_pos(int argc, char **argv);
 static int cmd_get_current(int argc, char **argv);
+static int cmd_babble_start(int argc, char **argv);
+static int cmd_babble_stop(int argc, char **argv);
 static int cmd_rw_start(int argc, char **argv);
 static int cmd_rw_stop(int argc, char **argv);
+static int cmd_get_accel_raw(int argc, char **argv); // New command
 
 // --- argtable3 structs for console commands ---
 static struct {
@@ -93,6 +105,11 @@ static struct {
     struct arg_end *end;
 } rw_set_params_args;
 
+static struct {
+    struct arg_int *value;
+    struct arg_end *end;
+} set_accel_args;
+
 
 // --- Application-Level Hardware Functions ---
 void read_sensor_state(float* sensor_data) {
@@ -112,14 +129,14 @@ void read_sensor_state(float* sensor_data) {
 
     for (int i = 0; i < NUM_SERVOS; i++) {
         uint16_t servo_pos = 0, servo_load = 0;
-        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50);
-        feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);
+        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50); // Increased timeout
+        feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);    // Increased timeout
         
         sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
         sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
         
         uint16_t servo_raw_current = 0;
-        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) {
+        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) { // Increased timeout
             float current_A = (float)servo_raw_current * 0.0065f;
             total_current_A_cycle += current_A;
             sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
@@ -138,17 +155,38 @@ void read_sensor_state(float* sensor_data) {
 }
 
 void initialize_robot_arm() {
-    ESP_LOGI(TAG, "Enabling torque on all servos.");
+    ESP_LOGI(TAG, "Initializing servos: Setting acceleration and enabling torque.");
     for (int i = 0; i < NUM_SERVOS; i++) {
+        // Set acceleration
+        feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
+        vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after setting acceleration
+
+        // Enable torque
         feetech_write_byte(servo_ids[i], REG_TORQUE_ENABLE, 1);
-        vTaskDelay(pdMS_TO_TICKS(20));
+        vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after enabling torque
     }
+    ESP_LOGI(TAG, "Servos initialized with acceleration %d and torque enabled.", g_servo_acceleration);
 }
 
 void execute_on_robot_arm(const float* action_vector) {
+    // action_vector contains NUM_SERVOS positions then NUM_SERVOS accelerations
     for (int i = 0; i < NUM_SERVOS; i++) {
-        float scaled_action = (action_vector[i] + 1.0f) / 2.0f;
-        uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_action * (SERVO_POS_MAX - SERVO_POS_MIN));
+        // Decode and set acceleration
+        float norm_accel = action_vector[NUM_SERVOS + i]; // Normalized acceleration from NN [-1, 1]
+        uint8_t hw_accel = (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 100.0f); // Scale to 0-100
+        if (hw_accel > 254) hw_accel = 254; // Clamp to max hardware value if necessary (though 100 is current max)
+
+        feetech_write_byte(servo_ids[i], REG_ACCELERATION, hw_accel);
+        // It's often good to have a small delay after sending a command before the next,
+        // but critical for acceleration to be set before position.
+        // The main loop delay should handle overall timing. A tiny delay here might be okay if needed.
+        // vTaskDelay(pdMS_TO_TICKS(1)); // Optional: very short delay
+
+        // Decode and set position
+        float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
+        float scaled_pos = (norm_pos + 1.0f) / 2.0f; // Scale to 0-1
+        uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
+
         feetech_write_word(servo_ids[i], REG_GOAL_POSITION, goal_position);
     }
 }
@@ -158,18 +196,21 @@ float activation_tanh(float x) { return tanhf(x); }
 
 void initialize_network(HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl) {
     ESP_LOGI(TAG, "Initializing network with random weights.");
+    // Hidden Layer
     for (int i = 0; i < HIDDEN_NEURONS; i++) {
         hl->hidden_bias[i] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
-        for (int j = 0; j < INPUT_NEURONS; j++) {
+        for (int j = 0; j < INPUT_NEURONS; j++) { // INPUT_NEURONS has changed
             hl->weights[i][j] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
         }
     }
-    for (int i = 0; i < OUTPUT_NEURONS; i++) {
+    // Output Layer (now includes accelerations)
+    for (int i = 0; i < OUTPUT_NEURONS; i++) { // OUTPUT_NEURONS has changed (NUM_SERVOS * 2)
         ol->output_bias[i] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
         for (int j = 0; j < HIDDEN_NEURONS; j++) {
             ol->weights[i][j] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
         }
     }
+    // Prediction Layer (structure unchanged, but its inputs from hidden layer are effectively wider)
     for (int i = 0; i < PRED_NEURONS; i++) {
         pl->pred_bias[i] = ((float)rand() / RAND_MAX) * 0.2f - 0.1f;
         for (int j = 0; j < HIDDEN_NEURONS; j++) {
@@ -228,20 +269,27 @@ void update_weights_hebbian(const float* input, float correctness, HiddenLayer* 
 
 // --- RANDOM WALK FUNCTION ---
 // action_output_vector should point to the segment of combined_input where actions are stored.
+// If action_output_vector is NULL, actions are not stored (used for standalone random walk).
 void perform_random_walk(float* action_output_vector) {
     int64_t current_time_us = esp_timer_get_time();
     if ((current_time_us - g_last_random_walk_time_us) < (g_random_walk_interval_ms * 1000LL)) {
-        // If not time yet, we should probably fill action_output_vector with "no action" or current action
-        // For now, let's assume it's okay if it's not updated every cycle if no walk happens.
-        // Alternatively, the calling function should handle not calling forward_pass if no action was decided.
-        return; 
+        // If not time yet, do nothing.
+        // If action_output_vector is provided (learning loop), it means no new action is generated this cycle.
+        // The learning loop should ideally handle this by not calling forward_pass or by using a "neutral" action.
+        // For standalone random walk, this just means no servo movement in this check.
+        return;
     }
 
     // ESP_LOGI(TAG, "Performing random walk step...");
     for (int i = 0; i < NUM_SERVOS; i++) {
         uint16_t current_pos = 0;
-        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 50); // 5ms timeout
+        // Use a slightly longer timeout for reading position in random walk as it's less critical for timing than the learning loop
+        esp_err_t read_status = feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 75);
 
+        if (read_status != ESP_OK) {
+            ESP_LOGW(TAG, "RW: Failed to read pos for servo %d, skipping its move.", servo_ids[i]);
+            continue; // Skip this servo if read fails
+        }
         int delta_pos = (rand() % (2 * g_random_walk_max_delta_pos + 1)) - g_random_walk_max_delta_pos;
         int new_pos_signed = (int)current_pos + delta_pos;
 
@@ -256,10 +304,10 @@ void perform_random_walk(float* action_output_vector) {
 
         feetech_write_word(servo_ids[i], REG_GOAL_POSITION, new_goal_pos);
         
-        // Store the normalized action in the output vector
         if (action_output_vector) {
             action_output_vector[i] = ((float)new_goal_pos - SERVO_POS_MIN) / (SERVO_POS_MAX - SERVO_POS_MIN) * 2.0f - 1.0f;
         }
+        // A small delay per servo might be good for bus traffic, but g_random_walk_interval_ms controls overall frequency
         // vTaskDelay(pdMS_TO_TICKS(5)); 
     }
     g_last_random_walk_time_us = current_time_us;
@@ -268,38 +316,76 @@ void perform_random_walk(float* action_output_vector) {
 
 // --- TASKS & MAIN ---
 
+// Task for standalone random walk
+void random_walk_task_fn(void *pvParameters) {
+    ESP_LOGI(TAG, "Random Walk Task started.");
+    while (g_random_walk_active) {
+        perform_random_walk(NULL); // Pass NULL as no action vector needed for learning
+        // The delay is implicitly handled by g_last_random_walk_time_us inside perform_random_walk
+        // However, we need a yield here to prevent busy-waiting if interval is short or no move happens
+        vTaskDelay(pdMS_TO_TICKS(10)); // Yield for other tasks
+    }
+    ESP_LOGI(TAG, "Random Walk Task stopped.");
+    vTaskDelete(NULL); // Delete self
+}
+
 void learning_loop_task(void *pvParameters) {
     long cycle = 0;
     float* combined_input = malloc(sizeof(float) * INPUT_NEURONS);
     float* state_t_plus_1 = malloc(sizeof(float) * PRED_NEURONS);
 
+    if (!combined_input || !state_t_plus_1) {
+        ESP_LOGE(TAG, "Failed to allocate memory for learning_loop_task buffers!");
+        // If memory allocation fails, there's no point in continuing this task.
+        // Consider how to handle this error more gracefully if needed (e.g. global error flag).
+        vTaskDelete(NULL);
+        return; // Important to return after vTaskDelete if it's not the last line.
+    }
+
     while (1) {
-        if (g_motor_babble_active) {
+        if (g_learning_loop_active) {
             // 1. SENSE current state (first part of combined_input)
             read_sensor_state(combined_input);
 
-            // 2. BABBLE: Generate a random action and place it in the combined_input vector
+            // 2. BABBLE: Generate an action (positions and accelerations) and place it in the combined_input vector
             int action_vector_start_index = NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS);
+            float* action_part = combined_input + action_vector_start_index; // Pointer to the start of action data
             
-            if(g_best_fitness_achieved > 5.8f)
-            {
-                for(int i = 0; i < OUTPUT_NEURONS; i++){
-                    combined_input[action_vector_start_index + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+            if (g_best_fitness_achieved > 0.8f) {
+                // Generate fully random actions (positions and accelerations) if fitness is high
+                for (int i = 0; i < NUM_ACTION_PARAMS; i++) { // NUM_ACTION_PARAMS is NUM_SERVOS * 2
+                    action_part[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
                 }
-            }
-            else
-            {
-                perform_random_walk(&combined_input[action_vector_start_index]);
-            }
-            // 3. PREDICT outcome of the babble
-            forward_pass(combined_input, g_hl, g_ol, g_pl);
+                // Execute these new random actions (positions and accelerations)
+                execute_on_robot_arm(action_part);
+            } else {
+                // Otherwise, use perform_random_walk for position exploration,
+                // and generate random accelerations separately.
 
-            // 4. ACT: Execute the random action
-            execute_on_robot_arm(&combined_input[action_vector_start_index]);
+                // perform_random_walk fills the first NUM_SERVOS elements of action_part with positions
+                // and also executes the moves with current g_servo_acceleration (which is fine for this phase).
+                perform_random_walk(action_part);
+
+                // Now, generate and store random accelerations for the learning input
+                for (int i = 0; i < NUM_SERVOS; i++) {
+                    action_part[NUM_SERVOS + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized accel
+                }
+                // Note: The accelerations set by execute_on_robot_arm in the next step will override
+                // the g_servo_acceleration used by perform_random_walk for this learning cycle's execution.
+                // This is a bit indirect but means the NN learns based on accelerations it *would* set.
+                // For more direct control, perform_random_walk would need not to execute.
+                // For now, we will execute the full action_part (including newly random accelerations)
+                // via execute_on_robot_arm below, which will set the new accelerations.
+                execute_on_robot_arm(action_part);
+            }
+
+            // 3. PREDICT outcome based on the state and the chosen action (now including accelerations)
+            forward_pass(combined_input, g_hl, g_ol, g_pl);
             
+            // 4. DELAY to allow action to complete and state to change
             vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
             
-            // 5. OBSERVE the new state
+            // 5. OBSERVE the new state resulting from the action
             read_sensor_state(state_t_plus_1);
 
             // 6. LEARN from the prediction error
@@ -307,12 +393,13 @@ void learning_loop_task(void *pvParameters) {
             float state_change_magnitude = 0;
             for (int i = 0; i < PRED_NEURONS; i++) { 
                 total_error += fabsf(state_t_plus_1[i] - g_pl->pred_activations[i]); 
-                if (i < NUM_ACCEL_GYRO_PARAMS) {
-                    state_change_magnitude += fabsf(state_t_plus_1[i] - combined_input[i]);
+                if (i < NUM_ACCEL_GYRO_PARAMS) { // Consider only accelerometer/gyro changes for magnitude
+                    state_change_magnitude += fabsf(state_t_plus_1[i] - combined_input[i]); // Compare new sensor state to old sensor state part of combined_input
                 }
             }
             
             float prediction_accuracy = fmaxf(0, 1.0f - (total_error / PRED_NEURONS));
+            // Correctness boosted by how much the state changed, encouraging more dynamic actions
             float correctness = prediction_accuracy * (1.0f + state_change_magnitude);
             
             update_weights_hebbian(combined_input, correctness, g_hl, g_ol, g_pl);
@@ -321,24 +408,29 @@ void learning_loop_task(void *pvParameters) {
             if (g_network_weights_updated) {
                 if (correctness > g_best_fitness_achieved + MIN_FITNESS_IMPROVEMENT_TO_SAVE) {
                     if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                    ESP_LOGI(TAG, "Fitness improved (%.2f -> %.2f). Auto-saving...", g_best_fitness_achieved, correctness);
+                        ESP_LOGI(TAG, "Fitness improved (%.2f -> %.2f). Auto-saving...", g_best_fitness_achieved, correctness);
                         xSemaphoreGive(g_console_mutex);
                     }
                     if (save_network_to_nvs(g_hl, g_ol, g_pl) == ESP_OK) {
                         g_best_fitness_achieved = correctness;
-                        g_network_weights_updated = false;
+                        g_network_weights_updated = false; // Reset flag after successful save
                     }
                 } else if (correctness > g_best_fitness_achieved) {
+                    // Update best_fitness even if not saved, to track actual best
                     g_best_fitness_achieved = correctness;
                 }
             }
             cycle++;
         } else {
-            vTaskDelay(pdMS_TO_TICKS(100));
+            vTaskDelay(pdMS_TO_TICKS(100)); // Sleep when not active
         }
-    }
+    } // End while(1)
+
+    // This part of the code will not be reached due to the infinite while(1) loop,
+    // but it's good practice for resource cleanup if the loop could terminate.
     free(combined_input);
     free(state_t_plus_1);
+    vTaskDelete(NULL); // Task should delete itself if it ever exits the loop.
 }
 
 // --- CONSOLE COMMANDS & SETUP ---
@@ -350,6 +442,26 @@ static int cmd_save_network(int argc, char **argv) {
         ESP_LOGE(TAG, "Failed to manually save network to NVS.");
     }
     return 0;
+}
+
+static int cmd_get_accel_raw(int argc, char **argv) {
+    float ax, ay, az;
+    if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
+        printf("Raw Accelerometer: X=%.4f, Y=%.4f, Z=%.4f (G)\n", ax, ay, az);
+    } else {
+        printf("Error: Failed to read accelerometer data.\n");
+        return 1;
+    }
+    return 0;
+}
+
+static int cmd_reset_network(int argc, char **argv) {
+    /* FORCED RE-INIT || load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK */ 
+    g_hl = malloc(sizeof(HiddenLayer)); g_ol = malloc(sizeof(OutputLayer)); g_pl = malloc(sizeof(PredictionLayer));
+    initialize_network(g_hl, g_ol, g_pl);
+    save_network_to_nvs(g_hl, g_ol, g_pl);
+	printf("Forcing network re-initialization");
+	return 0;
 }
 
 static int cmd_export_network(int argc, char **argv) {
@@ -377,6 +489,7 @@ static int cmd_export_network(int argc, char **argv) {
         if (i < OUTPUT_NEURONS - 1) printf(",");
     }
     printf("],\"weights\":[");
+    // OutputLayer weights: OUTPUT_NEURONS is now NUM_SERVOS * 2
     for(int i=0; i<OUTPUT_NEURONS; i++) {
         printf("[");
         for(int j=0; j<HIDDEN_NEURONS; j++) {
@@ -484,25 +597,87 @@ static int cmd_get_current(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_rw_start(int argc, char **argv) {
-    if (!g_motor_babble_active) {
-        g_motor_babble_active = true;
-        ESP_LOGI(TAG, "Motor babble started.");
+static int cmd_babble_start(int argc, char **argv) {
+    if (!g_learning_loop_active) {
+        g_learning_loop_active = true;
+        ESP_LOGI(TAG, "Learning loop (motor babble) started.");
     } else {
-        ESP_LOGI(TAG, "Motor babble is already active.");
+        ESP_LOGI(TAG, "Learning loop (motor babble) is already active.");
+    }
+    return 0;
+}
+
+static int cmd_babble_stop(int argc, char **argv) {
+    if (g_learning_loop_active) {
+        g_learning_loop_active = false;
+        ESP_LOGI(TAG, "Learning loop (motor babble) stopped.");
+    } else {
+        ESP_LOGI(TAG, "Learning loop (motor babble) is not active.");
+    }
+    return 0;
+}
+
+static int cmd_rw_start(int argc, char **argv) {
+    if (!g_random_walk_active) {
+        ESP_LOGI(TAG, "Starting standalone random walk. Setting acceleration to global value: %u", g_servo_acceleration);
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
+            vTaskDelay(pdMS_TO_TICKS(5)); // Small delay
+        }
+
+        g_random_walk_active = true;
+        if (g_random_walk_task_handle == NULL) {
+            xTaskCreate(random_walk_task_fn, "random_walk_task", 3072, NULL, 5, &g_random_walk_task_handle);
+            ESP_LOGI(TAG, "Random Walk task created and resumed/started.");
+        } else {
+            // If task handle exists, it might be suspended or will pick up the flag.
+            // For simplicity, we don't explicitly resume if it were suspended.
+            // The task loop itself checks g_random_walk_active.
+            ESP_LOGI(TAG, "Random Walk (standalone) resumed/started.");
+        }
+    } else {
+        ESP_LOGI(TAG, "Random Walk (standalone) is already active.");
     }
     return 0;
 }
 
 static int cmd_rw_stop(int argc, char **argv) {
-    if (g_motor_babble_active) {
-        g_motor_babble_active = false;
-        ESP_LOGI(TAG, "Motor babble stopped.");
+    if (g_random_walk_active) {
+        g_random_walk_active = false;
+        // The task will see the flag and delete itself.
+        // We set the handle to NULL so it can be recreated.
+        g_random_walk_task_handle = NULL;
+        ESP_LOGI(TAG, "Random Walk (standalone) stopped.");
     } else {
-        ESP_LOGI(TAG, "Motor babble is not active.");
+        ESP_LOGI(TAG, "Random Walk (standalone) is not active.");
     }
     return 0;
 }
+
+static int cmd_set_accel(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_accel_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_accel_args.end, argv[0]);
+        return 1;
+    }
+    int accel_val = set_accel_args.value->ival[0];
+
+    if (accel_val < 0 || accel_val > 254) { // Typical range for Feetech servo acceleration
+        printf("Error: Acceleration value must be between 0 and 254.\n");
+        return 1;
+    }
+
+    g_servo_acceleration = (uint8_t)accel_val;
+    ESP_LOGI(TAG, "Setting servo acceleration to %u for all servos.", g_servo_acceleration);
+
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
+        vTaskDelay(pdMS_TO_TICKS(5)); // Small delay between commands
+    }
+    printf("Servo acceleration set to %u for all servos.\n", g_servo_acceleration);
+    return 0;
+}
+
 
 static int cmd_rw_set_params(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&rw_set_params_args);
@@ -517,8 +692,8 @@ static int cmd_rw_set_params(int argc, char **argv) {
         printf("Error: Max delta position must be between 1 and 1000.\n");
         return 1;
     }
-    if (interval_ms <= 0 || interval_ms > 60000) { // Max reasonable interval
-        printf("Error: Interval MS must be between 1 and 60000.\n");
+    if (interval_ms < 20 || interval_ms > 60000) { // Enforce minimum interval of 20ms
+        printf("Error: Interval MS must be between 20 and 60000.\n");
         return 1;
     }
 
@@ -552,6 +727,9 @@ void initialize_console(void) {
     const esp_console_cmd_t export_cmd = { .command = "export", .help = "Export network in JSON format", .func = &cmd_export_network };
     ESP_ERROR_CHECK(esp_console_cmd_register(&export_cmd));
 
+    const esp_console_cmd_t reset_nn_cmd = { .command = "reset_nn", .help = "Resets NN to random", .func =&cmd_reset_network };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&reset_nn_cmd));
+    
     set_pos_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
     set_pos_args.pos = arg_int1(NULL, NULL, "<pos>", "Position (0-4095)");
     set_pos_args.end = arg_end(2);
@@ -568,11 +746,29 @@ void initialize_console(void) {
     const esp_console_cmd_t get_current_cmd = { .command = "get_current", .help = "Get the current consumption of a servo (in mA)", .func = &cmd_get_current, .argtable = &get_current_args };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_current_cmd));
     
-    const esp_console_cmd_t rw_start_cmd = { .command = "rw_start", .help = "Start motor babble for learning", .func = &cmd_rw_start };
+    // Renamed commands for babble (learning loop)
+    const esp_console_cmd_t babble_start_cmd = { .command = "babble_start", .help = "Start learning loop (motor babble)", .func = &cmd_babble_start };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&babble_start_cmd));
+
+    const esp_console_cmd_t babble_stop_cmd = { .command = "babble_stop", .help = "Stop learning loop (motor babble)", .func = &cmd_babble_stop };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&babble_stop_cmd));
+
+    // New commands for standalone random walk
+    const esp_console_cmd_t rw_start_cmd = { .command = "rw_start", .help = "Start standalone random walk", .func = &cmd_rw_start };
     ESP_ERROR_CHECK(esp_console_cmd_register(&rw_start_cmd));
 
-    const esp_console_cmd_t rw_stop_cmd = { .command = "rw_stop", .help = "Stop motor babble", .func = &cmd_rw_stop };
+    const esp_console_cmd_t rw_stop_cmd = { .command = "rw_stop", .help = "Stop standalone random walk", .func = &cmd_rw_stop };
     ESP_ERROR_CHECK(esp_console_cmd_register(&rw_stop_cmd));
+
+    set_accel_args.value = arg_int1(NULL, NULL, "<value>", "Acceleration (0-254, 0=instant, 254=slowest)");
+    set_accel_args.end = arg_end(1);
+    const esp_console_cmd_t set_accel_cmd = {
+        .command = "set_accel",
+        .help = "Set acceleration for all servos",
+        .func = &cmd_set_accel,
+        .argtable = &set_accel_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_accel_cmd));
 
     rw_set_params_args.delta_pos = arg_int1(NULL, NULL, "<delta_pos>", "Max position change per step (1-1000)");
     rw_set_params_args.interval_ms = arg_int1(NULL, NULL, "<interval_ms>", "Interval between steps in ms (1-60000)");
@@ -584,6 +780,14 @@ void initialize_console(void) {
         .argtable = &rw_set_params_args
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&rw_set_params_cmd));
+
+    const esp_console_cmd_t get_accel_raw_cmd = {
+        .command = "get_accel_raw",
+        .help = "Get raw accelerometer values (X, Y, Z in G)",
+        .func = &cmd_get_accel_raw,
+        .argtable = NULL
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_accel_raw_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
