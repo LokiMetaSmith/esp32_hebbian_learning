@@ -128,27 +128,42 @@ void read_sensor_state(float* sensor_data) {
     float total_current_A_cycle = 0.0f;
 
     for (int i = 0; i < NUM_SERVOS; i++) {
-        uint16_t servo_pos = 0, servo_load = 0;
-        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50); // Increased timeout
-        feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);    // Increased timeout
-        
-        sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
-        sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
+        uint16_t servo_pos_raw = 0;
+        // Default normalized position to mid-range (0.5f) if read fails
+        if (feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos_raw, 75) == ESP_OK) { // Timeout increased to 75ms
+            sensor_data[current_sensor_index++] = (float)servo_pos_raw / SERVO_POS_MAX;
+        } else {
+            ESP_LOGW(TAG, "read_sensor_state: Failed to read position for servo %d. Using default.", servo_ids[i]);
+            sensor_data[current_sensor_index++] = 0.5f; // Default normalized position (mid-range)
+        }
+
+        uint16_t servo_load_raw = 0;
+        // Default normalized load to 0.0f if read fails
+        if (feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load_raw, 75) == ESP_OK) { // Timeout increased to 75ms
+            sensor_data[current_sensor_index++] = (float)servo_load_raw / 1000.0f; // Max load is 1000 for normalization
+        } else {
+            ESP_LOGW(TAG, "read_sensor_state: Failed to read load for servo %d. Using default.", servo_ids[i]);
+            sensor_data[current_sensor_index++] = 0.0f; // Default normalized load
+        }
         
         uint16_t servo_raw_current = 0;
-        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) { // Increased timeout
-            float current_A = (float)servo_raw_current * 0.0065f;
+        // Default normalized current to 0.0f if read fails
+        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 75) == ESP_OK) { // Timeout increased to 75ms
+            float current_A = (float)servo_raw_current * 0.0065f; // 6.5mA per unit for STS servos
             total_current_A_cycle += current_A;
-            sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
+            sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A); // Normalize and cap
         } else {
-            sensor_data[current_sensor_index++] = 0.0f;
+            ESP_LOGW(TAG, "read_sensor_state: Failed to read current for servo %d. Using default.", servo_ids[i]);
+            sensor_data[current_sensor_index++] = 0.0f; // Default normalized current
         }
     }
 
-    if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
+    // Log total current only if it has changed significantly or if it's the first log attempt.
+    // Use a small tolerance to avoid logging noise.
+    if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A || g_last_logged_total_current_A < 0) {
         if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        ESP_LOGI(TAG, "Total servo current this cycle: %.3f A", total_current_A_cycle);
-        g_last_logged_total_current_A = total_current_A_cycle;
+            ESP_LOGI(TAG, "Total servo current this cycle: %.3f A", total_current_A_cycle);
+            g_last_logged_total_current_A = total_current_A_cycle;
             xSemaphoreGive(g_console_mutex);
         }
     }
@@ -466,16 +481,31 @@ static int cmd_reset_network(int argc, char **argv) {
 
 static int cmd_export_network(int argc, char **argv) {
     printf("\n--- BEGIN NN EXPORT ---\n");
+    // Helper function to print float values, handling NaN and Inf
+    auto void print_float_json(float val) {
+        if (isnan(val)) {
+            printf("\"NaN\"");
+        } else if (isinf(val)) {
+            if (val > 0) {
+                printf("\"Inf\"");
+            } else {
+                printf("\"-Inf\"");
+            }
+        } else {
+            printf("%f", val);
+        }
+    }
+
     printf("{\"hidden_layer\":{\"bias\":[");
     for(int i=0; i<HIDDEN_NEURONS; i++) {
-        printf("%f", g_hl->hidden_bias[i]);
+        print_float_json(g_hl->hidden_bias[i]);
         if (i < HIDDEN_NEURONS - 1) printf(",");
     }
     printf("],\"weights\":[");
     for(int i=0; i<HIDDEN_NEURONS; i++) {
         printf("[");
         for(int j=0; j<INPUT_NEURONS; j++) {
-            printf("%f", g_hl->weights[i][j]);
+            print_float_json(g_hl->weights[i][j]);
             if (j < INPUT_NEURONS - 1) printf(",");
         }
         printf("]");
@@ -485,7 +515,7 @@ static int cmd_export_network(int argc, char **argv) {
 
     printf("\"output_layer\":{\"bias\":[");
     for(int i=0; i<OUTPUT_NEURONS; i++) {
-        printf("%f", g_ol->output_bias[i]);
+        print_float_json(g_ol->output_bias[i]);
         if (i < OUTPUT_NEURONS - 1) printf(",");
     }
     printf("],\"weights\":[");
@@ -493,7 +523,7 @@ static int cmd_export_network(int argc, char **argv) {
     for(int i=0; i<OUTPUT_NEURONS; i++) {
         printf("[");
         for(int j=0; j<HIDDEN_NEURONS; j++) {
-            printf("%f", g_ol->weights[i][j]);
+            print_float_json(g_ol->weights[i][j]);
             if (j < HIDDEN_NEURONS - 1) printf(",");
         }
         printf("]");
@@ -503,14 +533,14 @@ static int cmd_export_network(int argc, char **argv) {
 
     printf("\"prediction_layer\":{\"bias\":[");
     for(int i=0; i<PRED_NEURONS; i++) {
-        printf("%f", g_pl->pred_bias[i]);
+        print_float_json(g_pl->pred_bias[i]);
         if (i < PRED_NEURONS - 1) printf(",");
     }
     printf("],\"weights\":[");
     for(int i=0; i<PRED_NEURONS; i++) {
         printf("[");
         for(int j=0; j<HIDDEN_NEURONS; j++) {
-            printf("%f", g_pl->weights[i][j]);
+            print_float_json(g_pl->weights[i][j]);
             if (j < HIDDEN_NEURONS - 1) printf(",");
         }
         printf("]");
