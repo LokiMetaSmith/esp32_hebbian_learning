@@ -111,6 +111,12 @@ static struct {
     struct arg_end *end;
 } set_accel_args;
 
+static struct {
+    struct arg_int *id;
+    struct arg_int *limit;
+    struct arg_end *end;
+} set_torque_limit_args;
+
 
 // --- Application-Level Hardware Functions ---
 void read_sensor_state(float* sensor_data) {
@@ -565,6 +571,33 @@ static int cmd_export_network(int argc, char **argv) {
     return 0;
 }
 
+// Function for the new 'set_tl' command
+static int cmd_set_torque_limit(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_torque_limit_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_torque_limit_args.end, argv[0]);
+        return 1;
+    }
+    int id = set_torque_limit_args.id->ival[0];
+    int limit = set_torque_limit_args.limit->ival[0];
+
+    if (id < 1 || id > NUM_SERVOS) {
+        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
+        return 1;
+    }
+    if (limit < 0 || limit > 1000) { // Torque limit is typically 0-1000 for Feetech
+        printf("Error: Torque limit value must be between 0 and 1000.\n");
+        return 1;
+    }
+
+    ESP_LOGI(TAG, "Setting torque limit for servo %d to %d.", id, limit);
+    feetech_write_word((uint8_t)id, REG_TORQUE_LIMIT, (uint16_t)limit);
+    // REG_TORQUE_LIMIT is address 48 for STS servos. feetech_write_word handles L/H bytes.
+    printf("Torque limit for servo %d set to %d.\n", id, limit);
+    return 0;
+}
+
+
 static int cmd_set_pos(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_pos_args);
     if (nerrors != 0) {
@@ -583,8 +616,12 @@ static int cmd_set_pos(int argc, char **argv) {
         return 1;
     }
 
-    ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
-    feetech_write_word(id, REG_GOAL_POSITION, pos);
+    ESP_LOGI(TAG, "Manual override: Ensuring torque is ON and setting servo %d to position %d", id, pos);
+    // Ensure torque is enabled for the servo
+    feetech_write_byte((uint8_t)id, REG_TORQUE_ENABLE, 1);
+    vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after enabling torque
+
+    feetech_write_word((uint8_t)id, REG_GOAL_POSITION, (uint16_t)pos);
     return 0;
 }
 
@@ -832,6 +869,17 @@ void initialize_console(void) {
         .argtable = NULL
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_accel_raw_cmd));
+
+    set_torque_limit_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
+    set_torque_limit_args.limit = arg_int1(NULL, NULL, "<limit>", "Torque limit (0-1000)");
+    set_torque_limit_args.end = arg_end(2);
+    const esp_console_cmd_t set_tl_cmd = {
+        .command = "set_tl",
+        .help = "Set torque limit for a servo",
+        .func = &cmd_set_torque_limit, // Will be created next
+        .argtable = &set_torque_limit_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_tl_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
