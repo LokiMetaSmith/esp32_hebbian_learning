@@ -60,8 +60,7 @@ static float g_last_logged_total_current_A = -1.0f;
 static const float CURRENT_LOGGING_THRESHOLD_A = 0.005f;
 
 // --- Servo Configuration ---
-#define DEFAULT_SERVO_ACCELERATION 250 // Default acceleration value (0-254, 0=instant, 250=very slow)
-#define SERVO_MAX_TORQUE_VALUE 100   // Max torque value (0-1000, e.g., 100 is 10% of max)
+#define DEFAULT_SERVO_ACCELERATION 50 // Default acceleration value (0-254, 0=instant)
 static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
 
 // --- Mutex for protecting console output ---
@@ -113,9 +112,14 @@ static struct {
 
 static struct {
     struct arg_int *id;
-    struct arg_int *limit;
+    struct arg_int *accel;
     struct arg_end *end;
-} set_torque_limit_args;
+} set_servo_acceleration_args;
+
+static struct {
+    struct arg_int *id;
+    struct arg_end *end;
+} get_servo_acceleration_args;
 
 
 // --- Application-Level Hardware Functions ---
@@ -135,86 +139,59 @@ void read_sensor_state(float* sensor_data) {
     float total_current_A_cycle = 0.0f;
 
     for (int i = 0; i < NUM_SERVOS; i++) {
-        uint16_t servo_pos_raw = 0;
-        // Default normalized position to mid-range (0.5f) if read fails
-        if (feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos_raw, 75) == ESP_OK) { // Timeout used by feetech_read_word
-            sensor_data[current_sensor_index++] = (float)servo_pos_raw / SERVO_POS_MAX;
-        } else {
-            ESP_LOGW(TAG, "read_sensor_state: Failed to read position for servo %d. Using default.", servo_ids[i]);
-            sensor_data[current_sensor_index++] = 0.5f; // Default normalized position (mid-range)
-        }
-        vTaskDelay(pdMS_TO_TICKS(10)); // Delay after reading position
+        uint16_t servo_pos = 0, servo_load = 0;
+        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50); // Increased timeout
+        feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);    // Increased timeout
 
-        uint16_t servo_load_raw = 0;
-        // Default normalized load to 0.0f if read fails
-        if (feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load_raw, 75) == ESP_OK) { // Timeout used by feetech_read_word
-            sensor_data[current_sensor_index++] = (float)servo_load_raw / 1000.0f; // Max load is 1000 for normalization
-        } else {
-            ESP_LOGW(TAG, "read_sensor_state: Failed to read load for servo %d. Using default.", servo_ids[i]);
-            sensor_data[current_sensor_index++] = 0.0f; // Default normalized load
-        }
-        vTaskDelay(pdMS_TO_TICKS(10)); // Delay after reading load
+        sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
+        sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
         
         uint16_t servo_raw_current = 0;
-        // Default normalized current to 0.0f if read fails
-        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 75) == ESP_OK) { // Timeout used by feetech_read_word
-            float current_A = (float)servo_raw_current * 0.0065f; // 6.5mA per unit for STS servos
+        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) { // Increased timeout
+            float current_A = (float)servo_raw_current * 0.0065f;
             total_current_A_cycle += current_A;
-            sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A); // Normalize and cap
+            sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
         } else {
-            ESP_LOGW(TAG, "read_sensor_state: Failed to read current for servo %d. Using default.", servo_ids[i]);
-            sensor_data[current_sensor_index++] = 0.0f; // Default normalized current
+            sensor_data[current_sensor_index++] = 0.0f;
         }
-        vTaskDelay(pdMS_TO_TICKS(10)); // Delay after reading current
     }
 
-    // Log total current only if it has changed significantly or if it's the first log attempt.
-    // Use a small tolerance to avoid logging noise.
-    if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A || g_last_logged_total_current_A < 0) {
+    if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
         if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            ESP_LOGI(TAG, "Total servo current this cycle: %.3f A", total_current_A_cycle);
-            g_last_logged_total_current_A = total_current_A_cycle;
+        ESP_LOGI(TAG, "Total servo current this cycle: %.3f A", total_current_A_cycle);
+        g_last_logged_total_current_A = total_current_A_cycle;
             xSemaphoreGive(g_console_mutex);
         }
     }
 }
 
 void initialize_robot_arm() {
-    ESP_LOGI(TAG, "Initializing servos: Setting Max Torque, default acceleration, and enabling torque.");
+    ESP_LOGI(TAG, "Initializing servos: Setting acceleration and enabling torque.");
     for (int i = 0; i < NUM_SERVOS; i++) {
-        // Set Max Torque (Register 0x23, value 0-1000)
-        // This command structure might differ slightly for some Feetech servos if it's a word.
-        // Assuming REG_MAX_TORQUE (0x23) is the correct address for the value and it's a WORD.
-        // The register 0x22 is often Torque Limit Enable / Torque ON/OFF.
-        // For STS servos, Torque Limit is REG_TORQUE_LIMIT (address 48 for L byte, 49 for H byte).
-        // feetech_write_word handles writing L/H bytes correctly when given the starting address (48).
-        feetech_write_word(servo_ids[i], REG_TORQUE_LIMIT, SERVO_MAX_TORQUE_VALUE);
-        vTaskDelay(pdMS_TO_TICKS(10));
-
-        // Set default acceleration
+        // Set acceleration
         feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after setting acceleration
 
-        // Enable torque (Register 0x28 for STS series)
+        // Enable torque
         feetech_write_byte(servo_ids[i], REG_TORQUE_ENABLE, 1);
-        vTaskDelay(pdMS_TO_TICKS(10));
+        vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after enabling torque
     }
-    ESP_LOGI(TAG, "Servos initialized with Max Torque %d, acceleration %d, and torque enabled.", SERVO_MAX_TORQUE_VALUE, g_servo_acceleration);
+    ESP_LOGI(TAG, "Servos initialized with acceleration %d and torque enabled.", g_servo_acceleration);
 }
 
 void execute_on_robot_arm(const float* action_vector) {
     // action_vector contains NUM_SERVOS positions then NUM_SERVOS accelerations
     for (int i = 0; i < NUM_SERVOS; i++) {
-        // Decode and set acceleration from NN output
+        // Decode and set acceleration
         float norm_accel = action_vector[NUM_SERVOS + i]; // Normalized acceleration from NN [-1, 1]
-        // Map NN output [-1, 1] to hardware acceleration range [200, 250] (slowest range)
-        // -1 maps to 200 (relatively faster within the slow range)
-        //  1 maps to 250 (slowest within the slow range)
-        uint8_t hw_accel = 200 + (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 50.0f);
-        if (hw_accel > 254) hw_accel = 254; // Clamp, though 250 is the max from calculation
+        uint8_t hw_accel = (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 100.0f); // Scale to 0-100
+        if (hw_accel > 254) hw_accel = 254; // Clamp to max hardware value if necessary (though 100 is current max)
 
         feetech_write_byte(servo_ids[i], REG_ACCELERATION, hw_accel);
-        vTaskDelay(pdMS_TO_TICKS(10)); // Delay after setting acceleration
+        // It's often good to have a small delay after sending a command before the next,
+        // but critical for acceleration to be set before position.
+        // The main loop delay should handle overall timing. A tiny delay here might be okay if needed.
+        // vTaskDelay(pdMS_TO_TICKS(1)); // Optional: very short delay
 
         // Decode and set position
         float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
@@ -222,7 +199,6 @@ void execute_on_robot_arm(const float* action_vector) {
         uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
 
         feetech_write_word(servo_ids[i], REG_GOAL_POSITION, goal_position);
-        vTaskDelay(pdMS_TO_TICKS(10)); // Delay after setting position
     }
 }
 
@@ -479,6 +455,58 @@ static int cmd_save_network(int argc, char **argv) {
     return 0;
 }
 
+// Function for 'set_sa' command
+static int cmd_set_servo_acceleration(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_servo_acceleration_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_servo_acceleration_args.end, argv[0]);
+        return 1;
+    }
+    int id = set_servo_acceleration_args.id->ival[0];
+    int accel = set_servo_acceleration_args.accel->ival[0];
+
+    if (id < 1 || id > NUM_SERVOS) {
+        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
+        return 1;
+    }
+    if (accel < 0 || accel > 254) { // Acceleration is 0-254
+        printf("Error: Acceleration value must be between 0 and 254.\n");
+        return 1;
+    }
+
+    ESP_LOGI(TAG, "Setting acceleration for servo %d to %d.", id, accel);
+    feetech_write_byte((uint8_t)id, REG_ACCELERATION, (uint8_t)accel);
+    printf("Acceleration for servo %d set to %d.\n", id, accel);
+    return 0;
+}
+
+// Function for 'get_sa' command
+static int cmd_get_servo_acceleration(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&get_servo_acceleration_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, get_servo_acceleration_args.end, argv[0]);
+        return 1;
+    }
+    int id = get_servo_acceleration_args.id->ival[0];
+
+    if (id < 1 || id > NUM_SERVOS) {
+        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
+        return 1;
+    }
+
+    uint16_t read_value_word = 0; // To store the word read by feetech_read_word
+    ESP_LOGI(TAG, "Reading acceleration for servo %d.", id);
+    esp_err_t read_status = feetech_read_word((uint8_t)id, REG_ACCELERATION, &read_value_word, 100); // 100ms timeout
+
+    if (read_status == ESP_OK) {
+        uint8_t accel_value = (uint8_t)(read_value_word & 0xFF); // Acceleration is the LSB
+        printf("Servo %d current acceleration: %u\n", id, accel_value);
+    } else {
+        printf("Error: Failed to read acceleration for servo %d (err: %s).\n", id, esp_err_to_name(read_status));
+    }
+    return 0;
+}
+
 static int cmd_get_accel_raw(int argc, char **argv) {
     float ax, ay, az;
     if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
@@ -501,31 +529,16 @@ static int cmd_reset_network(int argc, char **argv) {
 
 static int cmd_export_network(int argc, char **argv) {
     printf("\n--- BEGIN NN EXPORT ---\n");
-    // Helper function to print float values, handling NaN and Inf
-    auto void print_float_json(float val) {
-        if (isnan(val)) {
-            printf("\"NaN\"");
-        } else if (isinf(val)) {
-            if (val > 0) {
-                printf("\"Inf\"");
-            } else {
-                printf("\"-Inf\"");
-            }
-        } else {
-            printf("%f", val);
-        }
-    }
-
     printf("{\"hidden_layer\":{\"bias\":[");
     for(int i=0; i<HIDDEN_NEURONS; i++) {
-        print_float_json(g_hl->hidden_bias[i]);
+        printf("%f", g_hl->hidden_bias[i]);
         if (i < HIDDEN_NEURONS - 1) printf(",");
     }
     printf("],\"weights\":[");
     for(int i=0; i<HIDDEN_NEURONS; i++) {
         printf("[");
         for(int j=0; j<INPUT_NEURONS; j++) {
-            print_float_json(g_hl->weights[i][j]);
+            printf("%f", g_hl->weights[i][j]);
             if (j < INPUT_NEURONS - 1) printf(",");
         }
         printf("]");
@@ -535,7 +548,7 @@ static int cmd_export_network(int argc, char **argv) {
 
     printf("\"output_layer\":{\"bias\":[");
     for(int i=0; i<OUTPUT_NEURONS; i++) {
-        print_float_json(g_ol->output_bias[i]);
+        printf("%f", g_ol->output_bias[i]);
         if (i < OUTPUT_NEURONS - 1) printf(",");
     }
     printf("],\"weights\":[");
@@ -543,7 +556,7 @@ static int cmd_export_network(int argc, char **argv) {
     for(int i=0; i<OUTPUT_NEURONS; i++) {
         printf("[");
         for(int j=0; j<HIDDEN_NEURONS; j++) {
-            print_float_json(g_ol->weights[i][j]);
+            printf("%f", g_ol->weights[i][j]);
             if (j < HIDDEN_NEURONS - 1) printf(",");
         }
         printf("]");
@@ -553,14 +566,14 @@ static int cmd_export_network(int argc, char **argv) {
 
     printf("\"prediction_layer\":{\"bias\":[");
     for(int i=0; i<PRED_NEURONS; i++) {
-        print_float_json(g_pl->pred_bias[i]);
+        printf("%f", g_pl->pred_bias[i]);
         if (i < PRED_NEURONS - 1) printf(",");
     }
     printf("],\"weights\":[");
     for(int i=0; i<PRED_NEURONS; i++) {
         printf("[");
         for(int j=0; j<HIDDEN_NEURONS; j++) {
-            print_float_json(g_pl->weights[i][j]);
+            printf("%f", g_pl->weights[i][j]);
             if (j < HIDDEN_NEURONS - 1) printf(",");
         }
         printf("]");
@@ -570,33 +583,6 @@ static int cmd_export_network(int argc, char **argv) {
     printf("--- END NN EXPORT ---\n");
     return 0;
 }
-
-// Function for the new 'set_tl' command
-static int cmd_set_torque_limit(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_torque_limit_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_torque_limit_args.end, argv[0]);
-        return 1;
-    }
-    int id = set_torque_limit_args.id->ival[0];
-    int limit = set_torque_limit_args.limit->ival[0];
-
-    if (id < 1 || id > NUM_SERVOS) {
-        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
-        return 1;
-    }
-    if (limit < 0 || limit > 1000) { // Torque limit is typically 0-1000 for Feetech
-        printf("Error: Torque limit value must be between 0 and 1000.\n");
-        return 1;
-    }
-
-    ESP_LOGI(TAG, "Setting torque limit for servo %d to %d.", id, limit);
-    feetech_write_word((uint8_t)id, REG_TORQUE_LIMIT, (uint16_t)limit);
-    // REG_TORQUE_LIMIT is address 48 for STS servos. feetech_write_word handles L/H bytes.
-    printf("Torque limit for servo %d set to %d.\n", id, limit);
-    return 0;
-}
-
 
 static int cmd_set_pos(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_pos_args);
@@ -616,12 +602,8 @@ static int cmd_set_pos(int argc, char **argv) {
         return 1;
     }
 
-    ESP_LOGI(TAG, "Manual override: Ensuring torque is ON and setting servo %d to position %d", id, pos);
-    // Ensure torque is enabled for the servo
-    feetech_write_byte((uint8_t)id, REG_TORQUE_ENABLE, 1);
-    vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after enabling torque
-
-    feetech_write_word((uint8_t)id, REG_GOAL_POSITION, (uint16_t)pos);
+    ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
+    feetech_write_word(id, REG_GOAL_POSITION, pos);
     return 0;
 }
 
@@ -870,16 +852,26 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_accel_raw_cmd));
 
-    set_torque_limit_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
-    set_torque_limit_args.limit = arg_int1(NULL, NULL, "<limit>", "Torque limit (0-1000)");
-    set_torque_limit_args.end = arg_end(2);
-    const esp_console_cmd_t set_tl_cmd = {
-        .command = "set_tl",
-        .help = "Set torque limit for a servo",
-        .func = &cmd_set_torque_limit, // Will be created next
-        .argtable = &set_torque_limit_args
+    set_servo_acceleration_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
+    set_servo_acceleration_args.accel = arg_int1(NULL, NULL, "<accel>", "Acceleration (0-254)");
+    set_servo_acceleration_args.end = arg_end(2);
+    const esp_console_cmd_t set_sa_cmd = {
+        .command = "set_sa",
+        .help = "Set acceleration for a specific servo",
+        .func = &cmd_set_servo_acceleration,
+        .argtable = &set_servo_acceleration_args
     };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&set_tl_cmd));
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_sa_cmd));
+
+    get_servo_acceleration_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
+    get_servo_acceleration_args.end = arg_end(1);
+    const esp_console_cmd_t get_sa_cmd = {
+        .command = "get_sa",
+        .help = "Get acceleration for a specific servo",
+        .func = &cmd_get_servo_acceleration,
+        .argtable = &get_servo_acceleration_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_sa_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
