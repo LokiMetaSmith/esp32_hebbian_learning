@@ -22,7 +22,7 @@
 #include "bma400_driver.h"
 #include "led_indicator.h"
 #include "nvs_storage.h"
-#include "esp_dsp.hh"
+#include "esp_dsp.h"
 #include "driver/usb_serial_jtag.h" // For native USB CDC
 #include "tinyusb.h"
 #include "tusb_cdc_acm.h"
