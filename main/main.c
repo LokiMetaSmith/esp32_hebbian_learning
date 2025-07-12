@@ -71,6 +71,7 @@ SemaphoreHandle_t g_console_mutex;
 
 // --- Forward Declarations ---
 void learning_loop_task(void *pvParameters);
+void feetech_slave_task(void *pvParameters);
 void initialize_console(void);
 static int cmd_set_accel(int argc, char **argv); // New command
 static int cmd_save_network(int argc, char **argv);
@@ -1200,15 +1201,20 @@ void feetech_slave_task(void *pvParameters) {
     uint8_t buf[256];
 
     while (1) {
-        if (tinyusb_cdcacm_read_available(TINYUSB_CDC_ACM_0)) {
-            size_t rx_size = 0;
-            esp_err_t ret = tinyusb_cdcacm_read(TINYUSB_CDC_ACM_0, buf, sizeof(buf), &rx_size);
-            if (ret == ESP_OK && rx_size > 0) {
-                for (int i = 0; i < rx_size; i++) {
-                    parse_feetech_byte(&parser, buf[i]);
-                }
+        size_t rx_size = 0;
+        // Directly try to read data. The function will block until data is available or timeout.
+        // To make it non-blocking, we can use a timeout of 0.
+        // However, a small blocking timeout is better to yield CPU.
+        esp_err_t ret = tinyusb_cdcacm_read(TINYUSB_CDC_ACM_0, buf, sizeof(buf), &rx_size);
+
+        if (ret == ESP_OK && rx_size > 0) {
+            // Data received, process it
+            for (int i = 0; i < rx_size; i++) {
+                parse_feetech_byte(&parser, buf[i]);
             }
         } else {
+            // No data or an error occurred. In either case, we yield.
+            // This is functionally equivalent to checking for availability first.
             vTaskDelay(pdMS_TO_TICKS(10));
         }
     }
