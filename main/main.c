@@ -24,7 +24,7 @@
 #include "nvs_storage.h"
 #include "esp_dsp.h"
 #include "driver/usb_serial_jtag.h" // For native USB CDC
-#include "tinyusb.h"
+#include "esp_tinyusb.h"
 #include "tusb_cdc_acm.h"
 
 // --- Application Configuration ---

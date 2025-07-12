@@ -16,3 +16,4 @@ dependencies:
   #   public: true
   espressif/led_strip: '*'
   espressif/esp-dsp: '*'
+  espressif/esp_tinyusb: '*'
