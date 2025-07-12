@@ -121,6 +121,12 @@ static struct {
     struct arg_end *end;
 } get_servo_acceleration_args;
 
+static struct {
+    struct arg_int *id;
+    struct arg_int *limit;
+    struct arg_end *end;
+} set_torque_limit_args;
+
 
 // --- Application-Level Hardware Functions ---
 void read_sensor_state(float* sensor_data) {
@@ -451,6 +457,45 @@ static int cmd_save_network(int argc, char **argv) {
         g_network_weights_updated = false; 
     } else {
         ESP_LOGE(TAG, "Failed to manually save network to NVS.");
+    }
+    return 0;
+}
+
+// Function for the 'set_tl' command (re-implementation)
+static int cmd_set_torque_limit(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_torque_limit_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_torque_limit_args.end, argv[0]);
+        return 1;
+    }
+    int id = set_torque_limit_args.id->ival[0];
+    int limit = set_torque_limit_args.limit->ival[0];
+
+    if (id < 1 || id > NUM_SERVOS) {
+        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
+        return 1;
+    }
+    if (limit < 0 || limit > 1000) { // Torque limit is typically 0-1000 for Feetech
+        printf("Error: Torque limit value must be between 0 and 1000.\n");
+        return 1;
+    }
+
+    ESP_LOGI(TAG, "Setting torque limit for servo %d to %d.", id, limit);
+    feetech_write_word((uint8_t)id, REG_TORQUE_LIMIT, (uint16_t)limit);
+    printf("Attempted to set torque limit for servo %d to %d.\n", id, limit);
+
+    // Read back to verify
+    vTaskDelay(pdMS_TO_TICKS(20)); // Give a moment for the write to be processed before reading back
+    uint16_t read_torque_limit = 0;
+    esp_err_t read_status = feetech_read_word((uint8_t)id, REG_TORQUE_LIMIT, &read_torque_limit, 100); // 100ms timeout for read
+
+    if (read_status == ESP_OK) {
+        printf("Servo %d torque limit read back: %u. (Commanded: %d)\n", id, read_torque_limit, limit);
+        if (read_torque_limit != (uint16_t)limit) {
+            printf("WARNING: Read back torque limit (%u) does not match commanded value (%d) for servo %d!\n", read_torque_limit, limit, id);
+        }
+    } else {
+        printf("Error: Failed to read back torque limit for servo %d (err: %s).\n", id, esp_err_to_name(read_status));
     }
     return 0;
 }
@@ -872,6 +917,17 @@ void initialize_console(void) {
         .argtable = &get_servo_acceleration_args
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_sa_cmd));
+
+    set_torque_limit_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
+    set_torque_limit_args.limit = arg_int1(NULL, NULL, "<limit>", "Torque limit (0-1000)");
+    set_torque_limit_args.end = arg_end(2);
+    const esp_console_cmd_t set_tl_cmd = {
+        .command = "set_tl",
+        .help = "Set torque limit for a servo (with read-back)",
+        .func = &cmd_set_torque_limit,
+        .argtable = &set_torque_limit_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_tl_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
