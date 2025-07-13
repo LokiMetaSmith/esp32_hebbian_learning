@@ -65,6 +65,8 @@ static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
 
 // --- Mutex for protecting console output ---
 SemaphoreHandle_t g_console_mutex;
+// --- Mutex for protecting the physical servo bus (UART1) ---
+SemaphoreHandle_t g_uart1_mutex;
 
 // --- Forward Declarations ---
 void learning_loop_task(void *pvParameters);
