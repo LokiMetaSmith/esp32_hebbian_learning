@@ -48,6 +48,53 @@ cleanup:
     return err;
 }
 
+esp_err_t save_correction_map_to_nvs(const ServoCorrectionMap* maps) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error (%s) opening NVS handle for map save!", esp_err_to_name(err));
+        return err;
+    }
+
+    size_t total_size = sizeof(ServoCorrectionMap) * NUM_SERVOS;
+    err = nvs_set_blob(nvs_handle, "corr_maps", maps, total_size);
+    if(err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save correction maps: %s", esp_err_to_name(err));
+        goto map_cleanup;
+    }
+
+    err = nvs_commit(nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "NVS commit for maps failed: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "Correction maps saved successfully to NVS.");
+    }
+
+map_cleanup:
+    nvs_close(nvs_handle);
+    return err;
+}
+
+esp_err_t load_correction_map_from_nvs(ServoCorrectionMap* maps) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error (%s) opening NVS handle for map load!", esp_err_to_name(err));
+        return err;
+    }
+
+    size_t required_size = sizeof(ServoCorrectionMap) * NUM_SERVOS;
+    err = nvs_get_blob(nvs_handle, "corr_maps", maps, &required_size);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to load correction maps: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "Correction maps loaded successfully from NVS.");
+    }
+
+    nvs_close(nvs_handle);
+    return err;
+}
+
 
 esp_err_t load_network_from_nvs(HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl) {
     nvs_handle_t nvs_handle;
