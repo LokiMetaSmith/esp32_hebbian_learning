@@ -2,7 +2,7 @@
 /build/
 /dependencies.lock
 /managed_components/
-sdkconfig
+# sdkconfig  <- We will track this to ensure consistent build config
 sdkconfig.old
 sdkconfig.default
 

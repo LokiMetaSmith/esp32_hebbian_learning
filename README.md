@@ -27,10 +27,11 @@ Over time, the robot builds an internal model of its own physics, learning the c
 * **Predictive Hebbian Model:** A computationally lightweight and biologically-inspired learning algorithm.
 * **Modular C Drivers:** Clean, separated drivers for all hardware components, written for the ESP-IDF framework.
 * **Visual Feedback:** The onboard RGB LED provides real-time feedback on the model's learning "fitness," shifting from Red (high error) to Green (low error).
+* **Feetech Slave Interface:** The ESP32 exposes a Feetech-compatible slave interface over its native USB port. This allows it to be controlled by higher-level frameworks like **LeRobot** as if it were a smart servo controller.
 
 ## Hardware Required
 
-1.  **Microcontroller:** [ESP32-S3-DevKitC-1 v1.1](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/hw-reference/esp32s3-devkitc-1/index.html) (or a similar ESP32-S3 board).
+1.  **Microcontroller:** An **ESP32-S3** board with access to the native USB-OTG port (e.g., [ESP32-S3-DevKitC-1 v1.1](https://docs.espressif.com/projects/esp-idf/en/latest/esp32s3/hw-reference/esp32s3-devkitc-1/index.html)).
 2.  **Robotic Arm:** SO100 / SO-101 with FeeTech Serial Bus Servos.
 3.  **Sensor:** [SparkFun BMA400 Accelerometer](https://www.sparkfun.com/products/18985) (or another BMA400 breakout).
 4.  **Bus Adapter:** [Waveshare Bus Servo Adapter (A)](https://www.waveshare.com/wiki/Bus_Servo_Adapter_(A)). This is required to interface the ESP32's UART with the half-duplex serial bus of the FeeTech servos.
@@ -62,8 +63,10 @@ Properly wiring the components is critical. Follow this guide carefully.
 
 ## Software & Dependencies
 
-This project is built using the **ESP-IDF v5.4**. It relies on one managed component that must be installed before building:
+This project is built using the **ESP-IDF v5.4**. It relies on the following managed components, which are listed in `main/idf_component.yml`:
 * **`espressif/led_strip`**: The official driver for the addressable RGB LED.
+* **`espressif/esp-dsp`**: The ESP Digital Signal Processing library.
+* **`espressif/esp_tinyusb`**: The component providing the native USB driver for the slave interface.
 
 ## Project Structure
 
