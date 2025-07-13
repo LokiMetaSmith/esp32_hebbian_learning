@@ -483,9 +483,6 @@ void learning_loop_task(void *pvParameters) {
     vTaskDelete(NULL); // Task should delete itself if it ever exits the loop.
 }
 
-// --- CONSOLE COMMANDS & SETUP ---
-static int cmd_save_network(int argc, char **argv) {
-    ESP_LOGI(TAG, "Manual save: Saving network to NVS...");
     if (save_network_to_nvs(g_hl, g_ol, g_pl) == ESP_OK) {
         g_network_weights_updated = false; 
     } else {
@@ -727,8 +724,6 @@ static int cmd_set_pos(int argc, char **argv) {
     return 0;
 }
 
-// --- CONSOLE COMMANDS & SETUP ---
-
 static int cmd_get_pos(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&get_pos_args);
     if (nerrors != 0) {
@@ -854,8 +849,6 @@ static int cmd_rw_stop(int argc, char **argv) {
     }
     return 0;
 }
-
-// --- CONSOLE COMMANDS & SETUP ---
 
 static int cmd_set_accel(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_accel_args);
