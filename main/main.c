@@ -40,6 +40,9 @@ HiddenLayer* g_hl;
 OutputLayer* g_ol;
 PredictionLayer* g_pl;
 
+// --- Global Correction Maps ---
+ServoCorrectionMap g_correction_maps[NUM_SERVOS];
+
 // --- Global variables for smart network saving ---
 static bool g_network_weights_updated = false;
 static float g_best_fitness_achieved = 0.0f;
@@ -111,6 +114,11 @@ static struct {
     struct arg_int *value;
     struct arg_end *end;
 } set_accel_args;
+
+static struct {
+    struct arg_int *id;
+    struct arg_end *end;
+} start_map_cal_args;
 
 
 // --- Application-Level Hardware Functions ---
@@ -454,6 +462,82 @@ static int cmd_save_network(int argc, char **argv) {
     } else {
         ESP_LOGE(TAG, "Failed to manually save network to NVS.");
     }
+    return 0;
+}
+
+static int get_char_with_timeout(uint32_t timeout_ms) {
+    char c = 0;
+    if (read(0, &c, 1) > 0) {
+        return c;
+    }
+    return -1;
+}
+
+static int cmd_start_map_cal(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&start_map_cal_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, start_map_cal_args.end, argv[0]);
+        return 1;
+    }
+    int id = start_map_cal_args.id->ival[0];
+    if (id < 1 || id > NUM_SERVOS) {
+        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
+        return 1;
+    }
+    uint8_t servo_id = (uint8_t)id;
+    int map_index = id - 1;
+
+    printf("\n--- Starting Calibration for Servo %d ---\n", servo_id);
+
+    // Temporarily set fast acceleration and high torque for calibration
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        feetech_write_byte(servo_id, REG_ACCELERATION, 20); // Fast accel
+        feetech_write_word(servo_id, REG_TORQUE_LIMIT, 700); // High torque
+        xSemaphoreGive(g_uart1_mutex);
+    }
+
+    printf("1. Manually move servo %d to its MINIMUM position, then press ENTER.\n", servo_id);
+    while(get_char_with_timeout(100) != '\n'); // Wait for Enter
+
+    uint16_t min_pos = 0;
+    feetech_read_word(servo_id, REG_PRESENT_POSITION, &min_pos, 100);
+    printf("--> Minimum position recorded: %u\n\n", min_pos);
+
+    printf("2. Manually move servo %d to its MAXIMUM position, then press ENTER.\n", servo_id);
+    while(get_char_with_timeout(100) != '\n'); // Wait for Enter
+
+    uint16_t max_pos = 0;
+    feetech_read_word(servo_id, REG_PRESENT_POSITION, &max_pos, 100);
+    printf("--> Maximum position recorded: %u\n\n", max_pos);
+
+    if (max_pos <= min_pos) {
+        printf("Error: Max position must be greater than min position. Aborting.\n");
+        return 1;
+    }
+
+    printf("3. Starting automatic calibration sweep from %u to %u...\n", min_pos, max_pos);
+    ServoCorrectionMap* map = &g_correction_maps[map_index];
+
+    for (int i = 0; i < CORRECTION_MAP_POINTS; i++) {
+        float fraction = (float)i / (CORRECTION_MAP_POINTS - 1);
+        uint16_t commanded_pos = min_pos + (uint16_t)(fraction * (max_pos - min_pos));
+
+        map->points[i].commanded_pos = commanded_pos;
+
+        if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+            feetech_write_word(servo_id, REG_GOAL_POSITION, commanded_pos);
+            vTaskDelay(pdMS_TO_TICKS(400)); // Wait for move to complete
+            feetech_read_word(servo_id, REG_PRESENT_POSITION, &map->points[i].actual_pos, 100);
+            xSemaphoreGive(g_uart1_mutex);
+        }
+
+        printf("  Point %2d/%d: Commanded: %4u -> Actual: %4u\n", i + 1, CORRECTION_MAP_POINTS, map->points[i].commanded_pos, map->points[i].actual_pos);
+    }
+
+    map->is_calibrated = true;
+    printf("\nCalibration complete for servo %d. Saving to NVS...\n", servo_id);
+    save_correction_map_to_nvs(g_correction_maps);
+
     return 0;
 }
 
@@ -827,6 +911,16 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_accel_raw_cmd));
 
+    start_map_cal_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID to calibrate (1-6)");
+    start_map_cal_args.end = arg_end(1);
+    const esp_console_cmd_t start_map_cal_cmd = {
+        .command = "start_map_cal",
+        .help = "Start the position correction mapping calibration for a servo",
+        .func = &cmd_start_map_cal,
+        .argtable = &start_map_cal_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&start_map_cal_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");
@@ -856,6 +950,16 @@ void app_main(void) {
         initialize_network(g_hl, g_ol, g_pl);
     } else {
         ESP_LOGI(TAG, "Network loaded successfully from NVS.");
+    }
+
+    if (load_correction_map_from_nvs(g_correction_maps) != ESP_OK) {
+        ESP_LOGI(TAG, "No correction maps found in NVS. Using default (uncalibrated).");
+        // Initialize maps as uncalibrated
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            g_correction_maps[i].is_calibrated = false;
+        }
+    } else {
+        ESP_LOGI(TAG, "Correction maps loaded successfully from NVS.");
     }
     
     initialize_robot_arm();
