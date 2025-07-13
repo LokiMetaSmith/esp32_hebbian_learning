@@ -2,6 +2,7 @@
 #define MAIN_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 // --- Application Configuration ---
 #define NUM_SERVOS 6
