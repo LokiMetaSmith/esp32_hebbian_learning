@@ -290,34 +290,36 @@ void perform_random_walk(float* action_output_vector) {
     }
 
     // ESP_LOGI(TAG, "Performing random walk step...");
-    for (int i = 0; i < NUM_SERVOS; i++) {
-        uint16_t current_pos = 0;
-        // Use a slightly longer timeout for reading position in random walk as it's less critical for timing than the learning loop
-        esp_err_t read_status = feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 75);
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            uint16_t current_pos = 0;
+            // Use a slightly longer timeout for reading position in random walk as it's less critical for timing than the learning loop
+            esp_err_t read_status = feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 75);
 
-        if (read_status != ESP_OK) {
-            ESP_LOGW(TAG, "RW: Failed to read pos for servo %d, skipping its move.", servo_ids[i]);
-            continue; // Skip this servo if read fails
+            if (read_status != ESP_OK) {
+                ESP_LOGW(TAG, "RW: Failed to read pos for servo %d, skipping its move.", servo_ids[i]);
+                continue; // Skip this servo if read fails
+            }
+            int delta_pos = (rand() % (2 * g_random_walk_max_delta_pos + 1)) - g_random_walk_max_delta_pos;
+            int new_pos_signed = (int)current_pos + delta_pos;
+
+            uint16_t new_goal_pos;
+            if (new_pos_signed < SERVO_POS_MIN) {
+                new_goal_pos = SERVO_POS_MIN;
+            } else if (new_pos_signed > SERVO_POS_MAX) {
+                new_goal_pos = SERVO_POS_MAX;
+            } else {
+                new_goal_pos = (uint16_t)new_pos_signed;
+            }
+
+            feetech_write_word(servo_ids[i], REG_GOAL_POSITION, new_goal_pos);
+
+            if (action_output_vector) {
+                action_output_vector[i] = ((float)new_goal_pos - SERVO_POS_MIN) / (SERVO_POS_MAX - SERVO_POS_MIN) * 2.0f - 1.0f;
+            }
+            vTaskDelay(pdMS_TO_TICKS(10)); // Give a small delay between each servo move
         }
-        int delta_pos = (rand() % (2 * g_random_walk_max_delta_pos + 1)) - g_random_walk_max_delta_pos;
-        int new_pos_signed = (int)current_pos + delta_pos;
-
-        uint16_t new_goal_pos;
-        if (new_pos_signed < SERVO_POS_MIN) {
-            new_goal_pos = SERVO_POS_MIN;
-        } else if (new_pos_signed > SERVO_POS_MAX) {
-            new_goal_pos = SERVO_POS_MAX;
-        } else {
-            new_goal_pos = (uint16_t)new_pos_signed;
-        }
-
-        feetech_write_word(servo_ids[i], REG_GOAL_POSITION, new_goal_pos);
-
-        if (action_output_vector) {
-            action_output_vector[i] = ((float)new_goal_pos - SERVO_POS_MIN) / (SERVO_POS_MAX - SERVO_POS_MIN) * 2.0f - 1.0f;
-        }
-        // A small delay per servo might be good for bus traffic, but g_random_walk_interval_ms controls overall frequency
-        // vTaskDelay(pdMS_TO_TICKS(5));
+        xSemaphoreGive(g_uart1_mutex);
     }
     g_last_random_walk_time_us = current_time_us;
 }
@@ -442,413 +444,13 @@ void learning_loop_task(void *pvParameters) {
     vTaskDelete(NULL); // Task should delete itself if it ever exits the loop.
 }
 
-    if (save_network_to_nvs(g_hl, g_ol, g_pl) == ESP_OK) {
-        g_network_weights_updated = false; 
-    } else {
-        ESP_LOGE(TAG, "Failed to manually save network to NVS.");
-    }
-    return 0;
-}
-
-static int cmd_get_accel_raw(int argc, char **argv) {
-    float ax, ay, az;
-    if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
-        printf("Raw Accelerometer: X=%.4f, Y=%.4f, Z=%.4f (G)\n", ax, ay, az);
-    } else {
-        printf("Error: Failed to read accelerometer data.\n");
-        return 1;
-    }
-    return 0;
-}
-
-static int cmd_reset_network(int argc, char **argv) {
-    /* FORCED RE-INIT || load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK */
-    g_hl = malloc(sizeof(HiddenLayer)); g_ol = malloc(sizeof(OutputLayer)); g_pl = malloc(sizeof(PredictionLayer));
-    initialize_network(g_hl, g_ol, g_pl);
-    save_network_to_nvs(g_hl, g_ol, g_pl);
-	printf("Forcing network re-initialization");
-	return 0;
-}
-
-static int cmd_export_network(int argc, char **argv) {
-    printf("\n--- BEGIN NN EXPORT ---\n");
-    printf("{\"hidden_layer\":{\"bias\":[");
-    for(int i=0; i<HIDDEN_NEURONS; i++) {
-        printf("%f", g_hl->hidden_bias[i]);
-        if (i < HIDDEN_NEURONS - 1) printf(",");
-    }
-    printf("],\"weights\":[");
-    for(int i=0; i<HIDDEN_NEURONS; i++) {
-        printf("[");
-        for(int j=0; j<INPUT_NEURONS; j++) {
-            printf("%f", g_hl->weights[i][j]);
-            if (j < INPUT_NEURONS - 1) printf(",");
-        }
-        printf("]");
-        if (i < HIDDEN_NEURONS - 1) printf(",");
-    }
-    printf("]},");
-
-    printf("\"output_layer\":{\"bias\":[");
-    for(int i=0; i<OUTPUT_NEURONS; i++) {
-        printf("%f", g_ol->output_bias[i]);
-        if (i < OUTPUT_NEURONS - 1) printf(",");
-    }
-    printf("],\"weights\":[");
-    // OutputLayer weights: OUTPUT_NEURONS is now NUM_SERVOS * 2
-    for(int i=0; i<OUTPUT_NEURONS; i++) {
-        printf("[");
-        for(int j=0; j<HIDDEN_NEURONS; j++) {
-            printf("%f", g_ol->weights[i][j]);
-            if (j < HIDDEN_NEURONS - 1) printf(",");
-        }
-        printf("]");
-        if (i < OUTPUT_NEURONS - 1) printf(",");
-    }
-    printf("]},");
-
-    printf("\"prediction_layer\":{\"bias\":[");
-    for(int i=0; i<PRED_NEURONS; i++) {
-        printf("%f", g_pl->pred_bias[i]);
-        if (i < PRED_NEURONS - 1) printf(",");
-    }
-    printf("],\"weights\":[");
-    for(int i=0; i<PRED_NEURONS; i++) {
-        printf("[");
-        for(int j=0; j<HIDDEN_NEURONS; j++) {
-            printf("%f", g_pl->weights[i][j]);
-            if (j < HIDDEN_NEURONS - 1) printf(",");
-        }
-        printf("]");
-        if (i < PRED_NEURONS - 1) printf(",");
-    }
-    printf("]}}\n");
-    printf("--- END NN EXPORT ---\n");
-    return 0;
-}
-
-static int cmd_set_pos(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_pos_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_pos_args.end, argv[0]);
-        return 1;
-    }
-    int id = set_pos_args.id->ival[0];
-    int pos = set_pos_args.pos->ival[0];
-
-    if (id < 1 || id > NUM_SERVOS) {
-        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
-        return 1;
-    }
-    if (pos < SERVO_POS_MIN || pos > SERVO_POS_MAX) {
-        printf("Error: Position must be between %d and %d\n", SERVO_POS_MIN, SERVO_POS_MAX);
-        return 1;
-    }
-
-    ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
-    feetech_write_word(id, REG_GOAL_POSITION, pos);
-    return 0;
-}
-
-static int cmd_get_pos(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&get_pos_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, get_pos_args.end, argv[0]);
-        return 1;
-    }
-    int id = get_pos_args.id->ival[0];
-
-    if (id < 0 || id > 253) {
-        printf("Error: Servo ID must be between 0 and 253.\n");
-        return 1;
-    }
-
-    uint16_t current_position = 0;
-    esp_err_t ret = feetech_read_word((uint8_t)id, REG_PRESENT_POSITION, &current_position, 100);
-
-    if (ret == ESP_OK) {
-        printf("Servo %d current position: %u\n", id, current_position);
-    } else if (ret == ESP_ERR_TIMEOUT) {
-        printf("Error: Timeout reading position from servo %d.\n", id);
-    } else {
-        printf("Error: Failed to read position from servo %d (err: %s).\n", id, esp_err_to_name(ret));
-    }
-    return 0;
-}
-
-static int cmd_get_current(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&get_current_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, get_current_args.end, argv[0]);
-        return 1;
-    }
-    int id = get_current_args.id->ival[0];
-
-    if (id < 0 || id > 253) {
-        printf("Error: Servo ID must be between 0 and 253.\n");
-        return 1;
-    }
-
-    uint16_t raw_current = 0;
-    esp_err_t ret = feetech_read_word((uint8_t)id, REG_PRESENT_CURRENT, &raw_current, 100);
-
-    if (ret == ESP_OK) {
-        float current_mA = (float)raw_current * 6.5f;
-        printf("Servo %d present current: %u (raw) -> %.2f mA (%.3f A)\n", id, raw_current, current_mA, current_mA / 1000.0f);
-    } else if (ret == ESP_ERR_TIMEOUT) {
-        printf("Error: Timeout reading current from servo %d.\n", id);
-    } else {
-        printf("Error: Failed to read current from servo %d (err: %s).\n", id, esp_err_to_name(ret));
-    }
-    return 0;
-}
-
-static int cmd_babble_start(int argc, char **argv) {
-    if (!g_learning_loop_active) {
-        g_learning_loop_active = true;
-        ESP_LOGI(TAG, "Learning loop (motor babble) started.");
-    } else {
-        ESP_LOGI(TAG, "Learning loop (motor babble) is already active.");
-    }
-    return 0;
-}
-
-static int cmd_babble_stop(int argc, char **argv) {
-    if (g_learning_loop_active) {
-        g_learning_loop_active = false;
-        ESP_LOGI(TAG, "Learning loop (motor babble) stopped.");
-    } else {
-        ESP_LOGI(TAG, "Learning loop (motor babble) is not active.");
-    }
-    return 0;
-}
-
-static int cmd_rw_start(int argc, char **argv) {
-    if (!g_random_walk_active) {
-        ESP_LOGI(TAG, "Starting standalone random walk. Setting acceleration to global value: %u", g_servo_acceleration);
-        for (int i = 0; i < NUM_SERVOS; i++) {
-            feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
-            vTaskDelay(pdMS_TO_TICKS(5)); // Small delay
-        }
-
-        g_random_walk_active = true;
-        if (g_random_walk_task_handle == NULL) {
-            xTaskCreate(random_walk_task_fn, "random_walk_task", 3072, NULL, 5, &g_random_walk_task_handle);
-            ESP_LOGI(TAG, "Random Walk task created and resumed/started.");
-        } else {
-            // If task handle exists, it might be suspended or will pick up the flag.
-            // For simplicity, we don't explicitly resume if it were suspended.
-            // The task loop itself checks g_random_walk_active.
-            ESP_LOGI(TAG, "Random Walk (standalone) resumed/started.");
-        }
-    } else {
-        ESP_LOGI(TAG, "Random Walk (standalone) is already active.");
-    }
-    return 0;
-}
-
-static int cmd_rw_stop(int argc, char **argv) {
-    if (g_random_walk_active) {
-        g_random_walk_active = false;
-        // The task will see the flag and delete itself.
-        // We set the handle to NULL so it can be recreated.
-        g_random_walk_task_handle = NULL;
-        ESP_LOGI(TAG, "Random Walk (standalone) stopped.");
-    } else {
-        ESP_LOGI(TAG, "Random Walk (standalone) is not active.");
-    }
-    return 0;
-}
-
-static int cmd_set_accel(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_accel_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_accel_args.end, argv[0]);
-        return 1;
-    }
-    int accel_val = set_accel_args.value->ival[0];
-
-    if (accel_val < 0 || accel_val > 254) { // Typical range for Feetech servo acceleration
-        printf("Error: Acceleration value must be between 0 and 254.\n");
-        return 1;
-    }
-
-    g_servo_acceleration = (uint8_t)accel_val;
-    ESP_LOGI(TAG, "Setting servo acceleration to %u for all servos.", g_servo_acceleration);
-
-    for (int i = 0; i < NUM_SERVOS; i++) {
-        feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
-        vTaskDelay(pdMS_TO_TICKS(5)); // Small delay between commands
-    }
-    printf("Servo acceleration set to %u for all servos.\n", g_servo_acceleration);
-    return 0;
-}
-
-
-static int cmd_rw_set_params(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&rw_set_params_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, rw_set_params_args.end, argv[0]);
-        return 1;
-    }
-    int delta_pos = rw_set_params_args.delta_pos->ival[0];
-    int interval_ms = rw_set_params_args.interval_ms->ival[0];
-
-    if (delta_pos <= 0 || delta_pos > 1000) { // Max reasonable delta
-        printf("Error: Max delta position must be between 1 and 1000.\n");
-        return 1;
-    }
-    if (interval_ms < 20 || interval_ms > 60000) { // Enforce minimum interval of 20ms
-        printf("Error: Interval MS must be between 20 and 60000.\n");
-        return 1;
-    }
-
-    g_random_walk_max_delta_pos = (uint16_t)delta_pos;
-    g_random_walk_interval_ms = interval_ms;
-    g_last_random_walk_time_us = 0; // Reset timer to apply new interval immediately if needed
-
-    ESP_LOGI(TAG, "Random walk params updated: max_delta_pos=%u, interval_ms=%d",
-             g_random_walk_max_delta_pos, g_random_walk_interval_ms);
-    printf("Random walk parameters updated.\n");
-    return 0;
-}
-
 // --- CONSOLE COMMANDS & SETUP ---
-
 static int cmd_save_network(int argc, char **argv) {
     ESP_LOGI(TAG, "Manual save: Saving network to NVS...");
     if (save_network_to_nvs(g_hl, g_ol, g_pl) == ESP_OK) {
         g_network_weights_updated = false;
     } else {
         ESP_LOGE(TAG, "Failed to manually save network to NVS.");
-    }
-    return 0;
-}
-
-static int cmd_set_mode(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_mode_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_mode_args.end, argv[0]);
-        return 1;
-    }
-    int mode_val = set_mode_args.mode->ival[0];
-
-    if (mode_val < 0 || mode_val > MODE_HYBRID) {
-        printf("Error: Invalid mode. Must be 0-3.\n");
-        return 1;
-    }
-
-    g_current_mode = (OperatingMode)mode_val;
-    const char* mode_str = "Unknown";
-    switch(g_current_mode) {
-        case MODE_PASSTHROUGH: mode_str = "Passthrough"; break;
-        case MODE_CORRECTION: mode_str = "Correction"; break;
-        case MODE_SMOOTHING: mode_str = "Smoothing"; break;
-        case MODE_HYBRID: mode_str = "Hybrid"; break;
-    }
-    printf("Operating mode set to: %d (%s)\n", g_current_mode, mode_str);
-
-    return 0;
-}
-
-// Function for the 'set_tl' command (re-implementation)
-static int cmd_set_torque_limit(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_torque_limit_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_torque_limit_args.end, argv[0]);
-        return 1;
-    }
-    int id = set_torque_limit_args.id->ival[0];
-    int limit = set_torque_limit_args.limit->ival[0];
-
-    if (id < 1 || id > NUM_SERVOS) {
-        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
-        return 1;
-    }
-    if (limit < 0 || limit > 1000) { // Torque limit is typically 0-1000 for Feetech
-        printf("Error: Torque limit value must be between 0 and 1000.\n");
-        return 1;
-    }
-
-    ESP_LOGI(TAG, "Setting torque limit for servo %d to %d.", id, limit);
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_write_word((uint8_t)id, REG_TORQUE_LIMIT, (uint16_t)limit);
-        printf("Attempted to set torque limit for servo %d to %d.\n", id, limit);
-
-        // Read back to verify
-        vTaskDelay(pdMS_TO_TICKS(20)); // Give a moment for the write to be processed before reading back
-        uint16_t read_torque_limit = 0;
-        esp_err_t read_status = feetech_read_word((uint8_t)id, REG_TORQUE_LIMIT, &read_torque_limit, 100);
-
-        xSemaphoreGive(g_uart1_mutex);
-
-        if (read_status == ESP_OK) {
-        printf("Servo %d torque limit read back: %u. (Commanded: %d)\n", id, read_torque_limit, limit);
-        if (read_torque_limit != (uint16_t)limit) {
-            printf("WARNING: Read back torque limit (%u) does not match commanded value (%d) for servo %d!\n", read_torque_limit, limit, id);
-        }
-    } else {
-        printf("Error: Failed to read back torque limit for servo %d (err: %s).\n", id, esp_err_to_name(read_status));
-    }
-    return 0;
-}
-
-// Function for 'set_sa' command
-static int cmd_set_servo_acceleration(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&set_servo_acceleration_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, set_servo_acceleration_args.end, argv[0]);
-        return 1;
-    }
-    int id = set_servo_acceleration_args.id->ival[0];
-    int accel = set_servo_acceleration_args.accel->ival[0];
-
-    if (id < 1 || id > NUM_SERVOS) {
-        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
-        return 1;
-    }
-    if (accel < 0 || accel > 254) { // Acceleration is 0-254
-        printf("Error: Acceleration value must be between 0 and 254.\n");
-        return 1;
-    }
-
-    ESP_LOGI(TAG, "Setting acceleration for servo %d to %d.", id, accel);
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_write_byte((uint8_t)id, REG_ACCELERATION, (uint8_t)accel);
-        xSemaphoreGive(g_uart1_mutex);
-    }
-    printf("Acceleration for servo %d set to %d.\n", id, accel);
-    return 0;
-}
-
-// Function for 'get_sa' command
-static int cmd_get_servo_acceleration(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&get_servo_acceleration_args);
-    if (nerrors != 0) {
-        arg_print_errors(stderr, get_servo_acceleration_args.end, argv[0]);
-        return 1;
-    }
-    int id = get_servo_acceleration_args.id->ival[0];
-
-    if (id < 1 || id > NUM_SERVOS) {
-        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
-        return 1;
-    }
-
-    uint16_t read_value_word = 0; // To store the word read by feetech_read_word
-    ESP_LOGI(TAG, "Reading acceleration for servo %d.", id);
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        esp_err_t read_status = feetech_read_word((uint8_t)id, REG_ACCELERATION, &read_value_word, 100);
-        xSemaphoreGive(g_uart1_mutex);
-
-        if (read_status == ESP_OK) {
-            uint8_t accel_value = (uint8_t)(read_value_word & 0xFF); // Acceleration is the LSB
-            printf("Servo %d current acceleration: %u\n", id, accel_value);
-        } else {
-            printf("Error: Failed to read acceleration for servo %d (err: %s).\n", id, esp_err_to_name(read_status));
-        }
-    } else {
-        printf("Error: Could not obtain UART1 mutex.\n");
     }
     return 0;
 }
@@ -1048,9 +650,12 @@ static int cmd_babble_stop(int argc, char **argv) {
 static int cmd_rw_start(int argc, char **argv) {
     if (!g_random_walk_active) {
         ESP_LOGI(TAG, "Starting standalone random walk. Setting acceleration to global value: %u", g_servo_acceleration);
-        for (int i = 0; i < NUM_SERVOS; i++) {
-            feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
-            vTaskDelay(pdMS_TO_TICKS(5)); // Small delay
+        if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+            for (int i = 0; i < NUM_SERVOS; i++) {
+                feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
+                vTaskDelay(pdMS_TO_TICKS(5)); // Small delay
+            }
+            xSemaphoreGive(g_uart1_mutex);
         }
 
         g_random_walk_active = true;
@@ -1235,6 +840,7 @@ void app_main(void) {
     if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory!"); return; }
 
     g_console_mutex = xSemaphoreCreateMutex();
+    g_uart1_mutex = xSemaphoreCreateMutex();
 
     nvs_storage_initialize();
     feetech_initialize();
