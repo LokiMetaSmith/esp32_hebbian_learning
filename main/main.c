@@ -66,6 +66,10 @@ static const float CURRENT_LOGGING_THRESHOLD_A = 0.005f;
 #define DEFAULT_SERVO_ACCELERATION 50 // Default acceleration value (0-254, 0=instant)
 static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
 
+// --- Babble Safety Limit Configuration ---
+static uint16_t g_max_torque_limit = 200; // Default max torque for babble (0-1000)
+static uint8_t g_min_accel_value = 200; // Default min acceleration for babble (0-254, 0=fastest)
+
 // --- Mutex for protecting console output ---
 SemaphoreHandle_t g_console_mutex;
 // --- Mutex for protecting the physical servo bus (UART1) ---
@@ -119,6 +123,16 @@ static struct {
     struct arg_int *id;
     struct arg_end *end;
 } start_map_cal_args;
+
+static struct {
+    struct arg_int *limit;
+    struct arg_end *end;
+} set_max_torque_args;
+
+static struct {
+    struct arg_int *accel;
+    struct arg_end *end;
+} set_max_accel_args;
 
 
 // --- Application-Level Hardware Functions ---
@@ -188,23 +202,35 @@ void initialize_robot_arm() {
 
 void execute_on_robot_arm(const float* action_vector) {
     if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        // action_vector contains NUM_SERVOS positions then NUM_SERVOS accelerations
+        // action_vector contains NUM_SERVOS * 3 params: pos, accel, torque
         for (int i = 0; i < NUM_SERVOS; i++) {
-            // Decode and set acceleration
-            float norm_accel = action_vector[NUM_SERVOS + i]; // Normalized acceleration from NN [-1, 1]
-            uint8_t hw_accel = (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 100.0f); // Scale to 0-100
-            if (hw_accel > 254) hw_accel = 254; // Clamp to max hardware value if necessary (though 100 is current max)
+            // --- Decode and Clamp Acceleration ---
+            float norm_accel = action_vector[NUM_SERVOS + i]; // Normalized accel from NN [-1, 1]
+            uint8_t commanded_accel = (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 254.0f); // Scale to 0-254
+            // Clamp to safety limit (higher value is slower)
+            if (commanded_accel < g_min_accel_value) {
+                commanded_accel = g_min_accel_value;
+            }
+            feetech_write_byte(servo_ids[i], REG_ACCELERATION, commanded_accel);
+            vTaskDelay(pdMS_TO_TICKS(5));
 
-            feetech_write_byte(servo_ids[i], REG_ACCELERATION, hw_accel);
-            vTaskDelay(pdMS_TO_TICKS(10)); // Give a small delay between commands
+            // --- Decode and Clamp Torque ---
+            float norm_torque = action_vector[NUM_SERVOS * 2 + i]; // Normalized torque from NN [-1, 1]
+            uint16_t commanded_torque = (uint16_t)(((norm_torque + 1.0f) / 2.0f) * 1000.0f); // Scale to 0-1000
+            // Clamp to safety limit
+            if (commanded_torque > g_max_torque_limit) {
+                commanded_torque = g_max_torque_limit;
+            }
+            feetech_write_word(servo_ids[i], REG_TORQUE_LIMIT, commanded_torque);
+            vTaskDelay(pdMS_TO_TICKS(5));
 
-            // Decode and set position
+            // --- Decode and Set Position ---
             float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
             float scaled_pos = (norm_pos + 1.0f) / 2.0f; // Scale to 0-1
             uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
 
             feetech_write_word(servo_ids[i], REG_GOAL_POSITION, goal_position);
-            vTaskDelay(pdMS_TO_TICKS(10)); // Give a small delay between commands
+            vTaskDelay(pdMS_TO_TICKS(5));
         }
         xSemaphoreGive(g_uart1_mutex);
     }
@@ -387,16 +413,13 @@ void learning_loop_task(void *pvParameters) {
                 // and also executes the moves with current g_servo_acceleration (which is fine for this phase).
                 perform_random_walk(action_part);
 
-                // Now, generate and store random accelerations for the learning input
+                // Now, generate and store random accelerations and torques for the learning input
                 for (int i = 0; i < NUM_SERVOS; i++) {
                     action_part[NUM_SERVOS + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized accel
+                    action_part[NUM_SERVOS * 2 + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized torque
                 }
-                // Note: The accelerations set by execute_on_robot_arm in the next step will override
-                // the g_servo_acceleration used by perform_random_walk for this learning cycle's execution.
-                // This is a bit indirect but means the NN learns based on accelerations it *would* set.
-                // For more direct control, perform_random_walk would need not to execute.
-                // For now, we will execute the full action_part (including newly random accelerations)
-                // via execute_on_robot_arm below, which will set the new accelerations.
+                // execute_on_robot_arm will now be called, which applies the new random accel/torque
+                // values (clamped by safety limits) and the new position from perform_random_walk.
                 execute_on_robot_arm(action_part);
             }
 
@@ -773,6 +796,38 @@ static int cmd_rw_stop(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_set_max_torque(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_max_torque_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_max_torque_args.end, argv[0]);
+        return 1;
+    }
+    int limit = set_max_torque_args.limit->ival[0];
+    if (limit < 0 || limit > 1000) {
+        printf("Error: Torque limit must be between 0 and 1000.\n");
+        return 1;
+    }
+    g_max_torque_limit = (uint16_t)limit;
+    printf("Babble max torque limit set to: %u\n", g_max_torque_limit);
+    return 0;
+}
+
+static int cmd_set_max_accel(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_max_accel_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_max_accel_args.end, argv[0]);
+        return 1;
+    }
+    int accel = set_max_accel_args.accel->ival[0];
+    if (accel < 0 || accel > 254) {
+        printf("Error: Acceleration value must be between 0 and 254.\n");
+        return 1;
+    }
+    g_min_accel_value = (uint8_t)accel;
+    printf("Babble min acceleration value set to: %u (higher is slower)\n", g_min_accel_value);
+    return 0;
+}
+
 static int cmd_set_accel(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_accel_args);
     if (nerrors != 0) {
@@ -910,6 +965,26 @@ void initialize_console(void) {
         .argtable = NULL
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_accel_raw_cmd));
+
+    set_max_torque_args.limit = arg_int1(NULL, NULL, "<limit>", "Max torque for babble (0-1000)");
+    set_max_torque_args.end = arg_end(1);
+    const esp_console_cmd_t set_max_torque_cmd = {
+        .command = "set_max_torque",
+        .help = "Set the max torque limit for the learning loop",
+        .func = &cmd_set_max_torque,
+        .argtable = &set_max_torque_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_max_torque_cmd));
+
+    set_max_accel_args.accel = arg_int1(NULL, NULL, "<accel>", "Min acceleration value for babble (0-254, higher is slower)");
+    set_max_accel_args.end = arg_end(1);
+    const esp_console_cmd_t set_max_accel_cmd = {
+        .command = "set_max_accel",
+        .help = "Set the min acceleration value (max speed) for the learning loop",
+        .func = &cmd_set_max_accel,
+        .argtable = &set_max_accel_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_max_accel_cmd));
 
     start_map_cal_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID to calibrate (1-6)");
     start_map_cal_args.end = arg_end(1);

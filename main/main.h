@@ -11,8 +11,8 @@
 #define NUM_ACCEL_GYRO_PARAMS 6
 #define NUM_SERVO_FEEDBACK_PARAMS 3 // Position, Load, and Current for each servo
 
-// Action parameters: NUM_SERVOS for position, NUM_SERVOS for acceleration
-#define NUM_ACTION_PARAMS (NUM_SERVOS * 2)
+// Action parameters: NUM_SERVOS for position, NUM_SERVOS for acceleration, NUM_SERVOS for torque
+#define NUM_ACTION_PARAMS (NUM_SERVOS * 3)
 
 // Output neurons from the network's output layer, matching action parameters
 #define OUTPUT_NEURONS NUM_ACTION_PARAMS
