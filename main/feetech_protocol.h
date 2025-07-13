@@ -20,6 +20,7 @@
 #define SCS_INST_WRITE          0x03
 #define SCS_INST_REG_WRITE      0x04
 #define SCS_INST_ACTION         0x05
+#define SCS_INST_SYNC_READ      0x82
 #define SCS_INST_SYNC_WRITE     0x83
 #define SCS_BROADCAST_ID        0xFE
 

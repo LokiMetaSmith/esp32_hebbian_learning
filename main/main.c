@@ -1080,6 +1080,66 @@ void process_feetech_packet(const PacketParser *parser) {
             break;
         }
 
+        case SCS_INST_SYNC_READ: {
+            if (parser->length < 4) { // Must have Reg, Len, and at least one ID
+                // Send instruction error
+                break;
+            }
+            uint8_t start_addr = parser->params[0];
+            uint8_t read_len = parser->params[1];
+            uint8_t num_servos_to_read = parser->length - 4;
+
+            ESP_LOGI(TAG, "Slave: Received SYNC READ for %d servos, Reg 0x%02X, Len %d", num_servos_to_read, start_addr, read_len);
+
+            for (int i = 0; i < num_servos_to_read; i++) {
+                uint8_t current_id = parser->params[2 + i];
+
+                // --- Perform the actual read for the current servo ---
+                uint8_t status_packet[16];
+                uint8_t error = 0;
+                uint16_t read_data = 0;
+                esp_err_t read_status = ESP_FAIL;
+
+                if (read_len == 1 || read_len == 2) {
+                    read_status = feetech_read_word(current_id, start_addr, &read_data, 100);
+                } else {
+                    ESP_LOGE(TAG, "Slave: SYNC_READ unsupported read length: %d", read_len);
+                    error = (1 << 2); // Instruction Error
+                }
+
+                if (read_status != ESP_OK) {
+                    error |= (1 << 6); // Set Instruction Error bit on read failure
+                }
+
+                // --- Construct and send the response packet for this servo ---
+                status_packet[0] = 0xFF;
+                status_packet[1] = 0xFF;
+                status_packet[2] = current_id;
+                status_packet[3] = read_len + 2;
+                status_packet[4] = error;
+
+                uint8_t checksum = current_id + (read_len + 2) + error;
+
+                if (error == 0) {
+                    if (read_len == 1) {
+                        status_packet[5] = (uint8_t)(read_data & 0xFF);
+                        checksum += status_packet[5];
+                    } else if (read_len == 2) {
+                        status_packet[5] = (uint8_t)(read_data & 0xFF);
+                        status_packet[6] = (uint8_t)((read_data >> 8) & 0xFF);
+                        checksum += status_packet[5];
+                        checksum += status_packet[6];
+                    }
+                }
+
+                status_packet[5 + read_len] = ~checksum;
+
+                tinyusb_cdcacm_write_queue(TINYUSB_CDC_ACM_0, status_packet, 6 + read_len);
+            }
+            tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, 0); // Flush after sending all responses
+            break;
+        }
+
         case SCS_INST_READ: {
             uint8_t reg_addr = parser->params[0];
             uint8_t read_len = parser->params[1];
