@@ -62,6 +62,15 @@ static int64_t g_last_random_walk_time_us = 0;
 static float g_last_logged_total_current_A = -1.0f;
 static const float CURRENT_LOGGING_THRESHOLD_A = 0.005f;
 
+// --- Operating Mode ---
+typedef enum {
+    MODE_PASSTHROUGH = 0,
+    MODE_CORRECTION = 1,
+    MODE_SMOOTHING = 2,
+    MODE_HYBRID = 3,
+} OperatingMode;
+static OperatingMode g_current_mode = MODE_PASSTHROUGH;
+
 // --- Servo Configuration ---
 #define DEFAULT_SERVO_ACCELERATION 50 // Default acceleration value (0-254, 0=instant)
 static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
@@ -130,6 +139,11 @@ static struct {
     struct arg_int *limit;
     struct arg_end *end;
 } set_torque_limit_args;
+
+static struct {
+    struct arg_int *mode;
+    struct arg_end *end;
+} set_mode_args;
 
 
 // --- Application-Level Hardware Functions ---
@@ -462,6 +476,32 @@ static int cmd_save_network(int argc, char **argv) {
     } else {
         ESP_LOGE(TAG, "Failed to manually save network to NVS.");
     }
+    return 0;
+}
+
+static int cmd_set_mode(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_mode_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_mode_args.end, argv[0]);
+        return 1;
+    }
+    int mode_val = set_mode_args.mode->ival[0];
+
+    if (mode_val < 0 || mode_val > MODE_HYBRID) {
+        printf("Error: Invalid mode. Must be 0-3.\n");
+        return 1;
+    }
+
+    g_current_mode = (OperatingMode)mode_val;
+    const char* mode_str = "Unknown";
+    switch(g_current_mode) {
+        case MODE_PASSTHROUGH: mode_str = "Passthrough"; break;
+        case MODE_CORRECTION: mode_str = "Correction"; break;
+        case MODE_SMOOTHING: mode_str = "Smoothing"; break;
+        case MODE_HYBRID: mode_str = "Hybrid"; break;
+    }
+    printf("Operating mode set to: %d (%s)\n", g_current_mode, mode_str);
+
     return 0;
 }
 
@@ -933,6 +973,16 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&set_tl_cmd));
 
+    set_mode_args.mode = arg_int1(NULL, NULL, "<mode>", "Operating Mode (0:Passthrough, 1:Correction, 2:Smoothing, 3:Hybrid)");
+    set_mode_args.end = arg_end(1);
+    const esp_console_cmd_t set_mode_cmd = {
+        .command = "set_mode",
+        .help = "Set the robot's operating mode",
+        .func = &cmd_set_mode,
+        .argtable = &set_mode_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_mode_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");
@@ -1061,19 +1111,34 @@ void process_feetech_packet(const PacketParser *parser) {
 
         case SCS_INST_WRITE: {
             ESP_LOGI(TAG, "Slave: Received WRITE for ID %d", parser->id);
-            uint8_t reg_addr = parser->params[0];
-            // Check if it's a byte or word write based on length
-            if (parser->length == 4) { // 1 param (reg) + 1 value byte + Inst + Checksum
-                uint8_t value = parser->params[1];
-                ESP_LOGI(TAG, "  Write Byte to Reg 0x%02X with value %d", reg_addr, value);
-                feetech_write_byte(parser->id, reg_addr, value);
-            } else if (parser->length >= 5) { // 1 param (reg) + 2+ value bytes + Inst + Checksum
-                uint16_t value = parser->params[1] | (parser->params[2] << 8);
-                ESP_LOGI(TAG, "  Write Word to Reg 0x%02X with value %d", reg_addr, value);
-                feetech_write_word(parser->id, reg_addr, value);
+
+            // --- Mode-based Dispatcher for WRITE commands ---
+            switch (g_current_mode) {
+                case MODE_CORRECTION:
+                case MODE_SMOOTHING:
+                case MODE_HYBRID:
+                    // TODO: Implement advanced modes here
+                    ESP_LOGI(TAG, "Mode %d not yet implemented, using Passthrough.", g_current_mode);
+                    // Fall-through to passthrough for now
+                case MODE_PASSTHROUGH:
+                default: {
+                    // Default passthrough behavior
+                    uint8_t reg_addr = parser->params[0];
+                    if (parser->length == 4) { // Byte write
+                        uint8_t value = parser->params[1];
+                        ESP_LOGI(TAG, "  (Passthrough) Write Byte to Reg 0x%02X with value %d", reg_addr, value);
+                        feetech_write_byte(parser->id, reg_addr, value);
+                    } else if (parser->length >= 5) { // Word write
+                        uint16_t value = parser->params[1] | (parser->params[2] << 8);
+                        ESP_LOGI(TAG, "  (Passthrough) Write Word to Reg 0x%02X with value %d", reg_addr, value);
+                        feetech_write_word(parser->id, reg_addr, value);
+                    }
+                    break;
+                }
             }
+
             // The scservo_sdk expects a status packet in response to a write.
-            // While not always standard for Feetech, we send one for compatibility.
+            // We send one for compatibility regardless of the mode.
             uint8_t status_packet[6] = {0xFF, 0xFF, parser->id, 2, 0x00, (uint8_t)~(parser->id + 2)};
             tinyusb_cdcacm_write_queue(TINYUSB_CDC_ACM_0, status_packet, sizeof(status_packet));
             tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, 0);
