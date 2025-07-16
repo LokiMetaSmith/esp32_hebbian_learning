@@ -17,7 +17,7 @@
 // Output neurons from the network's output layer, matching action parameters
 #define OUTPUT_NEURONS NUM_ACTION_PARAMS
 
-// Input to the network: current sensor state PLUS the intended action vector (positions & accelerations).
+// Input to the network: current sensor state PLUS the intended action vector
 #define INPUT_NEURONS (NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS) + NUM_ACTION_PARAMS)
 #define HIDDEN_NEURONS 16
 // Prediction layer predicts the next sensor state only (does not predict actions themselves)

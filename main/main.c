@@ -23,6 +23,9 @@
 #include "led_indicator.h"
 #include "nvs_storage.h"
 #include "esp_dsp.h"
+#include "driver/usb_serial_jtag.h" // For native USB CDC
+#include "tinyusb.h"
+#include "tusb_cdc_acm.h"
 
 // --- Application Configuration ---
 
@@ -63,11 +66,36 @@ static const float CURRENT_LOGGING_THRESHOLD_A = 0.005f;
 #define DEFAULT_SERVO_ACCELERATION 50 // Default acceleration value (0-254, 0=instant)
 static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
 
+// --- Operating Mode ---
+typedef enum {
+    MODE_PASSTHROUGH = 0,
+    MODE_CORRECTION = 1,
+    MODE_SMOOTHING = 2,
+    MODE_HYBRID = 3,
+} OperatingMode;
+static OperatingMode g_current_mode = MODE_PASSTHROUGH;
+
+// --- Servo Configuration ---
+#define DEFAULT_SERVO_ACCELERATION 50 // Default acceleration value (0-254, 0=instant)
+static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
+
+// --- Babble Safety Limit Configuration ---
+static uint16_t g_max_torque_limit = 200; // Default max torque for babble (0-1000)
+static uint8_t g_min_accel_value = 200; // Default min acceleration for babble (0-254, 0=fastest)
+
+// --- Smoothing / Damping Configuration ---
+static float g_ema_alpha = 0.3f; // Smoothing factor for EMA filter
+static float g_smoothed_goal[NUM_SERVOS]; // Per-servo smoothed goal position
+static uint16_t g_trajectory_step_size = 10; // Max change per trajectory step
+
 // --- Mutex for protecting console output ---
 SemaphoreHandle_t g_console_mutex;
+// --- Mutex for protecting the physical servo bus (UART1) ---
+SemaphoreHandle_t g_uart1_mutex;
 
 // --- Forward Declarations ---
 void learning_loop_task(void *pvParameters);
+void feetech_slave_task(void *pvParameters);
 void initialize_console(void);
 static int cmd_set_accel(int argc, char **argv); // New command
 static int cmd_save_network(int argc, char **argv);
@@ -110,8 +138,89 @@ static struct {
     struct arg_end *end;
 } set_accel_args;
 
+static struct {
+    struct arg_int *id;
+    struct arg_end *end;
+} start_map_cal_args;
+
+static struct {
+    struct arg_int *limit;
+    struct arg_end *end;
+} set_max_torque_args;
+
+static struct {
+    struct arg_int *accel;
+    struct arg_end *end;
+} set_max_accel_args;
+
+static struct {
+    struct arg_dbl *alpha;
+    struct arg_end *end;
+} set_ema_alpha_args;
+
+static struct {
+    struct arg_int *step;
+    struct arg_end *end;
+} set_traj_step_args;
+
+static struct {
+    struct arg_int *mode;
+    struct arg_end *end;
+} set_mode_args;
+
 
 // --- Application-Level Hardware Functions ---
+
+// Helper function to apply the correction map
+static uint16_t get_corrected_position(uint8_t servo_id, uint16_t commanded_pos) {
+    int map_index = servo_id - 1;
+    if (map_index < 0 || map_index >= NUM_SERVOS || !g_correction_maps[map_index].is_calibrated) {
+        return commanded_pos; // Not calibrated, return original value
+    }
+
+    ServoCorrectionMap* map = &g_correction_maps[map_index];
+
+    // Find the two points to interpolate between
+    for (int i = 0; i < CORRECTION_MAP_POINTS - 1; i++) {
+        if (commanded_pos >= map->points[i].commanded_pos && commanded_pos <= map->points[i+1].commanded_pos) {
+            // Linear interpolation
+            float fraction = ((float)commanded_pos - map->points[i].commanded_pos) / ((float)map->points[i+1].commanded_pos - map->points[i].commanded_pos);
+            if (isnan(fraction) || isinf(fraction)) {
+                return map->points[i].actual_pos; // Avoid NaN/Inf if points are identical
+            }
+            uint16_t corrected_pos = map->points[i].actual_pos + (uint16_t)(fraction * ((float)map->points[i+1].actual_pos - map->points[i].actual_pos));
+            return corrected_pos;
+        }
+    }
+
+    // If outside the range, return the closest calibrated point's actual value
+    if (commanded_pos < map->points[0].commanded_pos) {
+        return map->points[0].actual_pos;
+    } else {
+        return map->points[CORRECTION_MAP_POINTS - 1].actual_pos;
+    }
+}
+
+// Helper function to move a servo along a smooth trajectory
+void move_servo_smoothly(uint8_t servo_id, uint16_t goal_position) {
+    uint16_t current_pos = 0;
+    if (feetech_read_word(servo_id, REG_PRESENT_POSITION, &current_pos, 100) != ESP_OK) {
+        // If we can't read the position, fall back to a direct write
+        feetech_write_word(servo_id, REG_GOAL_POSITION, goal_position);
+        return;
+    }
+
+    int16_t diff = goal_position - current_pos;
+    while (abs(diff) > g_trajectory_step_size) {
+        current_pos += (diff > 0) ? g_trajectory_step_size : -g_trajectory_step_size;
+        feetech_write_word(servo_id, REG_GOAL_POSITION, current_pos);
+        vTaskDelay(pdMS_TO_TICKS(20)); // Delay between steps
+        diff = goal_position - current_pos;
+    }
+    // Send the final goal position to ensure it lands precisely
+    feetech_write_word(servo_id, REG_GOAL_POSITION, goal_position);
+}
+
 void read_sensor_state(float* sensor_data) {
     float ax, ay, az;
     if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
@@ -789,6 +898,56 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_accel_raw_cmd));
 
+    set_max_torque_args.limit = arg_int1(NULL, NULL, "<limit>", "Max torque for babble (0-1000)");
+    set_max_torque_args.end = arg_end(1);
+    const esp_console_cmd_t set_max_torque_cmd = {
+        .command = "set_max_torque",
+        .help = "Set the max torque limit for the learning loop",
+        .func = &cmd_set_max_torque,
+        .argtable = &set_max_torque_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_max_torque_cmd));
+
+    set_max_accel_args.accel = arg_int1(NULL, NULL, "<accel>", "Min acceleration value for babble (0-254, higher is slower)");
+    set_max_accel_args.end = arg_end(1);
+    const esp_console_cmd_t set_max_accel_cmd = {
+        .command = "set_max_accel",
+        .help = "Set the min acceleration value (max speed) for the learning loop",
+        .func = &cmd_set_max_accel,
+        .argtable = &set_max_accel_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_max_accel_cmd));
+
+    set_ema_alpha_args.alpha = arg_dbl1(NULL, NULL, "<alpha>", "EMA alpha value (0.0-1.0)");
+    set_ema_alpha_args.end = arg_end(1);
+    const esp_console_cmd_t set_ema_alpha_cmd = {
+        .command = "set_ema_alpha",
+        .help = "Set the alpha for EMA smoothing (lower is smoother)",
+        .func = &cmd_set_ema_alpha,
+        .argtable = &set_ema_alpha_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_ema_alpha_cmd));
+
+    set_traj_step_args.step = arg_int1(NULL, NULL, "<step>", "Max position change per trajectory step (1-100)");
+    set_traj_step_args.end = arg_end(1);
+    const esp_console_cmd_t set_traj_step_cmd = {
+        .command = "set_traj_step",
+        .help = "Set the step size for trajectory generation",
+        .func = &cmd_set_traj_step,
+        .argtable = &set_traj_step_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_traj_step_cmd));
+
+    start_map_cal_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID to calibrate (1-6)");
+    start_map_cal_args.end = arg_end(1);
+    const esp_console_cmd_t start_map_cal_cmd = {
+        .command = "start_map_cal",
+        .help = "Start the position correction mapping calibration for a servo",
+        .func = &cmd_start_map_cal,
+        .argtable = &start_map_cal_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&start_map_cal_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");
@@ -804,13 +963,15 @@ void app_main(void) {
     if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory!"); return; }
 
     g_console_mutex = xSemaphoreCreateMutex();
+    g_uart1_mutex = xSemaphoreCreateMutex();
 
     nvs_storage_initialize();
     feetech_initialize();
     bma400_initialize();
     led_indicator_initialize();
+    initialize_usb_cdc(); // For Feetech slave command interface
     
-    initialize_console();
+    initialize_console(); // For debug on UART0
 
     if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
         ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
@@ -818,8 +979,34 @@ void app_main(void) {
     } else {
         ESP_LOGI(TAG, "Network loaded successfully from NVS.");
     }
+
+    if (load_correction_map_from_nvs(g_correction_maps) != ESP_OK) {
+        ESP_LOGI(TAG, "No correction maps found in NVS. Using default (uncalibrated).");
+        // Initialize maps as uncalibrated
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            g_correction_maps[i].is_calibrated = false;
+        }
+    } else {
+        ESP_LOGI(TAG, "Correction maps loaded successfully from NVS.");
+    }
     
     initialize_robot_arm();
     
+    // Initialize smoothed goal positions to the current actual positions
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            uint16_t current_pos = 0;
+            // Use a simple read, no need for the full read_sensor_state
+            if (feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 100) == ESP_OK) {
+                g_smoothed_goal[i] = (float)current_pos;
+            } else {
+                g_smoothed_goal[i] = 2048; // Default to center if read fails
+            }
+        }
+        xSemaphoreGive(g_uart1_mutex);
+    }
+    ESP_LOGI(TAG, "Initial smoothed goals set from current positions.");
+
     xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
+    xTaskCreate(feetech_slave_task, "feetech_slave_task", 4096, NULL, 5, NULL);
 }
