@@ -167,7 +167,7 @@ static struct {
 } set_max_accel_args;
 
 static struct {
-    struct arg_int *limit;
+    struct arg_int *id;
     struct arg_end *end;
 } start_map_cal_args;
 
@@ -998,6 +998,38 @@ static int cmd_set_max_torque(int argc, char **argv) {
     }
     g_max_torque_limit = (uint16_t)limit;
     printf("Babble max torque limit set to: %u\n", g_max_torque_limit);
+    return 0;
+}
+
+static int cmd_set_traj_step(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_traj_step_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_traj_step_args.end, argv[0]);
+        return 1;
+    }
+    int step = set_traj_step_args.step->ival[0];
+    if (step < 1 || step > 100) {
+        printf("Error: Trajectory step must be between 1 and 100\n");
+        return 1;
+    }
+    g_trajectory_step_size = (uint16_t)step;
+    printf("Trajectory step size set to: %u\n", g_trajectory_step_size);
+    return 0;
+}
+
+static int cmd_set_ema_alpha(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_ema_alpha_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_ema_alpha_args.end, argv[0]);
+        return 1;
+    }
+    double alpha = set_ema_alpha_args.alpha->dval[0];
+    if (alpha < 0.0 || alpha > 1.0) {
+        printf("Error: Alpha must be between 0.0 and 1.0\n");
+        return 1;
+    }
+    g_ema_alpha = (float)alpha;
+    printf("EMA alpha set to: %f\n", g_ema_alpha);
     return 0;
 }
 
