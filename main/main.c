@@ -43,6 +43,10 @@ HiddenLayer* g_hl;
 OutputLayer* g_ol;
 PredictionLayer* g_pl;
 
+// --- Global Correction Maps ---
+ServoCorrectionMap g_correction_maps[NUM_SERVOS];
+
+
 // --- Global variables for smart network saving ---
 static bool g_network_weights_updated = false;
 static float g_best_fitness_achieved = 0.0f;
@@ -513,8 +517,10 @@ void learning_loop_task(void *pvParameters) {
                 perform_random_walk(action_part);
 
                 // Now, generate and store random accelerations for the learning input
+                // Now, generate and store random accelerations and torques for the learning input
                 for (int i = 0; i < NUM_SERVOS; i++) {
-                    action_part[NUM_SERVOS + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized accel
+                    action_part[NUM_SERVOS + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized acceleration
+                    action_part[NUM_SERVOS * 2 + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized torque
                 }
                 // Note: The accelerations set by execute_on_robot_arm in the next step will override
                 // the g_servo_acceleration used by perform_random_walk for this learning cycle's execution.
@@ -599,7 +605,7 @@ static int get_char_with_timeout(uint32_t timeout_ms) {
 }
 
 static int cmd_start_map_cal(int argc, char **argv) {
-    int nerrors = arg_parse(argc, argv, (void **)&start_map_cal_args);
+	int nerrors = arg_parse(argc, argv, (void **)&start_map_cal_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, start_map_cal_args.end, argv[0]);
         return 1;
@@ -978,6 +984,39 @@ static int cmd_rw_stop(int argc, char **argv) {
     }
     return 0;
 }
+
+static int cmd_set_max_torque(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_max_torque_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_max_torque_args.end, argv[0]);
+        return 1;
+    }
+    int limit = set_max_torque_args.limit->ival[0];
+    if (limit < 0 || limit > 1000) {
+        printf("Error: Torque limit must be between 0 and 1000.\n");
+        return 1;
+    }
+    g_max_torque_limit = (uint16_t)limit;
+    printf("Babble max torque limit set to: %u\n", g_max_torque_limit);
+    return 0;
+}
+
+static int cmd_set_max_accel(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_max_accel_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_max_accel_args.end, argv[0]);
+        return 1;
+    }
+    int accel = set_max_accel_args.accel->ival[0];
+    if (accel < 0 || accel > 254) {
+        printf("Error: Acceleration value must be between 0 and 254.\n");
+        return 1;
+    }
+    g_min_accel_value = (uint8_t)accel;
+    printf("Babble min acceleration value set to: %u (higher is slower)\n", g_min_accel_value);
+    return 0;
+}
+
 
 static int cmd_set_accel(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_accel_args);
