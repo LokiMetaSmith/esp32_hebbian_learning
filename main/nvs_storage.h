@@ -28,5 +28,21 @@ esp_err_t save_network_to_nvs(const HiddenLayer* hl, const OutputLayer* ol, cons
  * @return esp_err_t Result of the load operation. ESP_ERR_NVS_NOT_FOUND if no network is saved.
  */
 esp_err_t load_network_from_nvs(HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl);
+/**
+ * @brief Saves the servo correction maps to NVS.
+ *
+ * @param maps Pointer to the array of ServoCorrectionMap structs.
+ * @return esp_err_t Result of the save operation.
+ */
+esp_err_t save_correction_map_to_nvs(const ServoCorrectionMap* maps);
+
+/**
+ * @brief Loads the servo correction maps from NVS.
+ *
+ * @param maps Pointer to the array of ServoCorrectionMap structs to be populated.
+ * @return esp_err_t Result of the load operation. ESP_ERR_NVS_NOT_FOUND if no map is saved.
+ */
+esp_err_t load_correction_map_from_nvs(ServoCorrectionMap* maps);
+
 
 #endif // NVS_STORAGE_H

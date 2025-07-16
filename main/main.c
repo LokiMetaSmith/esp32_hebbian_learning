@@ -66,8 +66,14 @@ static const float CURRENT_LOGGING_THRESHOLD_A = 0.005f;
 #define DEFAULT_SERVO_ACCELERATION 50 // Default acceleration value (0-254, 0=instant)
 static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
 
+// --- Babble Safety Limit Configuration ---
+static uint16_t g_max_torque_limit = 200; // Default max torque for babble (0-1000)
+static uint8_t g_min_accel_value = 200; // Default min acceleration for babble (0-254, 0=fastest)
+
 // --- Mutex for protecting console output ---
 SemaphoreHandle_t g_console_mutex;
+// --- Mutex for protecting the physical servo bus (UART1) ---
+SemaphoreHandle_t g_uart1_mutex;
 
 // --- Forward Declarations ---
 void learning_loop_task(void *pvParameters);
@@ -131,6 +137,20 @@ static struct {
     struct arg_end *end;
 } set_torque_limit_args;
 
+static struct {
+    struct arg_int *limit;
+    struct arg_end *end;
+} set_max_torque_args;
+
+static struct {
+    struct arg_int *accel;
+    struct arg_end *end;
+} set_max_accel_args;
+
+static struct {
+    struct arg_int *limit;
+    struct arg_end *end;
+} start_map_cal_args;
 
 // --- Application-Level Hardware Functions ---
 void read_sensor_state(float* sensor_data) {
@@ -147,23 +167,27 @@ void read_sensor_state(float* sensor_data) {
 
     int current_sensor_index = NUM_ACCEL_GYRO_PARAMS;
     float total_current_A_cycle = 0.0f;
+    if (xSemaphoreTake(g_uart1_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            uint16_t servo_pos = 0, servo_load = 0;
+            feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50); // Increased timeout
+            feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);    // Increased timeout
 
-    for (int i = 0; i < NUM_SERVOS; i++) {
-        uint16_t servo_pos = 0, servo_load = 0;
-        feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50); // Increased timeout
-        feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);    // Increased timeout
+            sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
+            sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
 
-        sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
-        sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
-        
-        uint16_t servo_raw_current = 0;
-        if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) { // Increased timeout
-            float current_A = (float)servo_raw_current * 0.0065f;
-            total_current_A_cycle += current_A;
-            sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
-        } else {
-            sensor_data[current_sensor_index++] = 0.0f;
+            uint16_t servo_raw_current = 0;
+            if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) { // Increased timeout
+                float current_A = (float)servo_raw_current * 0.0065f;
+                total_current_A_cycle += current_A;
+                sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
+            } else {
+                sensor_data[current_sensor_index++] = 0.0f;
+            }
         }
+        xSemaphoreGive(g_uart1_mutex);
+    } else {
+        ESP_LOGE(TAG, "Failed to get UART1 mutex in read_sensor_state");
     }
 
     if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
@@ -177,38 +201,52 @@ void read_sensor_state(float* sensor_data) {
 
 void initialize_robot_arm() {
     ESP_LOGI(TAG, "Initializing servos: Setting acceleration and enabling torque.");
-    for (int i = 0; i < NUM_SERVOS; i++) {
-        // Set acceleration
-        feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
-        vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after setting acceleration
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            // Set acceleration
+            feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
+            vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after setting acceleration
 
-        // Enable torque
-        feetech_write_byte(servo_ids[i], REG_TORQUE_ENABLE, 1);
-        vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after enabling torque
+            // Enable torque
+            feetech_write_byte(servo_ids[i], REG_TORQUE_ENABLE, 1);
+            vTaskDelay(pdMS_TO_TICKS(10)); // Short delay after enabling torque
+        }
+        xSemaphoreGive(g_uart1_mutex);
     }
     ESP_LOGI(TAG, "Servos initialized with acceleration %d and torque enabled.", g_servo_acceleration);
 }
 
 void execute_on_robot_arm(const float* action_vector) {
-    // action_vector contains NUM_SERVOS positions then NUM_SERVOS accelerations
-    for (int i = 0; i < NUM_SERVOS; i++) {
-        // Decode and set acceleration
-        float norm_accel = action_vector[NUM_SERVOS + i]; // Normalized acceleration from NN [-1, 1]
-        uint8_t hw_accel = (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 100.0f); // Scale to 0-100
-        if (hw_accel > 254) hw_accel = 254; // Clamp to max hardware value if necessary (though 100 is current max)
+     if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        // action_vector contains NUM_SERVOS * 3 params: pos, accel, torque
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            // --- Decode and Clamp Acceleration ---
+            float norm_accel = action_vector[NUM_SERVOS + i]; // Normalized accel from NN [-1, 1]
+            uint8_t commanded_accel = (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 254.0f); // Scale to 0-254
+            // Clamp to safety limit (higher value is slower)
+            if (commanded_accel < g_min_accel_value) {
+                commanded_accel = g_min_accel_value;
+            }
+            feetech_write_byte(servo_ids[i], REG_ACCELERATION, commanded_accel);
+            vTaskDelay(pdMS_TO_TICKS(5));
 
-        feetech_write_byte(servo_ids[i], REG_ACCELERATION, hw_accel);
-        // It's often good to have a small delay after sending a command before the next,
-        // but critical for acceleration to be set before position.
-        // The main loop delay should handle overall timing. A tiny delay here might be okay if needed.
-        // vTaskDelay(pdMS_TO_TICKS(1)); // Optional: very short delay
-
-        // Decode and set position
-        float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
-        float scaled_pos = (norm_pos + 1.0f) / 2.0f; // Scale to 0-1
-        uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
-
-        feetech_write_word(servo_ids[i], REG_GOAL_POSITION, goal_position);
+            // --- Decode and Clamp Torque ---
+            float norm_torque = action_vector[NUM_SERVOS * 2 + i]; // Normalized torque from NN [-1, 1]
+            uint16_t commanded_torque = (uint16_t)(((norm_torque + 1.0f) / 2.0f) * 1000.0f); // Scale to 0-1000
+            // Clamp to safety limit
+            if (commanded_torque > g_max_torque_limit) {
+                commanded_torque = g_max_torque_limit;
+            }
+            feetech_write_word(servo_ids[i], REG_TORQUE_LIMIT, commanded_torque);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            // Decode and set position
+            float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
+            float scaled_pos = (norm_pos + 1.0f) / 2.0f; // Scale to 0-1
+            uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
+            feetech_write_word(servo_ids[i], REG_GOAL_POSITION, goal_position);
+            vTaskDelay(pdMS_TO_TICKS(5));
+        }
+        xSemaphoreGive(g_uart1_mutex);
     }
 }
 
@@ -302,34 +340,37 @@ void perform_random_walk(float* action_output_vector) {
     }
 
     // ESP_LOGI(TAG, "Performing random walk step...");
-    for (int i = 0; i < NUM_SERVOS; i++) {
-        uint16_t current_pos = 0;
-        // Use a slightly longer timeout for reading position in random walk as it's less critical for timing than the learning loop
-        esp_err_t read_status = feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 75);
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            uint16_t current_pos = 0;
+            // Use a slightly longer timeout for reading position in random walk as it's less critical for timing than the learning loop
+            esp_err_t read_status = feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 75);
 
-        if (read_status != ESP_OK) {
-            ESP_LOGW(TAG, "RW: Failed to read pos for servo %d, skipping its move.", servo_ids[i]);
-            continue; // Skip this servo if read fails
-        }
-        int delta_pos = (rand() % (2 * g_random_walk_max_delta_pos + 1)) - g_random_walk_max_delta_pos;
-        int new_pos_signed = (int)current_pos + delta_pos;
+            if (read_status != ESP_OK) {
+                ESP_LOGW(TAG, "RW: Failed to read pos for servo %d, skipping its move.", servo_ids[i]);
+                continue; // Skip this servo if read fails
+            }
+            int delta_pos = (rand() % (2 * g_random_walk_max_delta_pos + 1)) - g_random_walk_max_delta_pos;
+            int new_pos_signed = (int)current_pos + delta_pos;
 
-        uint16_t new_goal_pos;
-        if (new_pos_signed < SERVO_POS_MIN) {
-            new_goal_pos = SERVO_POS_MIN;
-        } else if (new_pos_signed > SERVO_POS_MAX) {
-            new_goal_pos = SERVO_POS_MAX;
-        } else {
-            new_goal_pos = (uint16_t)new_pos_signed;
-        }
+            uint16_t new_goal_pos;
+            if (new_pos_signed < SERVO_POS_MIN) {
+                new_goal_pos = SERVO_POS_MIN;
+            } else if (new_pos_signed > SERVO_POS_MAX) {
+                new_goal_pos = SERVO_POS_MAX;
+            } else {
+                new_goal_pos = (uint16_t)new_pos_signed;
+            }
 
-        feetech_write_word(servo_ids[i], REG_GOAL_POSITION, new_goal_pos);
+            feetech_write_word(servo_ids[i], REG_GOAL_POSITION, new_goal_pos);
         
-        if (action_output_vector) {
-            action_output_vector[i] = ((float)new_goal_pos - SERVO_POS_MIN) / (SERVO_POS_MAX - SERVO_POS_MIN) * 2.0f - 1.0f;
+            if (action_output_vector) {
+                action_output_vector[i] = ((float)new_goal_pos - SERVO_POS_MIN) / (SERVO_POS_MAX - SERVO_POS_MIN) * 2.0f - 1.0f;
+            }
+            // A small delay per servo might be good for bus traffic, but g_random_walk_interval_ms controls overall frequency
+            vTaskDelay(pdMS_TO_TICKS(5)); 
         }
-        // A small delay per servo might be good for bus traffic, but g_random_walk_interval_ms controls overall frequency
-        // vTaskDelay(pdMS_TO_TICKS(5)); 
+        xSemaphoreGive(g_uart1_mutex);
     }
     g_last_random_walk_time_us = current_time_us;
 }
@@ -465,6 +506,74 @@ static int cmd_save_network(int argc, char **argv) {
     return 0;
 }
 
+static int get_char_with_timeout(uint32_t timeout_ms) {
+    char c = 0;
+    if (read(0, &c, 1) > 0) {
+        return c;
+    }
+    return -1;
+}
+
+static int cmd_start_map_cal(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&start_map_cal_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, start_map_cal_args.end, argv[0]);
+        return 1;
+    }
+    int id = start_map_cal_args.id->ival[0];
+    if (id < 1 || id > NUM_SERVOS) {
+        printf("Error: Servo ID must be between 1 and %d\n", NUM_SERVOS);
+        return 1;
+    }
+    uint8_t servo_id = (uint8_t)id;
+    int map_index = id - 1;
+
+    printf("\n--- Starting Calibration for Servo %d ---\n", servo_id);
+
+    // Temporarily set fast acceleration and high torque for calibration
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        feetech_write_byte(servo_id, REG_ACCELERATION, 20); // Fast accel
+        feetech_write_word(servo_id, REG_TORQUE_LIMIT, 700); // High torque
+        xSemaphoreGive(g_uart1_mutex);
+    }
+    printf("1. Manually move servo %d to its MINIMUM position, then press ENTER.\n", servo_id);
+    while(get_char_with_timeout(100) != '\n'); // Wait for Enter
+
+    uint16_t min_pos = 0;
+    feetech_read_word(servo_id, REG_PRESENT_POSITION, &min_pos, 100);
+    printf("--> Minimum position recorded: %u\n\n", min_pos);
+    printf("2. Manually move servo %d to its MAXIMUM position, then press ENTER.\n", servo_id);
+    while(get_char_with_timeout(100) != '\n'); // Wait for Enter
+    uint16_t max_pos = 0;
+    feetech_read_word(servo_id, REG_PRESENT_POSITION, &max_pos, 100);
+    printf("--> Maximum position recorded: %u\n\n", max_pos);
+    if (max_pos <= min_pos) {
+        printf("Error: Max position must be greater than min position. Aborting.\n");
+         return 1;
+    }
+
+    printf("3. Starting automatic calibration sweep from %u to %u...\n", min_pos, max_pos);
+    ServoCorrectionMap* map = &g_correction_maps[map_index];
+    for (int i = 0; i < CORRECTION_MAP_POINTS; i++) {
+        float fraction = (float)i / (CORRECTION_MAP_POINTS - 1);
+        uint16_t commanded_pos = min_pos + (uint16_t)(fraction * (max_pos - min_pos));
+        map->points[i].commanded_pos = commanded_pos;
+        if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+            feetech_write_word(servo_id, REG_GOAL_POSITION, commanded_pos);
+            vTaskDelay(pdMS_TO_TICKS(400)); // Wait for move to complete
+            feetech_read_word(servo_id, REG_PRESENT_POSITION, &map->points[i].actual_pos, 100);
+            xSemaphoreGive(g_uart1_mutex);
+        }
+        printf("  Point %2d/%d: Commanded: %4u -> Actual: %4u\n", i + 1, CORRECTION_MAP_POINTS, map->points[i].commanded_pos, map->points[i].actual_pos);
+     }
+
+    map->is_calibrated = true;
+    printf("\nCalibration complete for servo %d. Saving to NVS...\n", servo_id);
+    save_correction_map_to_nvs(g_correction_maps);
+
+     return 0;
+ }
+	
 // Function for the 'set_tl' command (re-implementation)
 static int cmd_set_torque_limit(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_torque_limit_args);
@@ -652,7 +761,10 @@ static int cmd_set_pos(int argc, char **argv) {
     }
 
     ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
-    feetech_write_word(id, REG_GOAL_POSITION, pos);
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        feetech_write_word((uint8_t)id, REG_GOAL_POSITION, (uint16_t)pos);
+        xSemaphoreGive(g_uart1_mutex);
+    }
     return 0;
 }
 
@@ -670,8 +782,15 @@ static int cmd_get_pos(int argc, char **argv) {
     }
 
     uint16_t current_position = 0;
-    esp_err_t ret = feetech_read_word((uint8_t)id, REG_PRESENT_POSITION, &current_position, 100);
+    esp_err_t ret = ESP_FAIL;
 
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        ret = feetech_read_word((uint8_t)id, REG_PRESENT_POSITION, &current_position, 100);
+        xSemaphoreGive(g_uart1_mutex);
+    } else {
+        printf("Error: Could not obtain UART1 mutex.\n");
+        return 1;
+    }
     if (ret == ESP_OK) {
         printf("Servo %d current position: %u\n", id, current_position);
     } else if (ret == ESP_ERR_TIMEOUT) {
@@ -696,7 +815,15 @@ static int cmd_get_current(int argc, char **argv) {
     }
 
     uint16_t raw_current = 0;
-    esp_err_t ret = feetech_read_word((uint8_t)id, REG_PRESENT_CURRENT, &raw_current, 100);
+    esp_err_t ret = ESP_FAIL;
+
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        ret = feetech_read_word((uint8_t)id, REG_PRESENT_CURRENT, &raw_current, 100);
+        xSemaphoreGive(g_uart1_mutex);
+    } else {
+        printf("Error: Could not obtain UART1 mutex.\n");
+        return 1;
+    }
 
     if (ret == ESP_OK) {
         float current_mA = (float)raw_current * 6.5f;
@@ -732,11 +859,13 @@ static int cmd_babble_stop(int argc, char **argv) {
 static int cmd_rw_start(int argc, char **argv) {
     if (!g_random_walk_active) {
         ESP_LOGI(TAG, "Starting standalone random walk. Setting acceleration to global value: %u", g_servo_acceleration);
-        for (int i = 0; i < NUM_SERVOS; i++) {
-            feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
-            vTaskDelay(pdMS_TO_TICKS(5)); // Small delay
+        if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+            for (int i = 0; i < NUM_SERVOS; i++) {
+                feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
+                vTaskDelay(pdMS_TO_TICKS(5)); // Small delay
+            }
+            xSemaphoreGive(g_uart1_mutex);
         }
-
         g_random_walk_active = true;
         if (g_random_walk_task_handle == NULL) {
             xTaskCreate(random_walk_task_fn, "random_walk_task", 3072, NULL, 5, &g_random_walk_task_handle);
@@ -782,9 +911,12 @@ static int cmd_set_accel(int argc, char **argv) {
     g_servo_acceleration = (uint8_t)accel_val;
     ESP_LOGI(TAG, "Setting servo acceleration to %u for all servos.", g_servo_acceleration);
 
-    for (int i = 0; i < NUM_SERVOS; i++) {
-        feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
-        vTaskDelay(pdMS_TO_TICKS(5)); // Small delay between commands
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
+            vTaskDelay(pdMS_TO_TICKS(5)); // Small delay between commands
+        }
+        xSemaphoreGive(g_uart1_mutex);
     }
     printf("Servo acceleration set to %u for all servos.\n", g_servo_acceleration);
     return 0;
@@ -932,6 +1064,17 @@ void initialize_console(void) {
         .argtable = &set_torque_limit_args
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&set_tl_cmd));
+	
+    start_map_cal_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID to calibrate (1-6)");
+    start_map_cal_args.end = arg_end(1);
+    const esp_console_cmd_t start_map_cal_cmd = {
+        .command = "start_map_cal",
+        .help = "Start the position correction mapping calibration for a servo",
+        .func = &cmd_start_map_cal,
+        .argtable = &start_map_cal_args
+     };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&start_map_cal_cmd));
+
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
@@ -980,14 +1123,15 @@ void app_main(void) {
     if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory!"); return; }
 
     g_console_mutex = xSemaphoreCreateMutex();
+    g_uart1_mutex = xSemaphoreCreateMutex();
 
     nvs_storage_initialize();
-    feetech_initialize(); // For physical servos on UART1
+    feetech_initialize(); 
     bma400_initialize();
     led_indicator_initialize();
     initialize_usb_cdc(); // For Feetech slave command interface
     
-    initialize_console(); // For debug on UART0
+    initialize_console(); 
 
     if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
         ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
@@ -996,6 +1140,15 @@ void app_main(void) {
         ESP_LOGI(TAG, "Network loaded successfully from NVS.");
     }
     
+    if (load_correction_map_from_nvs(g_correction_maps) != ESP_OK) {
+        ESP_LOGI(TAG, "No correction maps found in NVS. Using default (uncalibrated).");
+        // Initialize maps as uncalibrated
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            g_correction_maps[i].is_calibrated = false;
+        }
+    } else {
+        ESP_LOGI(TAG, "Correction maps loaded successfully from NVS.");
+    }
     initialize_robot_arm();
     
     xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
