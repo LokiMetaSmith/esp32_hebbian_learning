@@ -1463,7 +1463,10 @@ void process_feetech_packet(const PacketParser *parser) {
                 ESP_LOGI(TAG, "  Write Word to Reg 0x%02X with value %d", reg_addr, value);
                 feetech_write_word(parser->id, reg_addr, value);
             }
-            // No response packet for WRITE commands
+            // Respond with a standard status packet
+            uint8_t status_packet[6] = {0xFF, 0xFF, parser->id, 2, 0x00, (uint8_t)~(parser->id + 2)};
+            tinyusb_cdcacm_write_queue(TINYUSB_CDC_ACM_0, status_packet, sizeof(status_packet));
+            tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, 0);
             break;
         }
 
