@@ -110,6 +110,7 @@ static int cmd_babble_stop(int argc, char **argv);
 static int cmd_rw_start(int argc, char **argv);
 static int cmd_rw_stop(int argc, char **argv);
 static int cmd_get_accel_raw(int argc, char **argv); // New command
+static int cmd_set_mode(int argc, char **argv);
 
 // --- argtable3 structs for console commands ---
 static struct {
@@ -331,7 +332,8 @@ void execute_on_robot_arm(const float* action_vector) {
             float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
             float scaled_pos = (norm_pos + 1.0f) / 2.0f; // Scale to 0-1
             uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
-            feetech_write_word(servo_ids[i], REG_GOAL_POSITION, goal_position);
+            uint16_t corrected_position = get_corrected_position(servo_ids[i], goal_position);
+            feetech_write_word(servo_ids[i], REG_GOAL_POSITION, corrected_position);
             vTaskDelay(pdMS_TO_TICKS(5));
         }
         xSemaphoreGive(g_uart1_mutex);
@@ -1049,6 +1051,22 @@ static int cmd_set_max_accel(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_set_mode(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_mode_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_mode_args.end, argv[0]);
+        return 1;
+    }
+    int mode = set_mode_args.mode->ival[0];
+    if (mode < 0 || mode > 3) {
+        printf("Error: Invalid mode. Please use 0, 1, 2, or 3.\n");
+        return 1;
+    }
+    g_current_mode = (OperatingMode)mode;
+    printf("Operating mode set to: %d\n", g_current_mode);
+    return 0;
+}
+
 
 static int cmd_set_accel(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_accel_args);
@@ -1240,6 +1258,15 @@ void initialize_console(void) {
      };
     ESP_ERROR_CHECK(esp_console_cmd_register(&set_max_accel_cmd));
 	
+    set_mode_args.mode = arg_int1(NULL, NULL, "<mode>", "Operating mode (0:Passthrough, 1:Correction, 2:Smoothing, 3:Hybrid)");
+    set_mode_args.end = arg_end(1);
+    const esp_console_cmd_t set_mode_cmd = {
+        .command = "set_mode",
+        .help = "Set the operating mode",
+        .func = &cmd_set_mode,
+        .argtable = &set_mode_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_mode_cmd));
 	
     get_servo_acceleration_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
     get_servo_acceleration_args.end = arg_end(1);
