@@ -259,20 +259,23 @@ void read_sensor_state(float* sensor_data) {
     if (xSemaphoreTake(g_uart1_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
         for (int i = 0; i < NUM_SERVOS; i++) {
             uint16_t servo_pos = 0, servo_load = 0;
-            feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50); // Increased timeout
-            feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);    // Increased timeout
+            feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50);
+            vTaskDelay(pdMS_TO_TICKS(5));
+            feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);
+            vTaskDelay(pdMS_TO_TICKS(5));
 
             sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
             sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
 
             uint16_t servo_raw_current = 0;
-            if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) { // Increased timeout
+            if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) {
                 float current_A = (float)servo_raw_current * 0.0065f;
                 total_current_A_cycle += current_A;
                 sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
             } else {
                 sensor_data[current_sensor_index++] = 0.0f;
             }
+            vTaskDelay(pdMS_TO_TICKS(5));
         }
         xSemaphoreGive(g_uart1_mutex);
     } else {
@@ -457,7 +460,6 @@ void perform_random_walk(float* action_output_vector) {
             if (action_output_vector) {
                 action_output_vector[i] = ((float)new_goal_pos - SERVO_POS_MIN) / (SERVO_POS_MAX - SERVO_POS_MIN) * 2.0f - 1.0f;
             }
-            // A small delay per servo might be good for bus traffic, but g_random_walk_interval_ms controls overall frequency
             vTaskDelay(pdMS_TO_TICKS(5)); 
         }
         xSemaphoreGive(g_uart1_mutex);
@@ -632,12 +634,18 @@ static int cmd_start_map_cal(int argc, char **argv) {
     while(get_char_with_timeout(100) != '\n'); // Wait for Enter
 
     uint16_t min_pos = 0;
-    feetech_read_word(servo_id, REG_PRESENT_POSITION, &min_pos, 100);
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        feetech_read_word(servo_id, REG_PRESENT_POSITION, &min_pos, 100);
+        xSemaphoreGive(g_uart1_mutex);
+    }
     printf("--> Minimum position recorded: %u\n\n", min_pos);
     printf("2. Manually move servo %d to its MAXIMUM position, then press ENTER.\n", servo_id);
     while(get_char_with_timeout(100) != '\n'); // Wait for Enter
     uint16_t max_pos = 0;
-    feetech_read_word(servo_id, REG_PRESENT_POSITION, &max_pos, 100);
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        feetech_read_word(servo_id, REG_PRESENT_POSITION, &max_pos, 100);
+        xSemaphoreGive(g_uart1_mutex);
+    }
     printf("--> Maximum position recorded: %u\n\n", max_pos);
     if (max_pos <= min_pos) {
         printf("Error: Max position must be greater than min position. Aborting.\n");
