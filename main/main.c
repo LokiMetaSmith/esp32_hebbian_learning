@@ -1470,6 +1470,38 @@ void process_feetech_packet(const PacketParser *parser) {
             break;
         }
 
+        case SCS_INST_SYNC_READ: {
+            ESP_LOGI(TAG, "Slave: Received SYNC READ");
+            uint8_t reg_addr = parser->params[0];
+            uint8_t read_len = parser->params[1];
+            uint8_t num_motors = parser->length - 4;
+            uint8_t response_len = num_motors * (read_len + 1);
+            uint8_t status_packet[256];
+            status_packet[0] = 0xFF;
+            status_packet[1] = 0xFF;
+            status_packet[2] = 0xFE; // Broadcast ID
+            status_packet[3] = response_len + 2;
+            status_packet[4] = 0x00; // No error
+            uint8_t checksum = status_packet[2] + status_packet[3] + status_packet[4];
+            int packet_index = 5;
+            for (int i = 0; i < num_motors; i++) {
+                uint8_t motor_id = parser->params[2 + i];
+                status_packet[packet_index++] = motor_id;
+                checksum += motor_id;
+                uint16_t read_data = 0;
+                feetech_read_word(motor_id, reg_addr, &read_data, 100);
+                status_packet[packet_index++] = read_data & 0xFF;
+                checksum += read_data & 0xFF;
+                if (read_len == 2) {
+                    status_packet[packet_index++] = (read_data >> 8) & 0xFF;
+                    checksum += (read_data >> 8) & 0xFF;
+                }
+            }
+            status_packet[packet_index] = ~checksum;
+            tinyusb_cdcacm_write_queue(TINYUSB_CDC_ACM_0, status_packet, packet_index + 1);
+            tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, 0);
+            break;
+        }
         case SCS_INST_READ: {
             uint8_t reg_addr = parser->params[0];
             uint8_t read_len = parser->params[1];
