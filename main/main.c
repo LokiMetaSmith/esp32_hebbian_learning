@@ -1101,7 +1101,16 @@ static int cmd_set_mode(int argc, char **argv) {
     return 0;
 }
 
-
+static int cmd_get_stats(int argc, char **argv) {
+    char *stats_buffer = malloc(2048);
+    if (stats_buffer) {
+        vTaskGetRunTimeStats(stats_buffer);
+        printf("--- Task Runtime Stats ---\n");
+        printf("%s\n", stats_buffer);
+        free(stats_buffer);
+    }
+    return 0;
+}
 static int cmd_set_accel(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_accel_args);
     if (nerrors != 0) {
@@ -1333,6 +1342,8 @@ void initialize_console(void) {
      };
     ESP_ERROR_CHECK(esp_console_cmd_register(&start_map_cal_cmd));
 
+    const esp_console_cmd_t stats_cmd = { .command = "get_stats", .help = "Get task runtime stats", .func = &cmd_get_stats };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&stats_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
