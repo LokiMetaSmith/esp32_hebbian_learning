@@ -778,8 +778,8 @@ static int cmd_get_accel_raw(int argc, char **argv) {
 
 static int cmd_reset_network(int argc, char **argv) {
     /* FORCED RE-INIT || load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK */ 
-    g_hl = malloc(sizeof(HiddenLayer)); g_ol = malloc(sizeof(OutputLayer)); g_pl = malloc(sizeof(PredictionLayer));
     initialize_network(g_hl, g_ol, g_pl);
+    g_best_fitness_achieved = 0.0f; // Also reset fitness
     save_network_to_nvs(g_hl, g_ol, g_pl);
 	printf("Forcing network re-initialization");
 	return 0;
