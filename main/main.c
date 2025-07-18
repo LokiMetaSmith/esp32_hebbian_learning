@@ -637,9 +637,9 @@ static int cmd_start_map_cal(int argc, char **argv) {
     // Temporarily set fast acceleration and high torque for calibration
     if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
         feetech_write_byte(servo_id, REG_ACCELERATION, 20); // Fast accel
-	vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(5));
         feetech_write_word(servo_id, REG_TORQUE_LIMIT, 700); // High torque
-	vTaskDelay(pdMS_TO_TICKS(5));
+        vTaskDelay(pdMS_TO_TICKS(5));
         xSemaphoreGive(g_uart1_mutex);
     }
     printf("1. Manually move servo %d to its MINIMUM position, then press ENTER.\n", servo_id);
@@ -662,23 +662,23 @@ static int cmd_start_map_cal(int argc, char **argv) {
     printf("--> Maximum position recorded: %u\n\n", max_pos);
     if (max_pos <= min_pos) {
         printf("Error: Max position must be greater than min position. Aborting.\n");
-         return 1;
+        return 1;
     }
 
     printf("3. Starting automatic calibration sweep from %u to %u...\n", min_pos, max_pos);
     ServoCorrectionMap* map = &g_correction_maps[map_index];
-    for (int i = 0; i < CORRECTION_MAP_POINTS; i++) {
-        float fraction = (float)i / (CORRECTION_MAP_POINTS - 1);
-        uint16_t commanded_pos = min_pos + (uint16_t)(fraction * (max_pos - min_pos));
-        map->points[i].commanded_pos = commanded_pos;
-        if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        for (int i = 0; i < CORRECTION_MAP_POINTS; i++) {
+            float fraction = (float)i / (CORRECTION_MAP_POINTS - 1);
+            uint16_t commanded_pos = min_pos + (uint16_t)(fraction * (max_pos - min_pos));
+            map->points[i].commanded_pos = commanded_pos;
             feetech_write_word(servo_id, REG_GOAL_POSITION, commanded_pos);
             vTaskDelay(pdMS_TO_TICKS(400)); // Wait for move to complete
             feetech_read_word(servo_id, REG_PRESENT_POSITION, &map->points[i].actual_pos, 100);
-            xSemaphoreGive(g_uart1_mutex);
+            printf("  Point %2d/%d: Commanded: %4u -> Actual: %4u\n", i + 1, CORRECTION_MAP_POINTS, map->points[i].commanded_pos, map->points[i].actual_pos);
         }
-        printf("  Point %2d/%d: Commanded: %4u -> Actual: %4u\n", i + 1, CORRECTION_MAP_POINTS, map->points[i].commanded_pos, map->points[i].actual_pos);
-     }
+        xSemaphoreGive(g_uart1_mutex);
+    }
 
     map->is_calibrated = true;
     printf("\nCalibration complete for servo %d. Saving to NVS...\n", servo_id);
@@ -716,7 +716,11 @@ static int cmd_set_torque_limit(int argc, char **argv) {
     // Read back to verify
     vTaskDelay(pdMS_TO_TICKS(20)); // Give a moment for the write to be processed before reading back
     uint16_t read_torque_limit = 0;
-    esp_err_t read_status = feetech_read_word((uint8_t)id, REG_TORQUE_LIMIT, &read_torque_limit, 100); // 100ms timeout for read
+    esp_err_t read_status;
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        read_status = feetech_read_word((uint8_t)id, REG_TORQUE_LIMIT, &read_torque_limit, 100); // 100ms timeout for read
+        xSemaphoreGive(g_uart1_mutex);
+    }
 
     if (read_status == ESP_OK) {
         printf("Servo %d torque limit read back: %u. (Commanded: %d)\n", id, read_torque_limit, limit);
@@ -1527,9 +1531,9 @@ void process_feetech_packet(const PacketParser *parser) {
                 esp_err_t read_status = ESP_FAIL;
 
                 if (read_len == 1 || read_len == 2) {
-		    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+                    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
                         read_status = feetech_read_word(current_id, start_addr, &read_data, 100);
-		        xSemaphoreGive(g_uart1_mutex);
+                        xSemaphoreGive(g_uart1_mutex);
                     }
                 } else {
                     ESP_LOGE(TAG, "Slave: SYNC_READ unsupported read length: %d", read_len);
