@@ -776,14 +776,15 @@ static int cmd_get_servo_acceleration(int argc, char **argv) {
     ESP_LOGI(TAG, "Reading acceleration for servo %d.", id);
     if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
         esp_err_t read_status = feetech_read_word((uint8_t)id, REG_ACCELERATION, &read_value_word, 100); // 100ms timeout
-        xSemaphoreGive(g_uart1_mutex);
+
+        if (read_status == ESP_OK) {
+            uint8_t accel_value = (uint8_t)(read_value_word & 0xFF); // Acceleration is the LSB
+            printf("Servo %d current acceleration: %u\n", id, accel_value);
+        } else {
+            printf("Error: Failed to read acceleration for servo %d (err: %s).\n", id, esp_err_to_name(read_status));
+        }
+	xSemaphoreGive(g_uart1_mutex);
     }    
-    if (read_status == ESP_OK) {
-        uint8_t accel_value = (uint8_t)(read_value_word & 0xFF); // Acceleration is the LSB
-        printf("Servo %d current acceleration: %u\n", id, accel_value);
-    } else {
-        printf("Error: Failed to read acceleration for servo %d (err: %s).\n", id, esp_err_to_name(read_status));
-    }
     return 0;
 }
 
