@@ -716,7 +716,7 @@ static int cmd_set_torque_limit(int argc, char **argv) {
     // Read back to verify
     vTaskDelay(pdMS_TO_TICKS(20)); // Give a moment for the write to be processed before reading back
     uint16_t read_torque_limit = 0;
-    esp_err_t read_status;
+    esp_err_t read_status = ESP_FAIL;
     if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
         read_status = feetech_read_word((uint8_t)id, REG_TORQUE_LIMIT, &read_torque_limit, 100); // 100ms timeout for read
         xSemaphoreGive(g_uart1_mutex);
