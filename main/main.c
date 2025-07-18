@@ -269,7 +269,9 @@ void read_sensor_state(float* sensor_data) {
         for (int i = 0; i < NUM_SERVOS; i++) {
             uint16_t servo_pos = 0, servo_load = 0, servo_raw_current = 0;
             feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50);
+            vTaskDelay(pdMS_TO_TICKS(5));
             feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);
+            vTaskDelay(pdMS_TO_TICKS(5)); 
 
             sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
             sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
@@ -282,6 +284,7 @@ void read_sensor_state(float* sensor_data) {
             } else {
                 sensor_data[current_sensor_index++] = 0.0f;
             }
+            vTaskDelay(pdMS_TO_TICKS(5)); // ✅ CRITICAL DELAY
         }
         xSemaphoreGive(g_uart1_mutex);
     } else {
