@@ -284,7 +284,7 @@ void read_sensor_state(float* sensor_data) {
             } else {
                 sensor_data[current_sensor_index++] = 0.0f;
             }
-            vTaskDelay(pdMS_TO_TICKS(5)); // ✅ CRITICAL DELAY
+            vTaskDelay(pdMS_TO_TICKS(5));
         }
         xSemaphoreGive(g_uart1_mutex);
     } else {
