@@ -265,18 +265,16 @@ void read_sensor_state(float* sensor_data) {
 
     int current_sensor_index = NUM_ACCEL_GYRO_PARAMS;
     float total_current_A_cycle = 0.0f;
-    if (xSemaphoreTake(g_uart1_mutex, pdMS_TO_TICKS(100)) == pdTRUE) {
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
         for (int i = 0; i < NUM_SERVOS; i++) {
-            uint16_t servo_pos = 0, servo_load = 0;
+            uint16_t servo_pos = 0, servo_load = 0, servo_raw_current = 0;
             feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50);
-            vTaskDelay(pdMS_TO_TICKS(5));
             feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);
-            vTaskDelay(pdMS_TO_TICKS(5));
 
             sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
             sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
 
-            uint16_t servo_raw_current = 0;
+             
             if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) {
                 float current_A = (float)servo_raw_current * 0.0065f;
                 total_current_A_cycle += current_A;
@@ -284,7 +282,6 @@ void read_sensor_state(float* sensor_data) {
             } else {
                 sensor_data[current_sensor_index++] = 0.0f;
             }
-            vTaskDelay(pdMS_TO_TICKS(5));
         }
         xSemaphoreGive(g_uart1_mutex);
     } else {
