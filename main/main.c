@@ -271,8 +271,7 @@ void read_sensor_state(float* sensor_data) {
             feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50);
             vTaskDelay(pdMS_TO_TICKS(5));
             feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);
-            vTaskDelay(pdMS_TO_TICKS(5)); 
-
+	    vTaskDelay(pdMS_TO_TICKS(5));
             sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
             sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
 
