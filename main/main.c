@@ -26,6 +26,7 @@
 #include "driver/usb_serial_jtag.h" // For native USB CDC
 #include "tinyusb.h"
 #include "tusb_cdc_acm.h"
+#include "mcp_server.h"
 
 // --- Application Configuration ---
 
@@ -1353,7 +1354,7 @@ void app_main(void) {
     feetech_initialize(); 
     bma400_initialize();
     led_indicator_initialize();
-    initialize_usb_cdc(); // For Feetech slave command interface
+    mcp_server_init();
     
     initialize_console(); 
 
