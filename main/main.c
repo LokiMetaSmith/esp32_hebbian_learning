@@ -1399,6 +1399,7 @@ void app_main(void) {
     feetech_initialize(); 
     bma400_initialize();
     led_indicator_initialize();
+    initialize_usb_cdc(); // For Feetech slave command interface
     mcp_server_init();
     
     initialize_console(); 
