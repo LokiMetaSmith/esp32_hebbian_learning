@@ -1,337 +1,350 @@
 #include "mcp_server.h"
-#include "feetech_protocol.h"
-#include "esp_log.h"
+#include <stdio.h>
+#include <string.h>
+
+// --- ESP-IDF & FreeRTOS Includes ---
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
-#include "tinyusb.h"
-#include "tusb_cdc_acm.h"
+#include "freertos/event_groups.h"
 #include "freertos/semphr.h"
+#include "esp_log.h"
+#include "esp_wifi.h"
+#include "esp_event.h"
+#include "nvs_flash.h"
 
+// --- LwIP for TCP/IP Stack ---
+#include "lwip/err.h"
+#include "lwip/sockets.h"
+#include "lwip/sys.h"
+#include <lwip/netdb.h>
 
+// --- cJSON for parsing and creating JSON ---
+#include "cJSON.h"
+
+// --- Project-specific includes ---
+#include "main.h" // For NUM_SERVOS etc.
+#include "feetech_protocol.h" // For servo communication functions
+
+// --- Wi-Fi & Server Configuration ---
+#define WIFI_SSID      "YOUR_WIFI_SSID"      // <-- IMPORTANT: SET YOUR WIFI SSID
+#define WIFI_PASS      "YOUR_WIFI_PASSWORD"  // <-- IMPORTANT: SET YOUR WIFI PASSWORD
+#define MCP_TCP_PORT   8888
+#define MAX_CLIENTS    1
+
+// --- Tag for logging ---
+static const char *TAG = "MCP_WIFI_SERVER";
+
+// --- FreeRTOS event group to signal when we are connected ---
+static EventGroupHandle_t s_wifi_event_group;
+#define WIFI_CONNECTED_BIT BIT0
+#define WIFI_FAIL_BIT      BIT1
+
+// --- Extern variables from main.c that we need to access ---
 extern SemaphoreHandle_t g_uart1_mutex;
 extern uint8_t servo_ids[NUM_SERVOS];
-static const char *TAG = "MCP_SERVER";
+extern bool g_learning_loop_active;
 
-// --- Feetech Slave Parser Implementation ---
+// --- Forward Declarations ---
+static void wifi_init_sta(void);
+static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
+static void mcp_server_task(void *pvParameters);
+static cJSON* handle_list_tools(void);
+static cJSON* handle_call_tool(const cJSON *request_json);
+static void send_json_response(int sock, const cJSON *response_json);
 
-typedef enum {
-    WAITING_FOR_HEADER_1,
-    WAITING_FOR_HEADER_2,
-    READING_PACKET_HEADER, // ID, Length, Instruction
-    READING_PACKET_PARAMS,
-    READING_PACKET_CHECKSUM,
-} ParserState;
 
-#define MAX_PARAMS 250 // Max possible parameters in a packet
-
-typedef struct {
-    ParserState state;
-    uint8_t id;
-    uint8_t length;
-    uint8_t instruction;
-    uint8_t params[MAX_PARAMS];
-    uint8_t checksum;
-    uint8_t byte_count;
-    uint8_t calculated_checksum;
-} PacketParser;
-
-// This function will be called when a complete and valid packet is received
-void process_feetech_packet(const PacketParser *parser) {
-    // Check if the command is for one of our virtual servos
-    bool is_valid_virtual_id = false;
-    for (int i = 0; i < NUM_SERVOS; i++) {
-        if (parser->id == servo_ids[i]) {
-            is_valid_virtual_id = true;
-            break;
-        }
+/**
+ * @brief Wi-Fi event handler function.
+ */
+static void wifi_event_handler(void* arg, esp_event_base_t event_base,
+                               int32_t event_id, void* event_data) {
+    if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
+        esp_wifi_connect();
+    } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
+        ESP_LOGI(TAG, "Disconnected from Wi-Fi. Retrying...");
+        esp_wifi_connect();
+        xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+    } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
+        ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
+        ESP_LOGI(TAG, "Got IP address: " IPSTR, IP2STR(&event->ip_info.ip));
+        xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
-    // We also respond to the broadcast ID for certain commands like PING
-    if (parser->id == SCS_BROADCAST_ID) {
-        is_valid_virtual_id = true;
-    }
+}
 
-    if (!is_valid_virtual_id) {
-        // Not for us, ignore
+/**
+ * @brief Initializes and connects to the Wi-Fi network.
+ */
+static void wifi_init_sta(void) {
+    s_wifi_event_group = xEventGroupCreate();
+
+    ESP_ERROR_CHECK(esp_netif_init());
+    ESP_ERROR_CHECK(esp_event_loop_create_default());
+    esp_netif_create_default_wifi_sta();
+
+    wifi_init_config_t cfg = WIFI_INIT_CONFIG_DEFAULT();
+    ESP_ERROR_CHECK(esp_wifi_init(&cfg));
+
+    esp_event_handler_instance_t instance_any_id;
+    esp_event_handler_instance_t instance_got_ip;
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(WIFI_EVENT,
+                                                        ESP_EVENT_ANY_ID,
+                                                        &wifi_event_handler,
+                                                        NULL,
+                                                        &instance_any_id));
+    ESP_ERROR_CHECK(esp_event_handler_instance_register(IP_EVENT,
+                                                        IP_EVENT_STA_GOT_IP,
+                                                        &wifi_event_handler,
+                                                        NULL,
+                                                        &instance_got_ip));
+
+    wifi_config_t wifi_config = {
+        .sta = {
+            .ssid = WIFI_SSID,
+            .password = WIFI_PASS,
+            .threshold.authmode = WIFI_AUTH_WPA2_PSK,
+        },
+    };
+    ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_config));
+    ESP_ERROR_CHECK(esp_wifi_start());
+
+    ESP_LOGI(TAG, "Wi-Fi initialization finished. Waiting for connection...");
+
+    // Wait until the connection is established
+    xEventGroupWaitBits(s_wifi_event_group,
+                        WIFI_CONNECTED_BIT,
+                        pdFALSE,
+                        pdFALSE,
+                        portMAX_DELAY);
+}
+
+/**
+ * @brief Main TCP server task for MCP.
+ *
+ * Creates a listening socket and waits for clients. Once a client connects,
+ * it handles MCP commands until the client disconnects.
+ */
+static void mcp_server_task(void *pvParameters) {
+    char addr_str[128];
+    int addr_family = AF_INET;
+    int ip_protocol = IPPROTO_IP;
+    struct sockaddr_in dest_addr;
+
+    dest_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    dest_addr.sin_family = AF_INET;
+    dest_addr.sin_port = htons(MCP_TCP_PORT);
+
+    int listen_sock = socket(addr_family, SOCK_STREAM, ip_protocol);
+    if (listen_sock < 0) {
+        ESP_LOGE(TAG, "Unable to create socket: errno %d", errno);
+        vTaskDelete(NULL);
         return;
     }
+    ESP_LOGI(TAG, "Socket created");
 
-    // --- Command Dispatcher ---
-    switch (parser->instruction) {
-        case SCS_INST_PING: {
-            ESP_LOGI(TAG, "Slave: Received PING for ID %d", parser->id);
-            // For a specific PING, we just respond with a standard status packet
-            if (parser->id != SCS_BROADCAST_ID) {
-                uint8_t status_packet[6] = {0xFF, 0xFF, parser->id, 2, 0x00, (uint8_t)~(parser->id + 2)};
-                tinyusb_cdcacm_write_queue(TINYUSB_CDC_ACM_0, status_packet, sizeof(status_packet));
-                tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, 0);
-            }
-            // We don't respond to broadcast pings to avoid bus collision in real-world scenarios
-            break;
-        }
-
-        case SCS_INST_WRITE: {
-            ESP_LOGI(TAG, "Slave: Received WRITE for ID %d", parser->id);
-            uint8_t reg_addr = parser->params[0];
-            // Check if it's a byte or word write based on length
-            if (parser->length == 4) { // 1 param (reg) + 1 value byte + Inst + Checksum
-                uint8_t value = parser->params[1];
-                ESP_LOGI(TAG, "  Write Byte to Reg 0x%02X with value %d", reg_addr, value);
-		if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                    feetech_write_byte(parser->id, reg_addr, value);
-		    xSemaphoreGive(g_uart1_mutex);
-                }
-            } else if (parser->length >= 5) { // 1 param (reg) + 2+ value bytes + Inst + Checksum
-                uint16_t value = parser->params[1] | (parser->params[2] << 8);
-                ESP_LOGI(TAG, "  Write Word to Reg 0x%02X with value %d", reg_addr, value);
-		if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                    feetech_write_word(parser->id, reg_addr, value);
-		    xSemaphoreGive(g_uart1_mutex);
-                }
-            }
-            // Respond with a standard status packet
-            uint8_t status_packet[6] = {0xFF, 0xFF, parser->id, 2, 0x00, (uint8_t)~(parser->id + 2)};
-            tinyusb_cdcacm_write_queue(TINYUSB_CDC_ACM_0, status_packet, sizeof(status_packet));
-            tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, 0);
-            break;
-        }
-
-        case SCS_INST_SYNC_READ: {
-            if (parser->length < 4) { // Must have Reg, Len, and at least one ID
-                // Send instruction error
-                break;
-            }
-            uint8_t start_addr = parser->params[0];
-            uint8_t read_len = parser->params[1];
-            uint8_t num_servos_to_read = parser->length - 4;
-
-            ESP_LOGI(TAG, "Slave: Received SYNC READ for %d servos, Reg 0x%02X, Len %d", num_servos_to_read, start_addr, read_len);
-
-            for (int i = 0; i < num_servos_to_read; i++) {
-                uint8_t current_id = parser->params[2 + i];
-
-                // --- Perform the actual read for the current servo ---
-                uint8_t status_packet[16];
-                uint8_t error = 0;
-                uint16_t read_data = 0;
-                esp_err_t read_status = ESP_FAIL;
-
-                if (read_len == 1 || read_len == 2) {
-                    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                        read_status = feetech_read_word(current_id, start_addr, &read_data, 100);
-                        xSemaphoreGive(g_uart1_mutex);
-                    }
-                } else {
-                    ESP_LOGE(TAG, "Slave: SYNC_READ unsupported read length: %d", read_len);
-                    error = (1 << 2); // Instruction Error
-                }
-
-                if (read_status != ESP_OK) {
-                    error |= (1 << 6); // Set Instruction Error bit on read failure
-                }
-
-                // --- Construct and send the response packet for this servo ---
-                status_packet[0] = 0xFF;
-            status_packet[1] = 0xFF;
-                status_packet[2] = current_id;
-                status_packet[3] = read_len + 2;
-                status_packet[4] = error;
-            uint8_t checksum = status_packet[2] + status_packet[3] + status_packet[4];
-
-                if (error == 0) {
-                    if (read_len == 1) {
-                        status_packet[5] = (uint8_t)(read_data & 0xFF);
-                        checksum += status_packet[5];
-                    } else if (read_len == 2) {
-                        status_packet[5] = (uint8_t)(read_data & 0xFF);
-                        status_packet[6] = (uint8_t)((read_data >> 8) & 0xFF);
-                        checksum += status_packet[5];
-                        checksum += status_packet[6];
-                    }
-            }
-                status_packet[5 + read_len] = ~checksum;
-                tinyusb_cdcacm_write_queue(TINYUSB_CDC_ACM_0, status_packet, 6 + read_len);
-            }
-            tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, 0); // Flush after sending all responses
-            break;
-        }
-        case SCS_INST_READ: {
-            uint8_t reg_addr = parser->params[0];
-            uint8_t read_len = parser->params[1];
-            ESP_LOGI(TAG, "Slave: Received READ for ID %d, Reg 0x%02X, Len %d", parser->id, reg_addr, read_len);
-
-            uint8_t status_packet[16]; // Max size for reading a few bytes, can be adjusted
-            uint8_t error = 0;
-            uint16_t read_data = 0;
-            esp_err_t read_status = ESP_FAIL;
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                if (read_len == 1) {
-                    // To read 1 byte, we still use feetech_read_word and take the LSB
-                    read_status = feetech_read_word(parser->id, reg_addr, &read_data, 100);
-                } else if (read_len == 2) {
-                    read_status = feetech_read_word(parser->id, reg_addr, &read_data, 100);
-                } else {
-                    ESP_LOGE(TAG, "Slave: Unsupported read length: %d", read_len);
-                    error = (1 << 2); // Instruction Error
-                }
-                xSemaphoreGive(g_uart1_mutex);
-            }
-            if (read_status != ESP_OK) {
-                error |= (1 << 6); // Instruction Error for read failure
-            }
-
-            status_packet[0] = 0xFF;
-            status_packet[1] = 0xFF;
-            status_packet[2] = parser->id;
-            status_packet[3] = read_len + 2; // Length = params + error byte + checksum byte
-            status_packet[4] = error;
-
-            uint8_t checksum = parser->id + (read_len + 2) + error;
-
-            if (error == 0) {
-                if (read_len == 1) {
-                    status_packet[5] = (uint8_t)(read_data & 0xFF);
-                    checksum += status_packet[5];
-                } else if (read_len == 2) {
-                    status_packet[5] = (uint8_t)(read_data & 0xFF);
-                    status_packet[6] = (uint8_t)((read_data >> 8) & 0xFF);
-                    checksum += status_packet[5];
-                    checksum += status_packet[6];
-                }
-            }
-
-            status_packet[5 + read_len] = ~checksum;
-
-            tinyusb_cdcacm_write_queue(TINYUSB_CDC_ACM_0, status_packet, 6 + read_len);
-            tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, 0);
-            break;
-        }
-
-        default:
-            ESP_LOGW(TAG, "Slave: Received unhandled instruction 0x%02X", parser->instruction);
-            // Optionally, send an instruction error status packet back
-            break;
+    int err = bind(listen_sock, (struct sockaddr *)&dest_addr, sizeof(dest_addr));
+    if (err != 0) {
+        ESP_LOGE(TAG, "Socket unable to bind: errno %d", errno);
+        goto CLEAN_UP;
     }
-}
+    ESP_LOGI(TAG, "Socket bound on port %d", MCP_TCP_PORT);
 
-void parse_feetech_byte(PacketParser *parser, uint8_t byte) {
-    switch (parser->state) {
-        case WAITING_FOR_HEADER_1:
-            if (byte == 0xFF) {
-                parser->state = WAITING_FOR_HEADER_2;
-            }
-            break;
-        case WAITING_FOR_HEADER_2:
-            if (byte == 0xFF) {
-                parser->state = READING_PACKET_HEADER;
-                parser->byte_count = 0;
-                parser->calculated_checksum = 0;
-            } else {
-                // Invalid sequence, go back to waiting for the first header byte
-                parser->state = WAITING_FOR_HEADER_1;
-            }
-            break;
-        case READING_PACKET_HEADER:
-            parser->calculated_checksum += byte;
-            if (parser->byte_count == 0) { // Byte 1: ID
-                parser->id = byte;
-            } else if (parser->byte_count == 1) { // Byte 2: Length
-                parser->length = byte;
-                if (parser->length < 2 || parser->length > MAX_PARAMS + 2) {
-                    ESP_LOGE(TAG, "Parser: Invalid packet length %d. Resetting.", parser->length);
-                    parser->state = WAITING_FOR_HEADER_1; // Invalid length
-                    break;
-                }
-            } else if (parser->byte_count == 2) { // Byte 3: Instruction
-                parser->instruction = byte;
-                if (parser->length > 2) {
-                    parser->state = READING_PACKET_PARAMS;
-                } else { // No params, next byte is checksum
-                    parser->state = READING_PACKET_CHECKSUM;
-                }
-            }
-            parser->byte_count++;
-            break;
-        case READING_PACKET_PARAMS:
-            parser->calculated_checksum += byte;
-            parser->params[parser->byte_count - 3] = byte;
-            if (parser->byte_count - 2 >= parser->length - 2) { // All params read
-                parser->state = READING_PACKET_CHECKSUM;
-            }
-            parser->byte_count++;
-            break;
-        case READING_PACKET_CHECKSUM:
-            parser->checksum = byte;
-            parser->calculated_checksum = ~parser->calculated_checksum;
-            if (parser->checksum == parser->calculated_checksum) {
-                process_feetech_packet(parser);
-            } else {
-                ESP_LOGE(TAG, "Parser: Checksum mismatch! Expected 0x%02X, Got 0x%02X", parser->calculated_checksum, parser->checksum);
-            }
-            // Reset for the next packet
-            parser->state = WAITING_FOR_HEADER_1;
-            break;
+    err = listen(listen_sock, 1);
+    if (err != 0) {
+        ESP_LOGE(TAG, "Error occurred during listen: errno %d", errno);
+        goto CLEAN_UP;
     }
-}
-
-
-void feetech_slave_task(void *pvParameters) {
-    ESP_LOGI(TAG, "Feetech slave task started, listening on USB CDC.");
-    static PacketParser parser = { .state = WAITING_FOR_HEADER_1 };
-    uint8_t buf[256];
 
     while (1) {
-        size_t rx_size = 0;
-        // Directly try to read data. The function will block until data is available or timeout.
-        // To make it non-blocking, we can use a timeout of 0.
-        // However, a small blocking timeout is better to yield CPU.
-        esp_err_t ret = tinyusb_cdcacm_read(TINYUSB_CDC_ACM_0, buf, sizeof(buf), &rx_size);
-
-        if (ret == ESP_OK && rx_size > 0) {
-            // Data received, process it
-            for (int i = 0; i < rx_size; i++) {
-                parse_feetech_byte(&parser, buf[i]);
-            }
-        } else {
-            // No data or an error occurred. In either case, we yield.
-            // This is functionally equivalent to checking for availability first.
-            vTaskDelay(pdMS_TO_TICKS(10));
+        ESP_LOGI(TAG, "Socket listening for a new client...");
+        struct sockaddr_storage source_addr;
+        socklen_t addr_len = sizeof(source_addr);
+        int sock = accept(listen_sock, (struct sockaddr *)&source_addr, &addr_len);
+        if (sock < 0) {
+            ESP_LOGE(TAG, "Unable to accept connection: errno %d", errno);
+            break;
         }
+
+        // Get the client's IP address and log it
+        if (source_addr.ss_family == PF_INET) {
+            inet_ntoa_r(((struct sockaddr_in *)&source_addr)->sin_addr, addr_str, sizeof(addr_str) - 1);
+        }
+        ESP_LOGI(TAG, "Client connected from: %s", addr_str);
+
+        // --- Handle the connected client ---
+        char line_buffer[256];
+        int current_pos = 0;
+        int r;
+        do {
+            char rx_buffer[128];
+            r = recv(sock, rx_buffer, sizeof(rx_buffer) - 1, 0);
+            if (r > 0) {
+                for (int i = 0; i < r; i++) {
+                    if (rx_buffer[i] == '\n' || rx_buffer[i] == '\r') {
+                        if (current_pos > 0) {
+                            line_buffer[current_pos] = '\0';
+                            ESP_LOGD(TAG, "Received command: %s", line_buffer);
+
+                            cJSON *root = cJSON_Parse(line_buffer);
+                            cJSON* response = NULL;
+
+                            if (root) {
+                                cJSON *command = cJSON_GetObjectItem(root, "command");
+                                if (cJSON_IsString(command) && command->valuestring) {
+                                    if (strcmp(command->valuestring, "list_tools") == 0) {
+                                        response = handle_list_tools();
+                                    } else if (strcmp(command->valuestring, "call_tool") == 0) {
+                                        response = handle_call_tool(root);
+                                    }
+                                }
+                                cJSON_Delete(root);
+                            }
+                            
+                            if (response) {
+                                send_json_response(sock, response);
+                                cJSON_Delete(response);
+                            }
+                        }
+                        current_pos = 0;
+                    } else if (current_pos < sizeof(line_buffer) - 1) {
+                        line_buffer[current_pos++] = rx_buffer[i];
+                    }
+                }
+            }
+        } while (r > 0);
+
+        ESP_LOGI(TAG, "Client disconnected. Closing socket.");
+        shutdown(sock, 0);
+        close(sock);
     }
+
+CLEAN_UP:
+    close(listen_sock);
     vTaskDelete(NULL);
 }
 
-// Callback for TinyUSB CDC events
-static void tusb_rx_callback(int itf, cdcacm_event_t *event)
-{
-    // This callback is not used for reading data in this implementation.
-    // Data is read directly in the feetech_slave_task loop.
+
+/**
+ * @brief Sends a JSON object to the client over the given TCP socket.
+ */
+static void send_json_response(int sock, const cJSON *response_json) {
+    char *response_str = cJSON_PrintUnformatted(response_json);
+    if (response_str) {
+        ESP_LOGD(TAG, "Sending response: %s", response_str);
+        send(sock, response_str, strlen(response_str), 0);
+        send(sock, "\n", 1, 0); // Add newline terminator
+        free(response_str);
+    }
 }
 
-// Initializes the native USB CDC for the Feetech slave command interface
-void initialize_usb_cdc(void) {
-    ESP_LOGI(TAG, "Initializing Native USB CDC for Feetech Slave Interface...");
-    const tinyusb_config_t tusb_cfg = {
-        .device_descriptor = NULL,
-        .string_descriptor = NULL,
-        .external_phy = false,
-        .configuration_descriptor = NULL,
-    };
-    ESP_ERROR_CHECK(tinyusb_driver_install(&tusb_cfg));
 
-    tinyusb_config_cdcacm_t acm_cfg = {
-        .usb_dev = TINYUSB_USBDEV_0,
-        .cdc_port = TINYUSB_CDC_ACM_0,
-        .rx_unread_buf_sz = 256,
-        .callback_rx = &tusb_rx_callback, // A simple callback, logic will be in a task
-        .callback_rx_wanted_char = NULL,
-        .callback_line_state_changed = NULL,
-        .callback_line_coding_changed = NULL
-    };
-    ESP_ERROR_CHECK(tusb_cdc_acm_init(&acm_cfg));
-    ESP_LOGI(TAG, "USB CDC Initialized. LeRobot can connect to this virtual COM port.");
+/**
+ * @brief Creates a JSON object describing the available tools.
+ * @return A cJSON object that the caller must delete.
+ */
+static cJSON* handle_list_tools(void) {
+    cJSON *root = cJSON_CreateObject();
+    cJSON *tools = cJSON_AddArrayToObject(root, "tools");
+
+    // Tool: set_pos
+    cJSON *set_pos_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(set_pos_tool, "name", "set_pos");
+    cJSON_AddStringToObject(set_pos_tool, "description", "Sets a single servo to a specific position.");
+    cJSON_AddItemToArray(tools, set_pos_tool);
+
+    // Tool: get_pos
+    cJSON *get_pos_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(get_pos_tool, "name", "get_pos");
+    cJSON_AddStringToObject(get_pos_tool, "description", "Gets the current position of a single servo.");
+    cJSON_AddItemToArray(tools, get_pos_tool);
+
+    // Tool: babble_start
+    cJSON *babble_start_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(babble_start_tool, "name", "babble_start");
+    cJSON_AddStringToObject(babble_start_tool, "description", "Starts the Hebbian learning loop (motor babble).");
+    cJSON_AddItemToArray(tools, babble_start_tool);
+    
+    // Tool: babble_stop
+    cJSON *babble_stop_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(babble_stop_tool, "name", "babble_stop");
+    cJSON_AddStringToObject(babble_stop_tool, "description", "Stops the Hebbian learning loop.");
+    cJSON_AddItemToArray(tools, babble_stop_tool);
+    
+    return root;
 }
 
-void mcp_server_init(void){
-    initialize_usb_cdc();
-    xTaskCreate(feetech_slave_task, "feetech_slave_task", 4096, NULL, 5, NULL);
+
+/**
+ * @brief Executes a tool based on the request and creates a response JSON object.
+ * @return A cJSON object that the caller must delete.
+ */
+static cJSON* handle_call_tool(const cJSON *request_json) {
+    cJSON *response_json = cJSON_CreateObject();
+    cJSON *result_json = NULL;
+
+    const cJSON *tool_name_json = cJSON_GetObjectItem(request_json, "tool_name");
+    const cJSON *args_json = cJSON_GetObjectItem(request_json, "arguments");
+
+    if (!cJSON_IsString(tool_name_json) || !tool_name_json->valuestring) {
+        cJSON_AddStringToObject(response_json, "error", "Missing or invalid 'tool_name'.");
+        return response_json;
+    }
+    char *tool_name = tool_name_json->valuestring;
+
+    // --- Tool Dispatcher ---
+    if (strcmp(tool_name, "set_pos") == 0) {
+        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
+        const cJSON *pos_json = cJSON_GetObjectItem(args_json, "pos");
+        if (cJSON_IsNumber(id_json) && cJSON_IsNumber(pos_json)) {
+            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+                feetech_write_word((uint8_t)id_json->valueint, REG_GOAL_POSITION, (uint16_t)pos_json->valueint);
+                xSemaphoreGive(g_uart1_mutex);
+            }
+            result_json = cJSON_CreateString("OK");
+        }
+    } else if (strcmp(tool_name, "get_pos") == 0) {
+        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
+        if (cJSON_IsNumber(id_json)) {
+            uint16_t current_pos = 0;
+            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+                if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_POSITION, &current_pos, 100) == ESP_OK) {
+                    result_json = cJSON_CreateNumber(current_pos);
+                }
+                xSemaphoreGive(g_uart1_mutex);
+            }
+        }
+    } else if (strcmp(tool_name, "babble_start") == 0) {
+        g_learning_loop_active = true;
+        result_json = cJSON_CreateString("Learning loop started.");
+    } else if (strcmp(tool_name, "babble_stop") == 0) {
+        g_learning_loop_active = false;
+        result_json = cJSON_CreateString("Learning loop stopped.");
+    }
+    
+    // --- Finalize Response ---
+    if (result_json) {
+        cJSON_AddItemToObject(response_json, "result", result_json);
+    } else {
+        cJSON_AddStringToObject(response_json, "error", "Failed to execute tool or invalid arguments.");
+    }
+    return response_json;
+}
+
+/**
+ * @brief Public function to initialize the MCP server.
+ */
+void mcp_server_init(void) {
+    // Note: The main.c already calls nvs_storage_initialize(),
+    // which calls nvs_flash_init(). It's safe to call it again.
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    ESP_LOGI(TAG, "Initializing MCP Server over Wi-Fi.");
+    wifi_init_sta();
+
+    xTaskCreate(mcp_server_task, "mcp_server_task", 4096, NULL, 5, NULL);
 }

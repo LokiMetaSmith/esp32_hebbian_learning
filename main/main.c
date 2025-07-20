@@ -54,7 +54,7 @@ static float g_best_fitness_achieved = 0.0f;
 static const float MIN_FITNESS_IMPROVEMENT_TO_SAVE = 0.01f;
 
 // --- Global flag for learning loop ---
-static bool g_learning_loop_active = false;
+bool g_learning_loop_active = false;
 // --- Global flag for standalone random walk ---
 static bool g_random_walk_active = false;
 static TaskHandle_t g_random_walk_task_handle = NULL;
