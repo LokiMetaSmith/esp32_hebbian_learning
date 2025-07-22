@@ -344,6 +344,12 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(export_nn_tool, "name", "export_nn");
     cJSON_AddStringToObject(export_nn_tool, "description", "Exports the neural network as a base64 encoded string.");
     cJSON_AddItemToArray(tools, export_nn_tool);
+
+    // Tool: import_nn_json
+    cJSON *import_nn_json_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(import_nn_json_tool, "name", "import_nn_json");
+    cJSON_AddStringToObject(import_nn_json_tool, "description", "Imports a neural network from a JSON object.");
+    cJSON_AddItemToArray(tools, import_nn_json_tool);
     
     return root;
 }
@@ -505,6 +511,13 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
             }
             free(encoded_data);
             free(nn_blob);
+        }
+    } else if (strcmp(tool_name, "import_nn_json") == 0) {
+        const cJSON *nn_json = cJSON_GetObjectItem(args_json, "nn_data");
+        if (nn_json) {
+            if (save_network_from_json(nn_json) == ESP_OK) {
+                result_json = cJSON_CreateString("OK");
+            }
         }
     }
     

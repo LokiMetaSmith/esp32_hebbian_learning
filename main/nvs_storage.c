@@ -1,6 +1,7 @@
 #include "nvs_storage.h"
 #include "nvs_flash.h"
 #include "esp_log.h"
+#include "cJSON.h"
 
 #define NVS_NAMESPACE "nn_storage"
 static const char *TAG = "NVS_STORAGE";
@@ -46,6 +47,45 @@ esp_err_t save_network_to_nvs(const HiddenLayer* hl, const OutputLayer* ol, cons
 cleanup:
     nvs_close(nvs_handle);
     return err;
+}
+
+static void json_to_float_array(cJSON *json_array, float *target_array, int array_size) {
+    if (!cJSON_IsArray(json_array)) return;
+    int i = 0;
+    cJSON *element;
+    cJSON_ArrayForEach(element, json_array) {
+        if (i < array_size && cJSON_IsNumber(element)) {
+            target_array[i++] = (float)element->valuedouble;
+        }
+    }
+}
+
+esp_err_t save_network_from_json(const cJSON *nn_json) {
+    if (!nn_json) return ESP_ERR_INVALID_ARG;
+
+    HiddenLayer hl;
+    OutputLayer ol;
+    PredictionLayer pl;
+
+    cJSON *hidden_layer_json = cJSON_GetObjectItem(nn_json, "hidden_layer");
+    if (hidden_layer_json) {
+        json_to_float_array(cJSON_GetObjectItem(hidden_layer_json, "weights"), (float *)hl.weights, INPUT_SIZE * HIDDEN_NEURONS);
+        json_to_float_array(cJSON_GetObjectItem(hidden_layer_json, "biases"), hl.biases, HIDDEN_NEURONS);
+    }
+
+    cJSON *output_layer_json = cJSON_GetObjectItem(nn_json, "output_layer");
+    if (output_layer_json) {
+        json_to_float_array(cJSON_GetObjectItem(output_layer_json, "weights"), (float *)ol.weights, HIDDEN_NEURONS * OUTPUT_NEURONS);
+        json_to_float_array(cJSON_GetObjectItem(output_layer_json, "biases"), ol.biases, OUTPUT_NEURONS);
+    }
+
+    cJSON *prediction_layer_json = cJSON_GetObjectItem(nn_json, "prediction_layer");
+    if (prediction_layer_json) {
+        json_to_float_array(cJSON_GetObjectItem(prediction_layer_json, "weights"), (float *)pl.weights, OUTPUT_NEURONS * PREDICTION_NEURONS);
+        json_to_float_array(cJSON_GetObjectItem(prediction_layer_json, "biases"), pl.biases, PREDICTION_NEURONS);
+    }
+
+    return save_network_to_nvs(&hl, &ol, &pl);
 }
 
 esp_err_t get_raw_network_blob(uint8_t **buffer, size_t *size) {

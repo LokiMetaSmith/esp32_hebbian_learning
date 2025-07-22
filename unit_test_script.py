@@ -246,6 +246,27 @@ def run_mcp_tests(host, port):
         assert response and response.get("result") == "OK", "MCP Test 5 Failed: import_nn."
         print("  [MCP] Test 5 (Export/Import NN): PASSED")
 
+        # Test 6: Import NN from JSON
+        # This requires a JSON object representing the neural network.
+        # For now, we'll just send a dummy object.
+        nn_json = {
+            "hidden_layer": {
+                "weights": [[0.1] * 20] * 10,
+                "biases": [0.1] * 10
+            },
+            "output_layer": {
+                "weights": [[0.1] * 10] * 5,
+                "biases": [0.1] * 5
+            },
+            "prediction_layer": {
+                "weights": [[0.1] * 5] * 2,
+                "biases": [0.1] * 2
+            }
+        }
+        response = client.call_tool("import_nn_json", {"nn_data": nn_json})
+        assert response and response.get("result") == "OK", "MCP Test 6 Failed: import_nn_json."
+        print("  [MCP] Test 6 (Import NN JSON): PASSED")
+
 
     except AssertionError as e:
         print(f"  [MCP] !!! TEST FAILED: {e}")

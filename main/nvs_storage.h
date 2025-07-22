@@ -69,5 +69,13 @@ esp_err_t get_raw_network_blob(uint8_t **buffer, size_t *size);
  */
 esp_err_t set_raw_network_blob(const uint8_t *buffer, size_t size);
 
+/**
+ * @brief Saves the neural network state from a cJSON object to NVS.
+ *
+ * @param nn_json Pointer to the cJSON object containing the neural network data.
+ * @return esp_err_t Result of the save operation.
+ */
+esp_err_t save_network_from_json(const cJSON *nn_json);
+
 
 #endif // NVS_STORAGE_H
