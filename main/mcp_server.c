@@ -20,10 +20,12 @@
 
 // --- cJSON for parsing and creating JSON ---
 #include "cJSON.h"
+#include "mbedtls/base64.h"
 
 // --- Project-specific includes ---
 #include "main.h" // For NUM_SERVOS etc.
 #include "feetech_protocol.h" // For servo communication functions
+#include "nvs_storage.h"
 
 // --- Wi-Fi & Server Configuration ---
 #define WIFI_SSID      "YOUR_WIFI_SSID"      // <-- IMPORTANT: SET YOUR WIFI SSID
@@ -228,12 +230,25 @@ CLEAN_UP:
  * @brief Sends a JSON object to the client over the given TCP socket.
  */
 static void send_json_response(int sock, const cJSON *response_json) {
-    char *response_str = cJSON_PrintUnformatted(response_json);
-    if (response_str) {
-        ESP_LOGD(TAG, "Sending response: %s", response_str);
-        send(sock, response_str, strlen(response_str), 0);
-        send(sock, "\n", 1, 0); // Add newline terminator
-        free(response_str);
+    // Check if the response contains binary data
+    cJSON *result = cJSON_GetObjectItem(response_json, "result");
+    if (result != NULL && result->type == cJSON_String && result->valuestring != NULL &&
+        strncmp(result->valuestring, "BINARY:", 7) == 0) {
+
+        // Extract the binary data from the string
+        char *binary_data = result->valuestring + 7;
+        int data_len = strlen(binary_data);
+
+        // Send the binary data
+        send(sock, binary_data, data_len, 0);
+    } else {
+        char *response_str = cJSON_PrintUnformatted(response_json);
+        if (response_str) {
+            ESP_LOGD(TAG, "Sending response: %s", response_str);
+            send(sock, response_str, strlen(response_str), 0);
+            send(sock, "\n", 1, 0); // Add newline terminator
+            free(response_str);
+        }
     }
 }
 
@@ -311,6 +326,24 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(calibrate_tool, "name", "calibrate");
     cJSON_AddStringToObject(calibrate_tool, "description", "Calibrates a single servo.");
     cJSON_AddItemToArray(tools, calibrate_tool);
+
+    // Tool: export_data
+    cJSON *export_data_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(export_data_tool, "name", "export_data");
+    cJSON_AddStringToObject(export_data_tool, "description", "Exports data from the device.");
+    cJSON_AddItemToArray(tools, export_data_tool);
+
+    // Tool: import_nn
+    cJSON *import_nn_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(import_nn_tool, "name", "import_nn");
+    cJSON_AddStringToObject(import_nn_tool, "description", "Imports a neural network from a base64 encoded string.");
+    cJSON_AddItemToArray(tools, import_nn_tool);
+
+    // Tool: export_nn
+    cJSON *export_nn_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(export_nn_tool, "name", "export_nn");
+    cJSON_AddStringToObject(export_nn_tool, "description", "Exports the neural network as a base64 encoded string.");
+    cJSON_AddItemToArray(tools, export_nn_tool);
     
     return root;
 }
@@ -444,6 +477,35 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
         // Calibration logic would go here. This is highly dependent on the specific
         // calibration routine required. For now, we'll just return "OK".
         result_json = cJSON_CreateString("OK");
+    } else if (strcmp(tool_name, "export_data") == 0) {
+        // This is a placeholder for the data to be exported.
+        // In a real application, this would be populated with actual data.
+        const char *data = "BINARY:This is the data to be exported.";
+        result_json = cJSON_CreateString(data);
+    } else if (strcmp(tool_name, "import_nn") == 0) {
+        const cJSON *data_json = cJSON_GetObjectItem(args_json, "data");
+        if (cJSON_IsString(data_json) && data_json->valuestring) {
+            size_t output_len;
+            unsigned char *decoded_data = malloc(strlen(data_json->valuestring));
+            if (mbedtls_base64_decode(decoded_data, strlen(data_json->valuestring), &output_len, (const unsigned char*)data_json->valuestring, strlen(data_json->valuestring)) == 0) {
+                if (set_raw_network_blob(decoded_data, output_len) == ESP_OK) {
+                    result_json = cJSON_CreateString("OK");
+                }
+            }
+            free(decoded_data);
+        }
+    } else if (strcmp(tool_name, "export_nn") == 0) {
+        uint8_t *nn_blob;
+        size_t nn_size;
+        if (get_raw_network_blob(&nn_blob, &nn_size) == ESP_OK) {
+            size_t output_len;
+            unsigned char *encoded_data = malloc(nn_size * 4 / 3 + 4);
+            if (mbedtls_base64_encode(encoded_data, nn_size * 4 / 3 + 4, &output_len, nn_blob, nn_size) == 0) {
+                result_json = cJSON_CreateString((const char*)encoded_data);
+            }
+            free(encoded_data);
+            free(nn_blob);
+        }
     }
     
     // --- Finalize Response ---

@@ -232,6 +232,20 @@ def run_mcp_tests(host, port):
         assert response and "result" in response, "MCP Test 3 Failed: get_torque."
         print("  [MCP] Test 3 (Get Data): PASSED")
 
+        # Test 4: Export Data
+        response = client.call_tool("export_data")
+        assert response and "result" in response, "MCP Test 4 Failed: export_data."
+        print("  [MCP] Test 4 (Export Data): PASSED")
+
+        # Test 5: Export/Import NN
+        response = client.call_tool("export_nn")
+        assert response and "result" in response and response["result"], "MCP Test 5 Failed: export_nn."
+        nn_data = response["result"]
+
+        response = client.call_tool("import_nn", {"data": nn_data})
+        assert response and response.get("result") == "OK", "MCP Test 5 Failed: import_nn."
+        print("  [MCP] Test 5 (Export/Import NN): PASSED")
+
 
     except AssertionError as e:
         print(f"  [MCP] !!! TEST FAILED: {e}")
