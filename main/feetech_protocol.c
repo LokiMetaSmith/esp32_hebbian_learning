@@ -156,9 +156,60 @@ esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *val
         }
 
 esp_err_t feetech_read_byte(uint8_t servo_id, uint8_t reg_address, uint8_t *value, uint32_t timeout_ms) {
-    // Implementation for reading a byte
-    // This is a placeholder and needs to be implemented correctly.
-    *value = 0;
+    if (value == NULL) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    // Command Packet to read 1 byte
+    uint8_t command_packet[8];
+    uint8_t cmd_params_for_checksum[2] = {reg_address, 1}; // Read 1 byte
+    uint8_t cmd_packet_field_length = 2 + 2;
+
+    command_packet[0] = 0xFF;
+    command_packet[1] = 0xFF;
+    command_packet[2] = servo_id;
+    command_packet[3] = cmd_packet_field_length;
+    command_packet[4] = SCS_INST_READ;
+    command_packet[5] = cmd_params_for_checksum[0];
+    command_packet[6] = cmd_params_for_checksum[1];
+    command_packet[7] = calculate_checksum(servo_id, cmd_packet_field_length, SCS_INST_READ, cmd_params_for_checksum);
+
+    uart_flush_input(SERVO_UART_PORT);
+    uart_write_bytes(SERVO_UART_PORT, (const char*)command_packet, sizeof(command_packet));
+
+    // Expected Response for 1 byte read: Header(2), ID(1), Length(3), Error(1), Data(1), Checksum(1) -> Total 7 bytes
+    uint8_t response_packet[7];
+    int bytes_read = uart_read_bytes(SERVO_UART_PORT, response_packet, sizeof(response_packet), pdMS_TO_TICKS(timeout_ms));
+
+    if (bytes_read < (int)sizeof(response_packet)) {
+        ESP_LOGE(TAG, "ReadByte: Timeout or insufficient data from servo %d. Expected %d, got %d.", servo_id, sizeof(response_packet), bytes_read);
+        return ESP_ERR_TIMEOUT;
+    }
+
+    if (response_packet[0] != 0xFF || response_packet[1] != 0xFF || response_packet[2] != servo_id) {
+        ESP_LOGE(TAG, "ReadByte: Invalid header or ID mismatch for servo %d.", servo_id);
+        return ESP_FAIL;
+    }
+
+    if (response_packet[3] != 3) { // Length for 1 byte data is 3 (Error + Data + Checksum)
+        ESP_LOGE(TAG, "ReadByte: Invalid response packet length from servo %d. Expected 3, got %d.", servo_id, response_packet[3]);
+        return ESP_FAIL;
+    }
+
+    uint8_t received_checksum = response_packet[6];
+    uint8_t calculated_checksum = ~((uint8_t)(response_packet[2] + response_packet[3] + response_packet[4] + response_packet[5]));
+
+    if (received_checksum != calculated_checksum) {
+        ESP_LOGE(TAG, "ReadByte: Checksum error for servo %d. Expected %02X, got %02X", servo_id, calculated_checksum, received_checksum);
+        return ESP_FAIL;
+    }
+
+    if (response_packet[4] != 0) {
+        ESP_LOGW(TAG, "ReadByte: Servo %d reported error code: 0x%02X", servo_id, response_packet[4]);
+        return ESP_FAIL;
+    }
+
+    *value = response_packet[5];
     return ESP_OK;
 }
 
