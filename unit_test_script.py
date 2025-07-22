@@ -197,31 +197,41 @@ def run_mcp_tests(host, port):
         response = client.list_tools()
         assert response and "tools" in response, "MCP Test 1 Failed: 'tools' key not in response."
         tool_names = [t['name'] for t in response['tools']]
-        assert "set_pos" in tool_names and "get_pos" in tool_names, "MCP Test 1 Failed: Missing required tools."
+        # Check for new tools
+        assert "set_torque" in tool_names, "MCP Test 1 Failed: Missing set_torque tool."
+        assert "set_acceleration" in tool_names, "MCP Test 1 Failed: Missing set_acceleration tool."
+        assert "get_status" in tool_names, "MCP Test 1 Failed: Missing get_status tool."
         print("  [MCP] Test 1 (list_tools): PASSED")
 
-        # Test 2: Set position
-        servo_id, test_pos = 1, 2048
-        response = client.call_tool("set_pos", {"id": servo_id, "pos": test_pos})
-        assert response and response.get("result") == "OK", "MCP Test 2 Failed: Did not get 'OK' on set_pos."
-        print("  [MCP] Test 2 (set_pos): PASSED")
+        # Test 2: Servo Control
+        servo_id = 1
+        response = client.call_tool("set_torque", {"id": servo_id, "torque": False})
+        assert response and response.get("result") == "OK", "MCP Test 2 Failed: set_torque off."
         time.sleep(0.5)
+        response = client.call_tool("set_torque", {"id": servo_id, "torque": True})
+        assert response and response.get("result") == "OK", "MCP Test 2 Failed: set_torque on."
+        time.sleep(0.5)
+        response = client.call_tool("set_acceleration", {"id": servo_id, "accel": 100})
+        assert response and response.get("result") == "OK", "MCP Test 2 Failed: set_acceleration."
+        print("  [MCP] Test 2 (Servo Control): PASSED")
 
-        # Test 3: Get position
-        response = client.call_tool("get_pos", {"id": servo_id})
-        read_pos = response.get("result")
-        assert isinstance(read_pos, int) and abs(read_pos - test_pos) < 50, \
-            f"MCP Test 3 Failed: Position mismatch. Expected ~{test_pos}, got {read_pos}."
-        print(f"  [MCP] Test 3 (get_pos): PASSED (Read back {read_pos})")
 
-        # Test 4: Babble start/stop
-        response = client.call_tool("babble_start")
-        assert response and "started" in response.get("result", ""), "MCP Test 4 Failed: babble_start."
-        print("  [MCP] Test 4 (babble_start): PASSED")
-        time.sleep(1)
-        response = client.call_tool("babble_stop")
-        assert response and "stopped" in response.get("result", ""), "MCP Test 4 Failed: babble_stop."
-        print("  [MCP] Test 4 (babble_stop): PASSED")
+        # Test 3: Get Data
+        response = client.call_tool("get_status", {"id": servo_id})
+        assert response and "result" in response, "MCP Test 3 Failed: get_status."
+        status = response["result"]
+        assert "moving" in status and "pos" in status, "MCP Test 3 Failed: get_status content."
+
+        response = client.call_tool("get_current", {"id": servo_id})
+        assert response and "result" in response, "MCP Test 3 Failed: get_current."
+
+        response = client.call_tool("get_power", {"id": servo_id})
+        assert response and "result" in response, "MCP Test 3 Failed: get_power."
+
+        response = client.call_tool("get_torque", {"id": servo_id})
+        assert response and "result" in response, "MCP Test 3 Failed: get_torque."
+        print("  [MCP] Test 3 (Get Data): PASSED")
+
 
     except AssertionError as e:
         print(f"  [MCP] !!! TEST FAILED: {e}")

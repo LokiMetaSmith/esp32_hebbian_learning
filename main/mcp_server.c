@@ -269,6 +269,48 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(babble_stop_tool, "name", "babble_stop");
     cJSON_AddStringToObject(babble_stop_tool, "description", "Stops the Hebbian learning loop.");
     cJSON_AddItemToArray(tools, babble_stop_tool);
+
+    // Tool: set_torque
+    cJSON *set_torque_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(set_torque_tool, "name", "set_torque");
+    cJSON_AddStringToObject(set_torque_tool, "description", "Enables or disables torque for a single servo.");
+    cJSON_AddItemToArray(tools, set_torque_tool);
+
+    // Tool: set_acceleration
+    cJSON *set_acceleration_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(set_acceleration_tool, "name", "set_acceleration");
+    cJSON_AddStringToObject(set_acceleration_tool, "description", "Sets the acceleration of a single servo.");
+    cJSON_AddItemToArray(tools, set_acceleration_tool);
+
+    // Tool: get_status
+    cJSON *get_status_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(get_status_tool, "name", "get_status");
+    cJSON_AddStringToObject(get_status_tool, "description", "Gets the status of a single servo.");
+    cJSON_AddItemToArray(tools, get_status_tool);
+
+    // Tool: get_current
+    cJSON *get_current_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(get_current_tool, "name", "get_current");
+    cJSON_AddStringToObject(get_current_tool, "description", "Gets the current being used by a single servo.");
+    cJSON_AddItemToArray(tools, get_current_tool);
+
+    // Tool: get_power
+    cJSON *get_power_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(get_power_tool, "name", "get_power");
+    cJSON_AddStringToObject(get_power_tool, "description", "Gets the power being consumed by a single servo.");
+    cJSON_AddItemToArray(tools, get_power_tool);
+
+    // Tool: get_torque
+    cJSON *get_torque_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(get_torque_tool, "name", "get_torque");
+    cJSON_AddStringToObject(get_torque_tool, "description", "Gets the current torque of a single servo.");
+    cJSON_AddItemToArray(tools, get_torque_tool);
+
+    // Tool: calibrate
+    cJSON *calibrate_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(calibrate_tool, "name", "calibrate");
+    cJSON_AddStringToObject(calibrate_tool, "description", "Calibrates a single servo.");
+    cJSON_AddItemToArray(tools, calibrate_tool);
     
     return root;
 }
@@ -319,6 +361,89 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
     } else if (strcmp(tool_name, "babble_stop") == 0) {
         g_learning_loop_active = false;
         result_json = cJSON_CreateString("Learning loop stopped.");
+    } else if (strcmp(tool_name, "set_torque") == 0) {
+        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
+        const cJSON *torque_json = cJSON_GetObjectItem(args_json, "torque");
+        if (cJSON_IsNumber(id_json) && cJSON_IsBool(torque_json)) {
+            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+                feetech_write_byte((uint8_t)id_json->valueint, REG_TORQUE_ENABLE, cJSON_IsTrue(torque_json) ? 1 : 0);
+                xSemaphoreGive(g_uart1_mutex);
+            }
+            result_json = cJSON_CreateString("OK");
+        }
+    } else if (strcmp(tool_name, "set_acceleration") == 0) {
+        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
+        const cJSON *accel_json = cJSON_GetObjectItem(args_json, "accel");
+        if (cJSON_IsNumber(id_json) && cJSON_IsNumber(accel_json)) {
+            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+                feetech_write_byte((uint8_t)id_json->valueint, REG_ACCELERATION, (uint8_t)accel_json->valueint);
+                xSemaphoreGive(g_uart1_mutex);
+            }
+            result_json = cJSON_CreateString("OK");
+        }
+    } else if (strcmp(tool_name, "get_status") == 0) {
+        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
+        if (cJSON_IsNumber(id_json)) {
+            uint8_t moving = 0;
+            uint16_t pos = 0, load = 0, current = 0, voltage = 0;
+            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+                feetech_read_byte((uint8_t)id_json->valueint, REG_MOVING, &moving, 100);
+                feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_POSITION, &pos, 100);
+                feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_LOAD, &load, 100);
+                feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100);
+                feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_VOLTAGE, &voltage, 100);
+                xSemaphoreGive(g_uart1_mutex);
+
+                cJSON *status_obj = cJSON_CreateObject();
+                cJSON_AddBoolToObject(status_obj, "moving", moving);
+                cJSON_AddNumberToObject(status_obj, "pos", pos);
+                cJSON_AddNumberToObject(status_obj, "load", load);
+                cJSON_AddNumberToObject(status_obj, "current", current);
+                cJSON_AddNumberToObject(status_obj, "voltage", voltage);
+                result_json = status_obj;
+            }
+        }
+    } else if (strcmp(tool_name, "get_current") == 0) {
+        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
+        if (cJSON_IsNumber(id_json)) {
+            uint16_t current = 0;
+            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+                if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100) == ESP_OK) {
+                    result_json = cJSON_CreateNumber(current);
+                }
+                xSemaphoreGive(g_uart1_mutex);
+            }
+        }
+    } else if (strcmp(tool_name, "get_power") == 0) {
+        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
+        if (cJSON_IsNumber(id_json)) {
+            uint16_t current = 0;
+            uint16_t voltage = 0;
+            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+                if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100) == ESP_OK &&
+                   feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_VOLTAGE, &voltage, 100) == ESP_OK) {
+                    // Power (mW) = Voltage (mV) * Current (mA) / 1000
+                    // The servo returns voltage in mV and current in mA.
+                    result_json = cJSON_CreateNumber((float)(current * voltage) / 1000.0);
+                }
+                xSemaphoreGive(g_uart1_mutex);
+            }
+        }
+    } else if (strcmp(tool_name, "get_torque") == 0) {
+        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
+        if (cJSON_IsNumber(id_json)) {
+            uint16_t torque = 0;
+            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+                if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_LOAD, &torque, 100) == ESP_OK) {
+                    result_json = cJSON_CreateNumber(torque);
+                }
+                xSemaphoreGive(g_uart1_mutex);
+            }
+        }
+    } else if (strcmp(tool_name, "calibrate") == 0) {
+        // Calibration logic would go here. This is highly dependent on the specific
+        // calibration routine required. For now, we'll just return "OK".
+        result_json = cJSON_CreateString("OK");
     }
     
     // --- Finalize Response ---

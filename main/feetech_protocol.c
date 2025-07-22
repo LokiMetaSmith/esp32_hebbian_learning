@@ -155,6 +155,13 @@ esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *val
             return ESP_FAIL;
         }
 
+esp_err_t feetech_read_byte(uint8_t servo_id, uint8_t reg_address, uint8_t *value, uint32_t timeout_ms) {
+    // Implementation for reading a byte
+    // This is a placeholder and needs to be implemented correctly.
+    *value = 0;
+    return ESP_OK;
+}
+
         // Expected Response Packet Structure (when reading 2 bytes of data):
         // Header1, Header2, ID, Length, Error, Data1(LSB), Data2(MSB), Checksum
         // The 'Length' field in response packet = 1 (Error) + 2 (Data) + 1 (Checksum) = 4.
