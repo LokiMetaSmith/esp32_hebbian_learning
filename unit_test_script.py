@@ -203,7 +203,18 @@ def run_mcp_tests(host, port):
         assert "get_status" in tool_names, "MCP Test 1 Failed: Missing get_status tool."
         print("  [MCP] Test 1 (list_tools): PASSED")
 
-        # Test 2: Servo Control
+        # Test 2: Set/Get Position
+        servo_id, test_pos = 1, 2048
+        response = client.call_tool("set_pos", {"id": servo_id, "pos": test_pos})
+        assert response and response.get("result") == "OK", "MCP Test 2 Failed: Did not get 'OK' on set_pos."
+        time.sleep(0.5)
+        response = client.call_tool("get_pos", {"id": servo_id})
+        read_pos = response.get("result")
+        assert isinstance(read_pos, int) and abs(read_pos - test_pos) < 50, \
+            f"MCP Test 2 Failed: Position mismatch. Expected ~{test_pos}, got {read_pos}."
+        print(f"  [MCP] Test 2 (set_pos/get_pos): PASSED (Read back {read_pos})")
+
+        # Test 2a: Servo Control
         servo_id = 1
         response = client.call_tool("set_torque", {"id": servo_id, "torque": False})
         assert response and response.get("result") == "OK", "MCP Test 2 Failed: set_torque off."
@@ -273,6 +284,15 @@ def run_mcp_tests(host, port):
         response = client.call_tool("calibrate_servo", {"id": 1})
         assert response and "prompt" in response, "MCP Test 7 Failed: calibrate_servo."
         print("  [MCP] Test 7 (Calibrate Servo): PASSED (prompt received)")
+
+        # Test 8: Babble Start/Stop
+        response = client.call_tool("babble_start")
+        assert response and "started" in response.get("result", ""), "MCP Test 8 Failed: babble_start."
+        print("  [MCP] Test 8 (babble_start): PASSED")
+        time.sleep(1)
+        response = client.call_tool("babble_stop")
+        assert response and "stopped" in response.get("result", ""), "MCP Test 8 Failed: babble_stop."
+        print("  [MCP] Test 8 (babble_stop): PASSED")
 
 
     except AssertionError as e:
