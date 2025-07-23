@@ -197,31 +197,103 @@ def run_mcp_tests(host, port):
         response = client.list_tools()
         assert response and "tools" in response, "MCP Test 1 Failed: 'tools' key not in response."
         tool_names = [t['name'] for t in response['tools']]
-        assert "set_pos" in tool_names and "get_pos" in tool_names, "MCP Test 1 Failed: Missing required tools."
+        # Check for new tools
+        assert "set_torque" in tool_names, "MCP Test 1 Failed: Missing set_torque tool."
+        assert "set_acceleration" in tool_names, "MCP Test 1 Failed: Missing set_acceleration tool."
+        assert "get_status" in tool_names, "MCP Test 1 Failed: Missing get_status tool."
         print("  [MCP] Test 1 (list_tools): PASSED")
 
-        # Test 2: Set position
+        # Test 2: Set/Get Position
         servo_id, test_pos = 1, 2048
         response = client.call_tool("set_pos", {"id": servo_id, "pos": test_pos})
         assert response and response.get("result") == "OK", "MCP Test 2 Failed: Did not get 'OK' on set_pos."
-        print("  [MCP] Test 2 (set_pos): PASSED")
         time.sleep(0.5)
-
-        # Test 3: Get position
         response = client.call_tool("get_pos", {"id": servo_id})
         read_pos = response.get("result")
         assert isinstance(read_pos, int) and abs(read_pos - test_pos) < 50, \
-            f"MCP Test 3 Failed: Position mismatch. Expected ~{test_pos}, got {read_pos}."
-        print(f"  [MCP] Test 3 (get_pos): PASSED (Read back {read_pos})")
+            f"MCP Test 2 Failed: Position mismatch. Expected ~{test_pos}, got {read_pos}."
+        print(f"  [MCP] Test 2 (set_pos/get_pos): PASSED (Read back {read_pos})")
 
-        # Test 4: Babble start/stop
+        # Test 2a: Servo Control
+        servo_id = 1
+        response = client.call_tool("set_torque", {"id": servo_id, "torque": False})
+        assert response and response.get("result") == "OK", "MCP Test 2 Failed: set_torque off."
+        time.sleep(0.5)
+        response = client.call_tool("set_torque", {"id": servo_id, "torque": True})
+        assert response and response.get("result") == "OK", "MCP Test 2 Failed: set_torque on."
+        time.sleep(0.5)
+        response = client.call_tool("set_acceleration", {"id": servo_id, "accel": 100})
+        assert response and response.get("result") == "OK", "MCP Test 2 Failed: set_acceleration."
+        print("  [MCP] Test 2 (Servo Control): PASSED")
+
+
+        # Test 3: Get Data
+        response = client.call_tool("get_status", {"id": servo_id})
+        assert response and "result" in response, "MCP Test 3 Failed: get_status."
+        status = response["result"]
+        assert "moving" in status and "pos" in status, "MCP Test 3 Failed: get_status content."
+
+        response = client.call_tool("get_current", {"id": servo_id})
+        assert response and "result" in response, "MCP Test 3 Failed: get_current."
+
+        response = client.call_tool("get_power", {"id": servo_id})
+        assert response and "result" in response, "MCP Test 3 Failed: get_power."
+
+        response = client.call_tool("get_torque", {"id": servo_id})
+        assert response and "result" in response, "MCP Test 3 Failed: get_torque."
+        print("  [MCP] Test 3 (Get Data): PASSED")
+
+        # Test 4: Export Data
+        response = client.call_tool("export_data")
+        assert response and "result" in response, "MCP Test 4 Failed: export_data."
+        print("  [MCP] Test 4 (Export Data): PASSED")
+
+        # Test 5: Export/Import NN
+        response = client.call_tool("export_nn")
+        assert response and "result" in response and response["result"], "MCP Test 5 Failed: export_nn."
+        nn_data = response["result"]
+
+        response = client.call_tool("import_nn", {"data": nn_data})
+        assert response and response.get("result") == "OK", "MCP Test 5 Failed: import_nn."
+        print("  [MCP] Test 5 (Export/Import NN): PASSED")
+
+        # Test 6: Import NN from JSON
+        # This requires a JSON object representing the neural network.
+        # For now, we'll just send a dummy object.
+        nn_json = {
+            "hidden_layer": {
+                "weights": [[0.1] * 20] * 10,
+                "biases": [0.1] * 10
+            },
+            "output_layer": {
+                "weights": [[0.1] * 10] * 5,
+                "biases": [0.1] * 5
+            },
+            "prediction_layer": {
+                "weights": [[0.1] * 5] * 2,
+                "biases": [0.1] * 2
+            }
+        }
+        response = client.call_tool("import_nn_json", {"nn_data": nn_json})
+        assert response and response.get("result") == "OK", "MCP Test 6 Failed: import_nn_json."
+        print("  [MCP] Test 6 (Import NN JSON): PASSED")
+
+        # Test 7: Calibrate Servo (Interactive)
+        # This test will require manual interaction.
+        # It's here to ensure the command can be called.
+        response = client.call_tool("calibrate_servo", {"id": 1})
+        assert response and "prompt" in response, "MCP Test 7 Failed: calibrate_servo."
+        print("  [MCP] Test 7 (Calibrate Servo): PASSED (prompt received)")
+
+        # Test 8: Babble Start/Stop
         response = client.call_tool("babble_start")
-        assert response and "started" in response.get("result", ""), "MCP Test 4 Failed: babble_start."
-        print("  [MCP] Test 4 (babble_start): PASSED")
+        assert response and "started" in response.get("result", ""), "MCP Test 8 Failed: babble_start."
+        print("  [MCP] Test 8 (babble_start): PASSED")
         time.sleep(1)
         response = client.call_tool("babble_stop")
-        assert response and "stopped" in response.get("result", ""), "MCP Test 4 Failed: babble_stop."
-        print("  [MCP] Test 4 (babble_stop): PASSED")
+        assert response and "stopped" in response.get("result", ""), "MCP Test 8 Failed: babble_stop."
+        print("  [MCP] Test 8 (babble_stop): PASSED")
+
 
     except AssertionError as e:
         print(f"  [MCP] !!! TEST FAILED: {e}")
