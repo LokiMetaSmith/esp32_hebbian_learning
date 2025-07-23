@@ -267,6 +267,13 @@ def run_mcp_tests(host, port):
         assert response and response.get("result") == "OK", "MCP Test 6 Failed: import_nn_json."
         print("  [MCP] Test 6 (Import NN JSON): PASSED")
 
+        # Test 7: Calibrate Servo (Interactive)
+        # This test will require manual interaction.
+        # It's here to ensure the command can be called.
+        response = client.call_tool("calibrate_servo", {"id": 1})
+        assert response and "prompt" in response, "MCP Test 7 Failed: calibrate_servo."
+        print("  [MCP] Test 7 (Calibrate Servo): PASSED (prompt received)")
+
 
     except AssertionError as e:
         print(f"  [MCP] !!! TEST FAILED: {e}")

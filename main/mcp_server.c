@@ -241,6 +241,14 @@ static void send_json_response(int sock, const cJSON *response_json) {
 
         // Send the binary data
         send(sock, binary_data, data_len, 0);
+    } else if (cJSON_GetObjectItem(response_json, "prompt")) {
+        // This is a prompt, so we don't add a newline
+        char *response_str = cJSON_PrintUnformatted(response_json);
+        if (response_str) {
+            ESP_LOGD(TAG, "Sending prompt: %s", response_str);
+            send(sock, response_str, strlen(response_str), 0);
+            free(response_str);
+        }
     } else {
         char *response_str = cJSON_PrintUnformatted(response_json);
         if (response_str) {
@@ -350,6 +358,12 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(import_nn_json_tool, "name", "import_nn_json");
     cJSON_AddStringToObject(import_nn_json_tool, "description", "Imports a neural network from a JSON object.");
     cJSON_AddItemToArray(tools, import_nn_json_tool);
+
+    // Tool: calibrate_servo
+    cJSON *calibrate_servo_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(calibrate_servo_tool, "name", "calibrate_servo");
+    cJSON_AddStringToObject(calibrate_servo_tool, "description", "Starts an interactive calibration for a servo.");
+    cJSON_AddItemToArray(tools, calibrate_servo_tool);
     
     return root;
 }
@@ -518,6 +532,13 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
             if (save_network_from_json(nn_json) == ESP_OK) {
                 result_json = cJSON_CreateString("OK");
             }
+        }
+    } else if (strcmp(tool_name, "calibrate_servo") == 0) {
+        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
+        if (cJSON_IsNumber(id_json)) {
+            start_calibration_task(sock, (uint8_t)id_json->valueint);
+            // The response will be sent by the calibration task
+            return NULL;
         }
     }
     

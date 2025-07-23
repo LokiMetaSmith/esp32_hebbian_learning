@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include <stdbool.h>
+#include "cJSON.h"
 
 // --- Application Configuration ---
 #define NUM_SERVOS 6
@@ -57,6 +58,8 @@ typedef struct {
     float pred_activations[PRED_NEURONS];
     float pred_bias[PRED_NEURONS];
 } PredictionLayer;
+
+void start_calibration_task(int sock, uint8_t servo_id);
 
 
 #endif // MAIN_H
