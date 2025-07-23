@@ -28,8 +28,8 @@
 #include "nvs_storage.h"
 
 // --- Wi-Fi & Server Configuration ---
-#define WIFI_SSID      "YOUR_WIFI_SSID"      // <-- IMPORTANT: SET YOUR WIFI SSID
-#define WIFI_PASS      "YOUR_WIFI_PASSWORD"  // <-- IMPORTANT: SET YOUR WIFI PASSWORD
+#define WIFI_SSID      "OKLATHON_25"      // <-- IMPORTANT: SET YOUR WIFI SSID
+#define WIFI_PASS      "oklathon2025"  // <-- IMPORTANT: SET YOUR WIFI PASSWORD
 #define MCP_TCP_PORT   8888
 #define MAX_CLIENTS    1
 
