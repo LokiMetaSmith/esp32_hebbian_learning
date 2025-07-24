@@ -1345,6 +1345,14 @@ void initialize_console(void) {
 
     const esp_console_cmd_t stats_cmd = { .command = "get_stats", .help = "Get task runtime stats", .func = &cmd_get_stats };
     ESP_ERROR_CHECK(esp_console_cmd_register(&stats_cmd));
+
+    ESP_ERROR_CHECK(esp_console_register_help_command());
+
+    printf("\n ===================================\n");
+    printf(" | ESP32 Hebbian Robot Console |\n");
+    printf(" ===================================\n\n");
+
+    ESP_ERROR_CHECK(esp_console_start_repl(repl));
 }
 
 typedef struct {
@@ -1354,8 +1362,8 @@ typedef struct {
 
 void calibration_task(void *pvParameters) {
     calibration_task_params_t *params = (calibration_task_params_t *)pvParameters;
-    int sock = params->sock;
-    uint8_t servo_id = params->servo_id;
+    // int sock = params->sock;
+    // uint8_t servo_id = params->servo_id;
     free(params);
 
     cJSON *response = cJSON_CreateObject();
@@ -1366,14 +1374,6 @@ void calibration_task(void *pvParameters) {
     // ... rest of calibration logic ...
 
     vTaskDelete(NULL);
-
-    ESP_ERROR_CHECK(esp_console_register_help_command());
-
-    printf("\n ===================================\n");
-    printf(" | ESP32 Hebbian Robot Console |\n");
-    printf(" ===================================\n\n");
-
-    ESP_ERROR_CHECK(esp_console_start_repl(repl));
 }
 
 // Callback for TinyUSB CDC events
