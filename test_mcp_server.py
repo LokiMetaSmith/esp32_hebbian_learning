@@ -95,6 +95,42 @@ def main():
     assert os.path.exists("imported_nn.json")
     os.remove("imported_nn.json")
 
+    # 6. Test collect_kinematic_data
+    print("\n--- Testing collect_kinematic_data ---")
+    data_filename = "test_kinematic_data.json"
+    response = client.call_tool("collect_kinematic_data", {"output_filename": data_filename, "num_samples": 10})
+    print(f"Response: {response}")
+    assert response["result"] == "OK"
+    assert os.path.exists(data_filename)
+
+    # 7. Test train_kinematic_model
+    print("\n--- Testing train_kinematic_model ---")
+    model_filename = "test_kinematic_model.pt"
+    response = client.call_tool("train_kinematic_model", {"data_filename": data_filename, "model_filename": model_filename, "num_epochs": 2})
+    print(f"Response: {response}")
+    assert response["result"] == "OK"
+    assert os.path.exists(model_filename)
+
+    # 8. Test estimate_state_from_sensors
+    print("\n--- Testing estimate_state_from_sensors ---")
+    with open(data_filename, 'r') as f:
+        sensor_data = json.load(f)[0]
+    response = client.call_tool("estimate_state_from_sensors", {"model_filename": model_filename, "sensor_data": sensor_data})
+    print(f"Response: {response}")
+    assert response["result"] == "OK"
+    assert "estimated_positions" in response
+
+    # 9. Test learn with SNN
+    print("\n--- Testing learn with SNN ---")
+    commanded_positions = sensor_data["commanded_positions"]
+    response = client.call_tool("learn", {"commanded_positions": commanded_positions, "sensor_data": sensor_data, "model_filename": model_filename})
+    print(f"Response: {response}")
+    assert response["result"] == "OK"
+    assert "updated_nn" in response
+
+    # Clean up
+    os.remove(data_filename)
+    os.remove(model_filename)
 
     client.disconnect()
     print("\n[TEST] All tests passed!")
