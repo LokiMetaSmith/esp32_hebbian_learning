@@ -1345,6 +1345,14 @@ void initialize_console(void) {
 
     const esp_console_cmd_t stats_cmd = { .command = "get_stats", .help = "Get task runtime stats", .func = &cmd_get_stats };
     ESP_ERROR_CHECK(esp_console_cmd_register(&stats_cmd));
+
+    ESP_ERROR_CHECK(esp_console_register_help_command());
+
+    printf("\n ===================================\n");
+    printf(" | ESP32 Hebbian Robot Console |\n");
+    printf(" ===================================\n\n");
+
+    ESP_ERROR_CHECK(esp_console_start_repl(repl));
 }
 
 typedef struct {
@@ -1354,8 +1362,8 @@ typedef struct {
 
 void calibration_task(void *pvParameters) {
     calibration_task_params_t *params = (calibration_task_params_t *)pvParameters;
-    int sock = params->sock;
-    uint8_t servo_id = params->servo_id;
+    // int sock = params->sock;
+    // uint8_t servo_id = params->servo_id;
     free(params);
 
     cJSON *response = cJSON_CreateObject();
@@ -1363,17 +1371,69 @@ void calibration_task(void *pvParameters) {
     // send_json_response(sock, response);
     cJSON_Delete(response);
 
-    // ... rest of calibration logic ...
+    // --- Temporarily set fast acceleration and high torque for calibration ---
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        feetech_write_byte(servo_id, REG_ACCELERATION, 20); // Fast accel
+        vTaskDelay(pdMS_TO_TICKS(5));
+        feetech_write_word(servo_id, REG_TORQUE_LIMIT, 700); // High torque
+        vTaskDelay(pdMS_TO_TICKS(5));
+        xSemaphoreGive(g_uart1_mutex);
+    }
+
+    // --- Get Min Position ---
+    cJSON_AddStringToObject(response, "prompt", "Manually move servo to its MINIMUM position, then send any character.");
+    // send_json_response(sock, response); // Await response from client
+
+    uint16_t min_pos = 0;
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        feetech_read_word(servo_id, REG_PRESENT_POSITION, &min_pos, 100);
+        xSemaphoreGive(g_uart1_mutex);
+    }
+
+    // --- Get Max Position ---
+    cJSON_ReplaceItemInObject(response, "prompt", cJSON_CreateString("Manually move servo to its MAXIMUM position, then send any character."));
+    // send_json_response(sock, response); // Await response from client
+
+    uint16_t max_pos = 0;
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        feetech_read_word(servo_id, REG_PRESENT_POSITION, &max_pos, 100);
+        xSemaphoreGive(g_uart1_mutex);
+    }
+
+    if (max_pos <= min_pos) {
+        cJSON_ReplaceItemInObject(response, "prompt", cJSON_CreateString("Error: Max position must be greater than min position. Aborting."));
+        // send_json_response(sock, response);
+        vTaskDelete(NULL);
+        return;
+    }
+
+    // --- Perform Automatic Sweep ---
+    cJSON_ReplaceItemInObject(response, "prompt", cJSON_CreateString("Starting automatic calibration sweep..."));
+    // send_json_response(sock, response);
+
+    ServoCorrectionMap* map = &g_correction_maps[servo_id - 1];
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        for (int i = 0; i < CORRECTION_MAP_POINTS; i++) {
+            float fraction = (float)i / (CORRECTION_MAP_POINTS - 1);
+            uint16_t commanded_pos = min_pos + (uint16_t)(fraction * (max_pos - min_pos));
+            map->points[i].commanded_pos = commanded_pos;
+
+            feetech_write_word(servo_id, REG_GOAL_POSITION, commanded_pos);
+            vTaskDelay(pdMS_TO_TICKS(400)); // Wait for move
+            feetech_read_word(servo_id, REG_PRESENT_POSITION, &map->points[i].actual_pos, 100);
+
+            // Optional: Send progress update to client
+        }
+        xSemaphoreGive(g_uart1_mutex);
+    }
+
+    map->is_calibrated = true;
+    save_correction_map_to_nvs(g_correction_maps);
+
+    cJSON_ReplaceItemInObject(response, "prompt", cJSON_CreateString("Calibration complete and saved."));
+    // send_json_response(sock, response);
 
     vTaskDelete(NULL);
-
-    ESP_ERROR_CHECK(esp_console_register_help_command());
-
-    printf("\n ===================================\n");
-    printf(" | ESP32 Hebbian Robot Console |\n");
-    printf(" ===================================\n\n");
-
-    ESP_ERROR_CHECK(esp_console_start_repl(repl));
 }
 
 // Callback for TinyUSB CDC events
