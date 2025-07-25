@@ -26,6 +26,7 @@
 #include "main.h" // For NUM_SERVOS etc.
 #include "feetech_protocol.h" // For servo communication functions
 #include "nvs_storage.h"
+#include "feetech_protocol.h"
 
 // --- Wi-Fi & Server Configuration ---
 #define WIFI_SSID      "OKLATHON_25"      // <-- IMPORTANT: SET YOUR WIFI SSID
@@ -196,7 +197,7 @@ static void mcp_server_task(void *pvParameters) {
                                     if (strcmp(command->valuestring, "list_tools") == 0) {
                                         response = handle_list_tools();
                                     } else if (strcmp(command->valuestring, "call_tool") == 0) {
-                                        response = handle_call_tool(root);
+                                        response = handle_call_tool(root, sock);
                                     }
                                 }
                                 cJSON_Delete(root);
@@ -373,7 +374,7 @@ static cJSON* handle_list_tools(void) {
  * @brief Executes a tool based on the request and creates a response JSON object.
  * @return A cJSON object that the caller must delete.
  */
-static cJSON* handle_call_tool(const cJSON *request_json) {
+static cJSON* handle_call_tool(const cJSON *request_json, int sock) {
     cJSON *response_json = cJSON_CreateObject();
     cJSON *result_json = NULL;
 
