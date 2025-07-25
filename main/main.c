@@ -1363,7 +1363,6 @@ typedef struct {
 void calibration_task(void *pvParameters) {
     calibration_task_params_t *params = (calibration_task_params_t *)pvParameters;
     uint8_t servo_id = params->servo_id;
-    int sock = params->sock;
     free(params);
 
     cJSON *response = cJSON_CreateObject();
@@ -1809,9 +1808,8 @@ void feetech_slave_task(void *pvParameters) {
     vTaskDelete(NULL);
 }
 
-void start_calibration_task(int sock, uint8_t servo_id) {
+void start_calibration_task(uint8_t servo_id) {
     calibration_task_params_t *params = malloc(sizeof(calibration_task_params_t));
-    params->sock = sock;
     params->servo_id = servo_id;
     xTaskCreate(calibration_task, "calibration_task", 4096, params, 5, NULL);
 }
