@@ -139,8 +139,8 @@ esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *val
     command_packet[7] = calculate_checksum(servo_id, cmd_packet_field_length, SCS_INST_READ, cmd_params_for_checksum);
 
     const int MAX_READ_ATTEMPTS = 3;
-    const int RETRY_DELAY_MS = 20; // Short delay between retries
-    uint32_t adjusted_timeout_ms = (timeout_ms < 75) ? 75 : timeout_ms; // Ensure a minimum timeout
+    const int RETRY_DELAY_MS = 50; // Short delay between retries
+    uint32_t adjusted_timeout_ms = (timeout_ms < 100) ? 100 : timeout_ms; // Ensure a minimum timeout
 
     for (int attempt = 0; attempt < MAX_READ_ATTEMPTS; attempt++) {
         // Clear RX buffer before sending command to ensure we get a fresh response

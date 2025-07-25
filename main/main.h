@@ -1,12 +1,39 @@
 #ifndef MAIN_H
 #define MAIN_H
 
+#include "freertos/queue.h" // For QueueHandle_t
+#include "esp_err.h"        // For esp_err_t
+
 #include <stdint.h>
 #include <stdbool.h>
 #include "cJSON.h"
 
 // --- Application Configuration ---
 #define NUM_SERVOS 6
+
+// --- Bus Manager Data Structures ---
+
+// Define the types of commands the manager can process
+typedef enum {
+    CMD_READ_WORD,
+    CMD_WRITE_WORD,
+    CMD_WRITE_BYTE
+} BusCommand_t;
+
+// The "request" message sent TO the manager
+typedef struct {
+    BusCommand_t command;           // The type of command to execute
+    uint8_t servo_id;               // Target servo ID
+    uint8_t reg_address;            // Target register address
+    uint16_t value;                 // Value to write (for write commands)
+    QueueHandle_t response_queue;   // The queue to send the result back to
+} BusRequest_t;
+
+// The "response" message sent FROM the manager
+typedef struct {
+    esp_err_t status;               // The result of the operation (e.g., ESP_OK)
+    uint16_t value;                 // The value read from the servo
+} BusResponse_t;
 
 // --- Neural Network Config ---
 #define NUM_ACCEL_GYRO_PARAMS 6

@@ -30,7 +30,7 @@
 
 // --- Application Configuration ---
 
-#define LOOP_DELAY_MS 1000
+#define LOOP_DELAY_MS 200
 #define LEARNING_RATE 0.01f
 #define WEIGHT_DECAY  0.0001f
 #define UART_BUF_SIZE (256)
@@ -92,8 +92,8 @@ static uint16_t g_trajectory_step_size = 10; // Max change per trajectory step
 
 // --- Mutex for protecting console output ---
 SemaphoreHandle_t g_console_mutex;
-// --- Mutex for protecting the physical servo bus (UART1) ---
-SemaphoreHandle_t g_uart1_mutex;
+// --- Queue for servo bus requests ---
+QueueHandle_t g_bus_request_queue;
 
 // --- Forward Declarations ---
 void learning_loop_task(void *pvParameters);
@@ -251,50 +251,114 @@ void move_servo_smoothly(uint8_t servo_id, uint16_t goal_position) {
     }
 }
 
+/**
+ * @brief Centralized task to manage all communication on the Feetech servo bus.
+ * This serializes all reads and writes to prevent collisions.
+ */
+void bus_manager_task(void *pvParameters) {
+    BusRequest_t request;
+    BusResponse_t response;
+
+    ESP_LOGI(TAG, "Bus Manager Task started.");
+
+    for (;;) {
+        // Wait indefinitely for a request to arrive
+        if (xQueueReceive(g_bus_request_queue, &request, portMAX_DELAY) == pdTRUE) {
+
+            // Default response values
+            response.status = ESP_FAIL;
+            response.value = 0;
+
+            // Process the request based on its command type
+            switch (request.command) {
+                case CMD_READ_WORD:
+                    response.status = feetech_read_word(request.servo_id, request.reg_address, &response.value, 100);
+                    break;
+
+                case CMD_WRITE_WORD:
+                    // Write functions are "fire and forget", so we don't get a status back.
+                    feetech_write_word(request.servo_id, request.reg_address, request.value);
+                    response.status = ESP_OK;
+                    break;
+
+                case CMD_WRITE_BYTE:
+                    feetech_write_byte(request.servo_id, request.reg_address, (uint8_t)request.value);
+                    response.status = ESP_OK;
+                    break;
+            }
+
+            // If the requesting task provided a response queue, send the result back.
+            if (request.response_queue != NULL) {
+                xQueueSend(request.response_queue, &response, pdMS_TO_TICKS(10));
+            }
+        }
+    }
+}
+
 
 void read_sensor_state(float* sensor_data) {
     float ax, ay, az;
     if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
         sensor_data[0] = ax; sensor_data[1] = ay; sensor_data[2] = az;
-    } else {
-        // On error, keep old values to prevent sudden jumps
     }
-    // The BMA400 does not have a gyroscope, so we feed 0 for those inputs.
-    sensor_data[3] = 0.0f; 
-    sensor_data[4] = 0.0f;
-    sensor_data[5] = 0.0f;
+    sensor_data[3] = 0.0f; sensor_data[4] = 0.0f; sensor_data[5] = 0.0f;
 
     int current_sensor_index = NUM_ACCEL_GYRO_PARAMS;
     float total_current_A_cycle = 0.0f;
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        for (int i = 0; i < NUM_SERVOS; i++) {
-            uint16_t servo_pos = 0, servo_load = 0, servo_raw_current = 0;
-            feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &servo_pos, 50);
-         //   vTaskDelay(pdMS_TO_TICKS(5));
-            feetech_read_word(servo_ids[i], REG_PRESENT_LOAD, &servo_load, 50);
-	   // vTaskDelay(pdMS_TO_TICKS(5));
-            sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
-            sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
 
-             
-            if (feetech_read_word(servo_ids[i], REG_PRESENT_CURRENT, &servo_raw_current, 50) == ESP_OK) {
-                float current_A = (float)servo_raw_current * 0.0065f;
-                total_current_A_cycle += current_A;
-                sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
-            } else {
-                sensor_data[current_sensor_index++] = 0.0f;
-            }
-          //  vTaskDelay(pdMS_TO_TICKS(5));
-        }
-        xSemaphoreGive(g_uart1_mutex);
-    } else {
-        ESP_LOGE(TAG, "Failed to get UART1 mutex in read_sensor_state");
+    // --- NEW: Create a temporary queue to receive responses for this function call ---
+    QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
+    if (response_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create response queue for sensor read!");
+        return;
     }
+
+    BusRequest_t request;
+    BusResponse_t response;
+    request.response_queue = response_queue; // All requests will send responses here
+
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        uint16_t servo_pos = 0, servo_load = 0, servo_raw_current = 0;
+
+        // 1. Request Position
+        request.command = CMD_READ_WORD;
+        request.servo_id = servo_ids[i];
+        request.reg_address = REG_PRESENT_POSITION;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
+            servo_pos = response.value;
+        }
+
+        // 2. Request Load
+        request.reg_address = REG_PRESENT_LOAD;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
+            servo_load = response.value;
+        }
+
+        sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
+        sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
+
+        // 3. Request Current
+        request.reg_address = REG_PRESENT_CURRENT;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
+            servo_raw_current = response.value;
+            float current_A = (float)servo_raw_current * 0.0065f;
+            total_current_A_cycle += current_A;
+            sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
+        } else {
+            sensor_data[current_sensor_index++] = 0.0f;
+        }
+    }
+
+    // --- NEW: Clean up the response queue ---
+    vQueueDelete(response_queue);
 
     if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
         if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-        ESP_LOGI(TAG, "Total servo current this cycle: %.3f A", total_current_A_cycle);
-        g_last_logged_total_current_A = total_current_A_cycle;
+            ESP_LOGI(TAG, "Total servo current this cycle: %.3f A", total_current_A_cycle);
+            g_last_logged_total_current_A = total_current_A_cycle;
             xSemaphoreGive(g_console_mutex);
         }
     }
@@ -302,53 +366,67 @@ void read_sensor_state(float* sensor_data) {
 
 void initialize_robot_arm() {
     ESP_LOGI(TAG, "Initializing servos: Setting acceleration and enabling torque.");
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        for (int i = 0; i < NUM_SERVOS; i++) {
-            // Set acceleration
-            feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
-            vTaskDelay(pdMS_TO_TICKS(5)); // Short delay after setting acceleration
+    BusRequest_t request;
+    request.response_queue = NULL; // No response needed for writes
 
-            // Enable torque
-            feetech_write_byte(servo_ids[i], REG_TORQUE_ENABLE, 1);
-            vTaskDelay(pdMS_TO_TICKS(5)); // Short delay after enabling torque
-        }
-        xSemaphoreGive(g_uart1_mutex);
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        // Set acceleration
+        request.command = CMD_WRITE_BYTE;
+        request.servo_id = servo_ids[i];
+        request.reg_address = REG_ACCELERATION;
+        request.value = g_servo_acceleration;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+
+        // Enable torque
+        request.command = CMD_WRITE_BYTE;
+        request.servo_id = servo_ids[i];
+        request.reg_address = REG_TORQUE_ENABLE;
+        request.value = 1;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
     }
     ESP_LOGI(TAG, "Servos initialized with acceleration %d and torque enabled.", g_servo_acceleration);
 }
 
 void execute_on_robot_arm(const float* action_vector) {
-     if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        // action_vector contains NUM_SERVOS * 3 params: pos, accel, torque
-        for (int i = 0; i < NUM_SERVOS; i++) {
-            // --- Decode and Clamp Acceleration ---
-            float norm_accel = action_vector[NUM_SERVOS + i]; // Normalized accel from NN [-1, 1]
-            uint8_t commanded_accel = (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 254.0f); // Scale to 0-254
-            // Clamp to safety limit (higher value is slower)
-            if (commanded_accel < g_min_accel_value) {
-                commanded_accel = g_min_accel_value;
-            }
-            feetech_write_byte(servo_ids[i], REG_ACCELERATION, commanded_accel);
-            vTaskDelay(pdMS_TO_TICKS(5));
+    BusRequest_t request;
+    request.response_queue = NULL; // No response needed for writes
 
-            // --- Decode and Clamp Torque ---
-            float norm_torque = action_vector[NUM_SERVOS * 2 + i]; // Normalized torque from NN [-1, 1]
-            uint16_t commanded_torque = (uint16_t)(((norm_torque + 1.0f) / 2.0f) * 1000.0f); // Scale to 0-1000
-            // Clamp to safety limit
-            if (commanded_torque > g_max_torque_limit) {
-                commanded_torque = g_max_torque_limit;
-            }
-            feetech_write_word(servo_ids[i], REG_TORQUE_LIMIT, commanded_torque);
-            vTaskDelay(pdMS_TO_TICKS(5));
-            // Decode and set position
-            float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
-            float scaled_pos = (norm_pos + 1.0f) / 2.0f; // Scale to 0-1
-            uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
-            uint16_t corrected_position = get_corrected_position(servo_ids[i], goal_position);
-            feetech_write_word(servo_ids[i], REG_GOAL_POSITION, corrected_position);
-            vTaskDelay(pdMS_TO_TICKS(5));
+    // action_vector contains NUM_SERVOS * 3 params: pos, accel, torque
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        // --- Decode and Clamp Acceleration ---
+        float norm_accel = action_vector[NUM_SERVOS + i]; // Normalized accel from NN [-1, 1]
+        uint8_t commanded_accel = (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 254.0f); // Scale to 0-254
+        if (commanded_accel < g_min_accel_value) {
+            commanded_accel = g_min_accel_value;
         }
-        xSemaphoreGive(g_uart1_mutex);
+        request.command = CMD_WRITE_BYTE;
+        request.servo_id = servo_ids[i];
+        request.reg_address = REG_ACCELERATION;
+        request.value = commanded_accel;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+
+        // --- Decode and Clamp Torque ---
+        float norm_torque = action_vector[NUM_SERVOS * 2 + i]; // Normalized torque from NN [-1, 1]
+        uint16_t commanded_torque = (uint16_t)(((norm_torque + 1.0f) / 2.0f) * 1000.0f); // Scale to 0-1000
+        if (commanded_torque > g_max_torque_limit) {
+            commanded_torque = g_max_torque_limit;
+        }
+        request.command = CMD_WRITE_WORD;
+        request.servo_id = servo_ids[i];
+        request.reg_address = REG_TORQUE_LIMIT;
+        request.value = commanded_torque;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+
+        // --- Decode and set position ---
+        float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
+        float scaled_pos = (norm_pos + 1.0f) / 2.0f; // Scale to 0-1
+        uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
+        uint16_t corrected_position = get_corrected_position(servo_ids[i], goal_position);
+        request.command = CMD_WRITE_WORD;
+        request.servo_id = servo_ids[i];
+        request.reg_address = REG_GOAL_POSITION;
+        request.value = corrected_position;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
     }
 }
 
@@ -620,7 +698,7 @@ static int get_char_with_timeout(uint32_t timeout_ms) {
 }
 
 static int cmd_start_map_cal(int argc, char **argv) {
-	int nerrors = arg_parse(argc, argv, (void **)&start_map_cal_args);
+    int nerrors = arg_parse(argc, argv, (void **)&start_map_cal_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, start_map_cal_args.end, argv[0]);
         return 1;
@@ -635,59 +713,85 @@ static int cmd_start_map_cal(int argc, char **argv) {
 
     printf("\n--- Starting Calibration for Servo %d ---\n", servo_id);
 
+    BusRequest_t request;
+    request.response_queue = NULL;
+
     // Temporarily disable torque to allow for manual movement
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_write_byte(servo_id, REG_TORQUE_ENABLE, 0); // Disable torque
-        vTaskDelay(pdMS_TO_TICKS(5));
-        xSemaphoreGive(g_uart1_mutex);
-    }
+    request.command = CMD_WRITE_BYTE;
+    request.servo_id = servo_id;
+    request.reg_address = REG_TORQUE_ENABLE;
+    request.value = 0; // Disable torque
+    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+
     printf("1. Manually move servo %d to its MINIMUM position, then press ENTER.\n", servo_id);
     while(get_char_with_timeout(100) != '\n'); // Wait for Enter
 
     uint16_t min_pos = 0;
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_read_word(servo_id, REG_PRESENT_POSITION, &min_pos, 100);
-        vTaskDelay(pdMS_TO_TICKS(5));
-        xSemaphoreGive(g_uart1_mutex);
+    QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
+    if (response_queue == NULL) {
+        printf("Error: Failed to create response queue.\n");
+        return 1;
+    }
+    request.command = CMD_READ_WORD;
+    request.reg_address = REG_PRESENT_POSITION;
+    request.response_queue = response_queue;
+    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+    BusResponse_t response;
+    if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
+        min_pos = response.value;
     }
     printf("--> Minimum position recorded: %u\n\n", min_pos);
+
     printf("2. Manually move servo %d to its MAXIMUM position, then press ENTER.\n", servo_id);
     while(get_char_with_timeout(100) != '\n'); // Wait for Enter
     uint16_t max_pos = 0;
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_read_word(servo_id, REG_PRESENT_POSITION, &max_pos, 100);
-        xSemaphoreGive(g_uart1_mutex);
+    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+    if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
+        max_pos = response.value;
     }
     printf("--> Maximum position recorded: %u\n\n", max_pos);
     if (max_pos <= min_pos) {
         printf("Error: Max position must be greater than min position. Aborting.\n");
+        vQueueDelete(response_queue);
         return 1;
     }
 
     printf("3. Starting automatic calibration sweep from %u to %u...\n", min_pos, max_pos);
     ServoCorrectionMap* map = &g_correction_maps[map_index];
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        for (int i = 0; i < CORRECTION_MAP_POINTS; i++) {
-            float fraction = (float)i / (CORRECTION_MAP_POINTS - 1);
-            uint16_t commanded_pos = min_pos + (uint16_t)(fraction * (max_pos - min_pos));
-            map->points[i].commanded_pos = commanded_pos;
-            feetech_write_word(servo_id, REG_GOAL_POSITION, commanded_pos);
-            vTaskDelay(pdMS_TO_TICKS(400)); // Wait for move to complete
-            feetech_read_word(servo_id, REG_PRESENT_POSITION, &map->points[i].actual_pos, 100);
-            printf("  Point %2d/%d: Commanded: %4u -> Actual: %4u\n", i + 1, CORRECTION_MAP_POINTS, map->points[i].commanded_pos, map->points[i].actual_pos);
+    for (int i = 0; i < CORRECTION_MAP_POINTS; i++) {
+        float fraction = (float)i / (CORRECTION_MAP_POINTS - 1);
+        uint16_t commanded_pos = min_pos + (uint16_t)(fraction * (max_pos - min_pos));
+        map->points[i].commanded_pos = commanded_pos;
+
+        request.command = CMD_WRITE_WORD;
+        request.reg_address = REG_GOAL_POSITION;
+        request.value = commanded_pos;
+        request.response_queue = NULL;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+
+        vTaskDelay(pdMS_TO_TICKS(400)); // Wait for move to complete
+
+        request.command = CMD_READ_WORD;
+        request.reg_address = REG_PRESENT_POSITION;
+        request.response_queue = response_queue;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
+            map->points[i].actual_pos = response.value;
         }
-        xSemaphoreGive(g_uart1_mutex);
+        printf("  Point %2d/%d: Commanded: %4u -> Actual: %4u\n", i + 1, CORRECTION_MAP_POINTS, map->points[i].commanded_pos, map->points[i].actual_pos);
     }
+    vQueueDelete(response_queue);
 
     map->is_calibrated = true;
     printf("\nCalibration complete for servo %d. Saving to NVS...\n", servo_id);
     save_correction_map_to_nvs(g_correction_maps);
 
     // Re-enable torque
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_write_byte(servo_id, REG_TORQUE_ENABLE, 1); // Enable torque
-        xSemaphoreGive(g_uart1_mutex);
-    }
+    request.command = CMD_WRITE_BYTE;
+    request.reg_address = REG_TORQUE_ENABLE;
+    request.value = 1; // Enable torque
+    request.response_queue = NULL;
+    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
 
      return 0;
  }
@@ -712,29 +816,43 @@ static int cmd_set_torque_limit(int argc, char **argv) {
     }
 
     ESP_LOGI(TAG, "Setting torque limit for servo %d to %d.", id, limit);
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_write_word((uint8_t)id, REG_TORQUE_LIMIT, (uint16_t)limit);
-        xSemaphoreGive(g_uart1_mutex);
-    }
+    BusRequest_t request;
+    request.command = CMD_WRITE_WORD;
+    request.servo_id = (uint8_t)id;
+    request.reg_address = REG_TORQUE_LIMIT;
+    request.value = (uint16_t)limit;
+    request.response_queue = NULL;
+    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
     printf("Attempted to set torque limit for servo %d to %d.\n", id, limit);
 
     // Read back to verify
     vTaskDelay(pdMS_TO_TICKS(20)); // Give a moment for the write to be processed before reading back
-    uint16_t read_torque_limit = 0;
-    esp_err_t read_status = ESP_FAIL;
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        read_status = feetech_read_word((uint8_t)id, REG_TORQUE_LIMIT, &read_torque_limit, 100); // 100ms timeout for read
-        xSemaphoreGive(g_uart1_mutex);
+
+    QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
+    if (response_queue == NULL) {
+        printf("Error: Failed to create response queue.\n");
+        return 1;
     }
 
-    if (read_status == ESP_OK) {
-        printf("Servo %d torque limit read back: %u. (Commanded: %d)\n", id, read_torque_limit, limit);
-        if (read_torque_limit != (uint16_t)limit) {
-            printf("WARNING: Read back torque limit (%u) does not match commanded value (%d) for servo %d!\n", read_torque_limit, limit, id);
+    request.command = CMD_READ_WORD;
+    request.response_queue = response_queue;
+    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+
+    BusResponse_t response;
+    if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
+        if (response.status == ESP_OK) {
+            printf("Servo %d torque limit read back: %u. (Commanded: %d)\n", id, response.value, limit);
+            if (response.value != (uint16_t)limit) {
+                printf("WARNING: Read back torque limit (%u) does not match commanded value (%d) for servo %d!\n", response.value, limit, id);
+            }
+        } else {
+            printf("Error: Failed to read back torque limit for servo %d (err: %s).\n", id, esp_err_to_name(response.status));
         }
     } else {
-        printf("Error: Failed to read back torque limit for servo %d (err: %s).\n", id, esp_err_to_name(read_status));
+        printf("Error: Timeout waiting for response from bus manager.\n");
     }
+
+    vQueueDelete(response_queue);
     return 0;
 }
 
@@ -758,10 +876,13 @@ static int cmd_set_servo_acceleration(int argc, char **argv) {
     }
 
     ESP_LOGI(TAG, "Setting acceleration for servo %d to %d.", id, accel);
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_write_byte((uint8_t)id, REG_ACCELERATION, (uint8_t)accel);
-	xSemaphoreGive(g_uart1_mutex);
-    }
+    BusRequest_t request;
+    request.command = CMD_WRITE_BYTE;
+    request.servo_id = (uint8_t)id;
+    request.reg_address = REG_ACCELERATION;
+    request.value = (uint8_t)accel;
+    request.response_queue = NULL;
+    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
     printf("Acceleration for servo %d set to %d.\n", id, accel);
     return 0;
 }
@@ -780,19 +901,33 @@ static int cmd_get_servo_acceleration(int argc, char **argv) {
         return 1;
     }
 
-    uint16_t read_value_word = 0; // To store the word read by feetech_read_word
     ESP_LOGI(TAG, "Reading acceleration for servo %d.", id);
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        esp_err_t read_status = feetech_read_word((uint8_t)id, REG_ACCELERATION, &read_value_word, 100); // 100ms timeout
+    QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
+    if (response_queue == NULL) {
+        printf("Error: Failed to create response queue.\n");
+        return 1;
+    }
 
-        if (read_status == ESP_OK) {
-            uint8_t accel_value = (uint8_t)(read_value_word & 0xFF); // Acceleration is the LSB
+    BusRequest_t request;
+    request.command = CMD_READ_WORD;
+    request.servo_id = (uint8_t)id;
+    request.reg_address = REG_ACCELERATION;
+    request.response_queue = response_queue;
+    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+
+    BusResponse_t response;
+    if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
+        if (response.status == ESP_OK) {
+            uint8_t accel_value = (uint8_t)(response.value & 0xFF); // Acceleration is the LSB
             printf("Servo %d current acceleration: %u\n", id, accel_value);
         } else {
-            printf("Error: Failed to read acceleration for servo %d (err: %s).\n", id, esp_err_to_name(read_status));
+            printf("Error: Failed to read acceleration for servo %d (err: %s).\n", id, esp_err_to_name(response.status));
         }
-	xSemaphoreGive(g_uart1_mutex);
-    }    
+    } else {
+        printf("Error: Timeout waiting for response from bus manager.\n");
+    }
+
+    vQueueDelete(response_queue);
     return 0;
 }
 
@@ -892,10 +1027,13 @@ static int cmd_set_pos(int argc, char **argv) {
     }
 
     ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_write_word((uint8_t)id, REG_GOAL_POSITION, (uint16_t)pos);
-        xSemaphoreGive(g_uart1_mutex);
-    }
+    BusRequest_t request;
+    request.command = CMD_WRITE_WORD;
+    request.servo_id = (uint8_t)id;
+    request.reg_address = REG_GOAL_POSITION;
+    request.value = (uint16_t)pos;
+    request.response_queue = NULL;
+    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
     return 0;
 }
 
@@ -912,23 +1050,31 @@ static int cmd_get_pos(int argc, char **argv) {
         return 1;
     }
 
-    uint16_t current_position = 0;
-    esp_err_t ret = ESP_FAIL;
-
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        ret = feetech_read_word((uint8_t)id, REG_PRESENT_POSITION, &current_position, 100);
-        xSemaphoreGive(g_uart1_mutex);
-    } else {
-        printf("Error: Could not obtain UART1 mutex.\n");
+    QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
+    if (response_queue == NULL) {
+        printf("Error: Failed to create response queue.\n");
         return 1;
     }
-    if (ret == ESP_OK) {
-        printf("Servo %d current position: %u\n", id, current_position);
-    } else if (ret == ESP_ERR_TIMEOUT) {
-        printf("Error: Timeout reading position from servo %d.\n", id);
+
+    BusRequest_t request;
+    request.command = CMD_READ_WORD;
+    request.servo_id = (uint8_t)id;
+    request.reg_address = REG_PRESENT_POSITION;
+    request.response_queue = response_queue;
+    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+
+    BusResponse_t response;
+    if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
+        if (response.status == ESP_OK) {
+            printf("Servo %d current position: %u\n", id, response.value);
+        } else {
+            printf("Error: Failed to read position from servo %d (err: %s).\n", id, esp_err_to_name(response.status));
+        }
     } else {
-        printf("Error: Failed to read position from servo %d (err: %s).\n", id, esp_err_to_name(ret));
+        printf("Error: Timeout waiting for response from bus manager.\n");
     }
+
+    vQueueDelete(response_queue);
     return 0;
 }
 
@@ -945,25 +1091,32 @@ static int cmd_get_current(int argc, char **argv) {
         return 1;
     }
 
-    uint16_t raw_current = 0;
-    esp_err_t ret = ESP_FAIL;
-
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        ret = feetech_read_word((uint8_t)id, REG_PRESENT_CURRENT, &raw_current, 100);
-        xSemaphoreGive(g_uart1_mutex);
-    } else {
-        printf("Error: Could not obtain UART1 mutex.\n");
+    QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
+    if (response_queue == NULL) {
+        printf("Error: Failed to create response queue.\n");
         return 1;
     }
 
-    if (ret == ESP_OK) {
-        float current_mA = (float)raw_current * 6.5f;
-        printf("Servo %d present current: %u (raw) -> %.2f mA (%.3f A)\n", id, raw_current, current_mA, current_mA / 1000.0f);
-    } else if (ret == ESP_ERR_TIMEOUT) {
-        printf("Error: Timeout reading current from servo %d.\n", id);
+    BusRequest_t request;
+    request.command = CMD_READ_WORD;
+    request.servo_id = (uint8_t)id;
+    request.reg_address = REG_PRESENT_CURRENT;
+    request.response_queue = response_queue;
+    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+
+    BusResponse_t response;
+    if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
+        if (response.status == ESP_OK) {
+            float current_mA = (float)response.value * 6.5f;
+            printf("Servo %d present current: %u (raw) -> %.2f mA (%.3f A)\n", id, response.value, current_mA, current_mA / 1000.0f);
+        } else {
+            printf("Error: Failed to read current from servo %d (err: %s).\n", id, esp_err_to_name(response.status));
+        }
     } else {
-        printf("Error: Failed to read current from servo %d (err: %s).\n", id, esp_err_to_name(ret));
+        printf("Error: Timeout waiting for response from bus manager.\n");
     }
+
+    vQueueDelete(response_queue);
     return 0;
 }
 
@@ -1477,7 +1630,7 @@ void app_main(void) {
     if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory!"); return; }
 
     g_console_mutex = xSemaphoreCreateMutex();
-    g_uart1_mutex = xSemaphoreCreateMutex();
+    g_bus_request_queue = xQueueCreate(10, sizeof(BusRequest_t));
 
     nvs_storage_initialize();
     feetech_initialize(); 
@@ -1520,6 +1673,7 @@ void app_main(void) {
     }
     ESP_LOGI(TAG, "Initial smoothed goals set from current positions.");
 
+    xTaskCreate(bus_manager_task, "bus_manager_task", 4096, NULL, 10, NULL);
     xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
     xTaskCreate(feetech_slave_task, "feetech_slave_task", 4096, NULL, 5, NULL);
 }
