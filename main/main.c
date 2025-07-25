@@ -1362,8 +1362,8 @@ typedef struct {
 
 void calibration_task(void *pvParameters) {
     calibration_task_params_t *params = (calibration_task_params_t *)pvParameters;
-    // int sock = params->sock;
-    // uint8_t servo_id = params->servo_id;
+    uint8_t servo_id = params->servo_id;
+    int sock = params->sock;
     free(params);
 
     cJSON *response = cJSON_CreateObject();
