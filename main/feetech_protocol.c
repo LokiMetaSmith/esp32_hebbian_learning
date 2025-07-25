@@ -1,7 +1,5 @@
 #include "feetech_protocol.h"
-#include "esp_log.h"
-#include "freertos/FreeRTOS.h" // Required for vTaskDelay
-#include "freertos/task.h"     // Required for vTaskDelay
+#include "common.h"
 
 static const char *TAG = "FEETECH_PROTOCOL";
 

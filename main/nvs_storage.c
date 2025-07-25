@@ -1,7 +1,5 @@
 #include "nvs_storage.h"
-#include "nvs_flash.h"
-#include "esp_log.h"
-#include "cJSON.h"
+#include "common.h"
 
 #define NVS_NAMESPACE "nn_storage"
 static const char *TAG = "NVS_STORAGE";

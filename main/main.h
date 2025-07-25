@@ -1,12 +1,7 @@
 #ifndef MAIN_H
 #define MAIN_H
 
-#include "freertos/queue.h" // For QueueHandle_t
-#include "esp_err.h"        // For esp_err_t
-
-#include <stdint.h>
-#include <stdbool.h>
-#include "cJSON.h"
+#include "common.h"
 
 // --- Application Configuration ---
 #define NUM_SERVOS 6

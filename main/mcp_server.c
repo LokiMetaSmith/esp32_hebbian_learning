@@ -1,30 +1,11 @@
 #include "mcp_server.h"
-#include <stdio.h>
-#include <string.h>
-
-// --- ESP-IDF & FreeRTOS Includes ---
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/event_groups.h"
-#include "freertos/semphr.h"
-#include "esp_log.h"
-#include "esp_wifi.h"
-#include "esp_event.h"
-#include "nvs_flash.h"
-
-// --- LwIP for TCP/IP Stack ---
+#include "common.h"
 #include "lwip/err.h"
 #include "lwip/sockets.h"
 #include "lwip/sys.h"
 #include <lwip/netdb.h>
-
-// --- cJSON for parsing and creating JSON ---
-#include "cJSON.h"
 #include "mbedtls/base64.h"
-
-// --- Project-specific includes ---
-//#include "main.h" // For NUM_SERVOS etc.
-#include "feetech_protocol.h" // For servo communication functions
+#include "feetech_protocol.h"
 #include "nvs_storage.h"
 
 // --- Wi-Fi & Server Configuration ---

@@ -1,23 +1,14 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <math.h>
-#include <ctype.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/semphr.h" // For mutexes
-#include "esp_log.h"
-#include "driver/uart.h"
+#include "main.h"
+#include "common.h"
 #include "esp_console.h"
 #include "esp_vfs.h"
 #include "esp_vfs_dev.h"
 #include "linenoise/linenoise.h"
 #include "argtable3/argtable3.h"
-#include "esp_timer.h"
-
-
-// Our custom modules
-#include "main.h"
+#include "esp_dsp.h"
+#include "driver/usb_serial_jtag.h" // For native USB CDC
+#include "tinyusb.h"
+#include "tusb_cdc_acm.h"
 #include "feetech_protocol.h"
 #include "bma400_driver.h"
 #include "led_indicator.h"

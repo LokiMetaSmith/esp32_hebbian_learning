@@ -1,8 +1,5 @@
 #include "bma400_driver.h"
-#include "esp_log.h"
-#include "driver/i2c_master.h"
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
+#include "common.h"
 
 static const char *TAG = "BMA400_DRIVER";
 static i2c_master_dev_handle_t g_dev_handle;
