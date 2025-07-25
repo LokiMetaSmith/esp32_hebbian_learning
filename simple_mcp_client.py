@@ -40,13 +40,26 @@ class MCPClient:
             self.sock = None
             print("\n[MCP] Disconnected from robot.")
 
+    def _receive_all(self):
+        """Receives data from the socket until a newline is found."""
+        buffer = ""
+        while True:
+            data = self.sock.recv(1024)
+            if not data:
+                return None  # Connection closed
+            buffer += data.decode('utf-8')
+            if '\n' in buffer:
+                # Return the complete message, without the newline
+                return buffer.split('\n', 1)[0]
+
     def _send_request(self, request_obj):
         if not self.sock: return None
         try:
             self.sock.sendall((json.dumps(request_obj) + '\n').encode('utf-8'))
-            response_data = self.sock.recv(1024)
-            response_str = response_data.decode('utf-8').strip()
-            return json.loads(response_str) if response_str else None
+            response_str = self._receive_all()
+            if response_str:
+                return json.loads(response_str)
+            return None
         except (socket.error, json.JSONDecodeError, socket.timeout) as e:
             print(f"[MCP] ERROR: Request failed: {e}")
             return None
