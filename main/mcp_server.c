@@ -32,6 +32,7 @@
 #define WIFI_PASS      "oklathon2025"  // <-- IMPORTANT: SET YOUR WIFI PASSWORD
 #define MCP_TCP_PORT   8888
 #define MAX_CLIENTS    1
+#define WIFI_CONNECT_TIMEOUT_MS 60000 // 1 minute
 
 // --- Tag for logging ---
 static const char *TAG = "MCP_WIFI_SERVER";
@@ -112,12 +113,25 @@ static void wifi_init_sta(void) {
 
     ESP_LOGI(TAG, "Wi-Fi initialization finished. Waiting for connection...");
 
-    // Wait until the connection is established
-    xEventGroupWaitBits(s_wifi_event_group,
-                        WIFI_CONNECTED_BIT,
-                        pdFALSE,
-                        pdFALSE,
-                        portMAX_DELAY);
+    // Wait until the connection is established or we time out
+    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
+                                           WIFI_CONNECTED_BIT,
+                                           pdFALSE,
+                                           pdFALSE,
+                                           pdMS_TO_TICKS(WIFI_CONNECT_TIMEOUT_MS));
+
+    if (bits & WIFI_CONNECTED_BIT) {
+        ESP_LOGI(TAG, "Successfully connected to Wi-Fi.");
+    } else {
+        ESP_LOGE(TAG, "Failed to connect to Wi-Fi within %d ms. Server not started.", WIFI_CONNECT_TIMEOUT_MS);
+        // Optional: Stop Wi-Fi to save power if not connected
+        esp_wifi_stop();
+        // We must not proceed to start the server task if Wi-Fi is not connected.
+        // The logic in mcp_server_init will need to handle this.
+        // For now, we just return, but a more robust solution might involve
+        // returning an error code.
+        return;
+    }
 }
 
 /**
