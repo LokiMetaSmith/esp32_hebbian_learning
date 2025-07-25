@@ -23,7 +23,7 @@
 #include "mbedtls/base64.h"
 
 // --- Project-specific includes ---
-#include "main.h" // For NUM_SERVOS etc.
+//#include "main.h" // For NUM_SERVOS etc.
 #include "feetech_protocol.h" // For servo communication functions
 #include "nvs_storage.h"
 
@@ -536,7 +536,7 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
     } else if (strcmp(tool_name, "calibrate_servo") == 0) {
         const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
         if (cJSON_IsNumber(id_json)) {
-            start_calibration_task(sock, (uint8_t)id_json->valueint);
+            start_calibration_task((uint8_t)id_json->valueint);
             // The response will be sent by the calibration task
             return NULL;
         }
