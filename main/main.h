@@ -59,7 +59,7 @@ typedef struct {
     float pred_bias[PRED_NEURONS];
 } PredictionLayer;
 
-void start_calibration_task(int sock, uint8_t servo_id);
+void start_calibration_task(uint8_t servo_id);
 
 
 #endif // MAIN_H

@@ -60,6 +60,7 @@ static void json_to_float_array(cJSON *json_array, float *target_array, int arra
     }
 }
 
+#include "main.h"
 esp_err_t save_network_from_json(const cJSON *nn_json) {
     if (!nn_json) return ESP_ERR_INVALID_ARG;
 
@@ -69,20 +70,20 @@ esp_err_t save_network_from_json(const cJSON *nn_json) {
 
     cJSON *hidden_layer_json = cJSON_GetObjectItem(nn_json, "hidden_layer");
     if (hidden_layer_json) {
-        json_to_float_array(cJSON_GetObjectItem(hidden_layer_json, "weights"), (float *)hl.weights, INPUT_SIZE * HIDDEN_NEURONS);
-        json_to_float_array(cJSON_GetObjectItem(hidden_layer_json, "biases"), hl.biases, HIDDEN_NEURONS);
+        json_to_float_array(cJSON_GetObjectItem(hidden_layer_json, "weights"), (float *)hl.weights, INPUT_NEURONS * HIDDEN_NEURONS);
+        json_to_float_array(cJSON_GetObjectItem(hidden_layer_json, "biases"), hl.hidden_bias, HIDDEN_NEURONS);
     }
 
     cJSON *output_layer_json = cJSON_GetObjectItem(nn_json, "output_layer");
     if (output_layer_json) {
         json_to_float_array(cJSON_GetObjectItem(output_layer_json, "weights"), (float *)ol.weights, HIDDEN_NEURONS * OUTPUT_NEURONS);
-        json_to_float_array(cJSON_GetObjectItem(output_layer_json, "biases"), ol.biases, OUTPUT_NEURONS);
+        json_to_float_array(cJSON_GetObjectItem(output_layer_json, "biases"), ol.output_bias, OUTPUT_NEURONS);
     }
 
     cJSON *prediction_layer_json = cJSON_GetObjectItem(nn_json, "prediction_layer");
     if (prediction_layer_json) {
-        json_to_float_array(cJSON_GetObjectItem(prediction_layer_json, "weights"), (float *)pl.weights, OUTPUT_NEURONS * PREDICTION_NEURONS);
-        json_to_float_array(cJSON_GetObjectItem(prediction_layer_json, "biases"), pl.biases, PREDICTION_NEURONS);
+        json_to_float_array(cJSON_GetObjectItem(prediction_layer_json, "weights"), (float *)pl.weights, HIDDEN_NEURONS * PRED_NEURONS);
+        json_to_float_array(cJSON_GetObjectItem(prediction_layer_json, "biases"), pl.pred_bias, PRED_NEURONS);
     }
 
     return save_network_to_nvs(&hl, &ol, &pl);
