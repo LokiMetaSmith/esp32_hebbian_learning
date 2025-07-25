@@ -216,30 +216,8 @@ static uint16_t get_corrected_position(uint8_t servo_id, uint16_t commanded_pos)
 // Helper function to move a servo along a smooth trajectory
 void move_servo_smoothly(uint8_t servo_id, uint16_t goal_position) {
     uint16_t current_pos = 0;
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        if (feetech_read_word(servo_id, REG_PRESENT_POSITION, &current_pos, 100) != ESP_OK) {
-            // If we can't read the position, fall back to a direct write
-            feetech_write_word(servo_id, REG_GOAL_POSITION, goal_position);
-	    xSemaphoreGive(g_uart1_mutex);
-            return;
-        }
-        xSemaphoreGive(g_uart1_mutex);
-    }
-    int16_t diff = goal_position - current_pos;
-    while (abs(diff) > g_trajectory_step_size) {
-        current_pos += (diff > 0) ? g_trajectory_step_size : -g_trajectory_step_size;
-        if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-            feetech_write_word(servo_id, REG_GOAL_POSITION, current_pos);
-	    xSemaphoreGive(g_uart1_mutex);
-        }
-        //vTaskDelay(pdMS_TO_TICKS(20)); // Delay between steps
-        diff = goal_position - current_pos;
-    }
-    // Send the final goal position to ensure it lands precisely
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_write_word(servo_id, REG_GOAL_POSITION, goal_position);
-        xSemaphoreGive(g_uart1_mutex);
-    }
+    // This function is not yet refactored to use the bus manager,
+    // so it is temporarily disabled.
 }
 
 /**
@@ -511,39 +489,8 @@ void perform_random_walk(float* action_output_vector) {
     }
 
     // ESP_LOGI(TAG, "Performing random walk step...");
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        for (int i = 0; i < NUM_SERVOS; i++) {
-            uint16_t current_pos = 0;
-            // Use a slightly longer timeout for reading position in random walk as it's less critical for timing than the learning loop
-            esp_err_t read_status = feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 75);
-            vTaskDelay(pdMS_TO_TICKS(5));
-
-            if (read_status != ESP_OK) {
-                ESP_LOGW(TAG, "RW: Failed to read pos for servo %d, skipping its move.", servo_ids[i]);
-                continue; // Skip this servo if read fails
-            }
-            int delta_pos = (rand() % (2 * g_random_walk_max_delta_pos + 1)) - g_random_walk_max_delta_pos;
-            int new_pos_signed = (int)current_pos + delta_pos;
-
-            uint16_t new_goal_pos;
-            if (new_pos_signed < SERVO_POS_MIN) {
-                new_goal_pos = SERVO_POS_MIN;
-            } else if (new_pos_signed > SERVO_POS_MAX) {
-                new_goal_pos = SERVO_POS_MAX;
-            } else {
-                new_goal_pos = (uint16_t)new_pos_signed;
-            }
-
-            feetech_write_word(servo_ids[i], REG_GOAL_POSITION, new_goal_pos);
-            vTaskDelay(pdMS_TO_TICKS(5));
-
-            if (action_output_vector) {
-                action_output_vector[i] = ((float)new_goal_pos - SERVO_POS_MIN) / (SERVO_POS_MAX - SERVO_POS_MIN) * 2.0f - 1.0f;
-            }
-            vTaskDelay(pdMS_TO_TICKS(5)); 
-        }
-        xSemaphoreGive(g_uart1_mutex);
-    }
+    // This function is not yet refactored to use the bus manager,
+    // so it is temporarily disabled.
     g_last_random_walk_time_us = current_time_us;
 }
 
@@ -1134,12 +1081,14 @@ static int cmd_babble_stop(int argc, char **argv) {
 static int cmd_rw_start(int argc, char **argv) {
     if (!g_random_walk_active) {
         ESP_LOGI(TAG, "Starting standalone random walk. Setting acceleration to global value: %u", g_servo_acceleration);
-        if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-            for (int i = 0; i < NUM_SERVOS; i++) {
-                feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
-                vTaskDelay(pdMS_TO_TICKS(5)); // Small delay
-            }
-            xSemaphoreGive(g_uart1_mutex);
+        BusRequest_t request;
+        request.response_queue = NULL;
+        request.command = CMD_WRITE_BYTE;
+        request.reg_address = REG_ACCELERATION;
+        request.value = g_servo_acceleration;
+        for (int i = 0; i < NUM_SERVOS; i++) {
+            request.servo_id = servo_ids[i];
+            xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
         }
         g_random_walk_active = true;
         if (g_random_walk_task_handle == NULL) {
@@ -1276,12 +1225,15 @@ static int cmd_set_accel(int argc, char **argv) {
     g_servo_acceleration = (uint8_t)accel_val;
     ESP_LOGI(TAG, "Setting servo acceleration to %u for all servos.", g_servo_acceleration);
 
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        for (int i = 0; i < NUM_SERVOS; i++) {
-            feetech_write_byte(servo_ids[i], REG_ACCELERATION, g_servo_acceleration);
-            vTaskDelay(pdMS_TO_TICKS(5)); // Small delay between commands
-        }
-        xSemaphoreGive(g_uart1_mutex);
+    BusRequest_t request;
+    request.command = CMD_WRITE_BYTE;
+    request.reg_address = REG_ACCELERATION;
+    request.value = g_servo_acceleration;
+    request.response_queue = NULL;
+
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        request.servo_id = servo_ids[i];
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
     }
     printf("Servo acceleration set to %u for all servos.\n", g_servo_acceleration);
     return 0;
@@ -1509,78 +1461,8 @@ typedef struct {
 } calibration_task_params_t;
 
 void calibration_task(void *pvParameters) {
-    calibration_task_params_t *params = (calibration_task_params_t *)pvParameters;
-    uint8_t servo_id = params->servo_id;
-    free(params);
-
-    cJSON *response = cJSON_CreateObject();
-    cJSON_AddStringToObject(response, "prompt", "Manually move servo to its MINIMUM position, then send any character.");
-    // send_json_response(sock, response);
-    cJSON_Delete(response);
-
-    // --- Temporarily set fast acceleration and high torque for calibration ---
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_write_byte(servo_id, REG_ACCELERATION, 20); // Fast accel
-        vTaskDelay(pdMS_TO_TICKS(5));
-        feetech_write_word(servo_id, REG_TORQUE_LIMIT, 700); // High torque
-        vTaskDelay(pdMS_TO_TICKS(5));
-        xSemaphoreGive(g_uart1_mutex);
-    }
-
-    // --- Get Min Position ---
-    cJSON_AddStringToObject(response, "prompt", "Manually move servo to its MINIMUM position, then send any character.");
-    // send_json_response(sock, response); // Await response from client
-
-    uint16_t min_pos = 0;
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_read_word(servo_id, REG_PRESENT_POSITION, &min_pos, 100);
-        xSemaphoreGive(g_uart1_mutex);
-    }
-
-    // --- Get Max Position ---
-    cJSON_ReplaceItemInObject(response, "prompt", cJSON_CreateString("Manually move servo to its MAXIMUM position, then send any character."));
-    // send_json_response(sock, response); // Await response from client
-
-    uint16_t max_pos = 0;
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_read_word(servo_id, REG_PRESENT_POSITION, &max_pos, 100);
-        xSemaphoreGive(g_uart1_mutex);
-    }
-
-    if (max_pos <= min_pos) {
-        cJSON_ReplaceItemInObject(response, "prompt", cJSON_CreateString("Error: Max position must be greater than min position. Aborting."));
-        // send_json_response(sock, response);
-        vTaskDelete(NULL);
-        return;
-    }
-
-    // --- Perform Automatic Sweep ---
-    cJSON_ReplaceItemInObject(response, "prompt", cJSON_CreateString("Starting automatic calibration sweep..."));
-    // send_json_response(sock, response);
-
-    ServoCorrectionMap* map = &g_correction_maps[servo_id - 1];
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        for (int i = 0; i < CORRECTION_MAP_POINTS; i++) {
-            float fraction = (float)i / (CORRECTION_MAP_POINTS - 1);
-            uint16_t commanded_pos = min_pos + (uint16_t)(fraction * (max_pos - min_pos));
-            map->points[i].commanded_pos = commanded_pos;
-
-            feetech_write_word(servo_id, REG_GOAL_POSITION, commanded_pos);
-            vTaskDelay(pdMS_TO_TICKS(400)); // Wait for move
-            feetech_read_word(servo_id, REG_PRESENT_POSITION, &map->points[i].actual_pos, 100);
-
-            // Optional: Send progress update to client
-        }
-        xSemaphoreGive(g_uart1_mutex);
-    }
-
-    map->is_calibrated = true;
-    save_correction_map_to_nvs(g_correction_maps);
-
-    cJSON_ReplaceItemInObject(response, "prompt", cJSON_CreateString("Calibration complete and saved."));
-    // send_json_response(sock, response);
-
-    vTaskDelete(NULL);
+    // This function is not yet refactored to use the bus manager,
+    // so it is temporarily disabled.
 }
 
 // Callback for TinyUSB CDC events
@@ -1650,18 +1532,7 @@ void app_main(void) {
     }
     initialize_robot_arm();
     // Initialize smoothed goal positions to the current actual positions
-    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        for (int i = 0; i < NUM_SERVOS; i++) {
-            uint16_t current_pos = 0;
-            // Use a simple read, no need for the full read_sensor_state
-            if (feetech_read_word(servo_ids[i], REG_PRESENT_POSITION, &current_pos, 100) == ESP_OK) {
-                g_smoothed_goal[i] = (float)current_pos;
-             } else {
-                g_smoothed_goal[i] = 2048; // Default to center if read fails
-             }
-        }
-        xSemaphoreGive(g_uart1_mutex);
-    }
+    // This part is not yet refactored to use the bus manager, so it is temporarily disabled.
     ESP_LOGI(TAG, "Initial smoothed goals set from current positions.");
 
     xTaskCreate(bus_manager_task, "bus_manager_task", 4096, NULL, 10, NULL);
@@ -1733,17 +1604,11 @@ void process_feetech_packet(const PacketParser *parser) {
             if (parser->length == 4) { // 1 param (reg) + 1 value byte + Inst + Checksum
                 uint8_t value = parser->params[1];
                 ESP_LOGI(TAG, "  Write Byte to Reg 0x%02X with value %d", reg_addr, value);
-		if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                    feetech_write_byte(parser->id, reg_addr, value);
-		    xSemaphoreGive(g_uart1_mutex);
-                }
+                feetech_write_byte(parser->id, reg_addr, value);
             } else if (parser->length >= 5) { // 1 param (reg) + 2+ value bytes + Inst + Checksum
                 uint16_t value = parser->params[1] | (parser->params[2] << 8);
                 ESP_LOGI(TAG, "  Write Word to Reg 0x%02X with value %d", reg_addr, value);
-		if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                    feetech_write_word(parser->id, reg_addr, value);
-		    xSemaphoreGive(g_uart1_mutex);
-                }
+                feetech_write_word(parser->id, reg_addr, value);
             }
             // Respond with a standard status packet
             uint8_t status_packet[6] = {0xFF, 0xFF, parser->id, 2, 0x00, (uint8_t)~(parser->id + 2)};
@@ -1773,10 +1638,7 @@ void process_feetech_packet(const PacketParser *parser) {
                 esp_err_t read_status = ESP_FAIL;
 
                 if (read_len == 1 || read_len == 2) {
-                    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                        read_status = feetech_read_word(current_id, start_addr, &read_data, 100);
-                        xSemaphoreGive(g_uart1_mutex);
-                    }
+                    read_status = feetech_read_word(current_id, start_addr, &read_data, 100);
                 } else {
                     ESP_LOGE(TAG, "Slave: SYNC_READ unsupported read length: %d", read_len);
                     error = (1 << 2); // Instruction Error
@@ -1820,17 +1682,14 @@ void process_feetech_packet(const PacketParser *parser) {
             uint8_t error = 0;
             uint16_t read_data = 0;
             esp_err_t read_status = ESP_FAIL;
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                if (read_len == 1) {
-                    // To read 1 byte, we still use feetech_read_word and take the LSB
-                    read_status = feetech_read_word(parser->id, reg_addr, &read_data, 100);
-                } else if (read_len == 2) {
-                    read_status = feetech_read_word(parser->id, reg_addr, &read_data, 100);
-                } else {
-                    ESP_LOGE(TAG, "Slave: Unsupported read length: %d", read_len);
-                    error = (1 << 2); // Instruction Error
-                }
-                xSemaphoreGive(g_uart1_mutex);
+            if (read_len == 1) {
+                // To read 1 byte, we still use feetech_read_word and take the LSB
+                read_status = feetech_read_word(parser->id, reg_addr, &read_data, 100);
+            } else if (read_len == 2) {
+                read_status = feetech_read_word(parser->id, reg_addr, &read_data, 100);
+            } else {
+                ESP_LOGE(TAG, "Slave: Unsupported read length: %d", read_len);
+                error = (1 << 2); // Instruction Error
             }
             if (read_status != ESP_OK) {
                 error |= (1 << 6); // Instruction Error for read failure
