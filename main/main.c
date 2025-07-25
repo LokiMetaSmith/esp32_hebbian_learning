@@ -635,11 +635,9 @@ static int cmd_start_map_cal(int argc, char **argv) {
 
     printf("\n--- Starting Calibration for Servo %d ---\n", servo_id);
 
-    // Temporarily set fast acceleration and high torque for calibration
+    // Temporarily disable torque to allow for manual movement
     if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-        feetech_write_byte(servo_id, REG_ACCELERATION, 20); // Fast accel
-        vTaskDelay(pdMS_TO_TICKS(5));
-        feetech_write_word(servo_id, REG_TORQUE_LIMIT, 700); // High torque
+        feetech_write_byte(servo_id, REG_TORQUE_ENABLE, 0); // Disable torque
         vTaskDelay(pdMS_TO_TICKS(5));
         xSemaphoreGive(g_uart1_mutex);
     }
@@ -684,6 +682,12 @@ static int cmd_start_map_cal(int argc, char **argv) {
     map->is_calibrated = true;
     printf("\nCalibration complete for servo %d. Saving to NVS...\n", servo_id);
     save_correction_map_to_nvs(g_correction_maps);
+
+    // Re-enable torque
+    if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
+        feetech_write_byte(servo_id, REG_TORQUE_ENABLE, 1); // Enable torque
+        xSemaphoreGive(g_uart1_mutex);
+    }
 
      return 0;
  }
