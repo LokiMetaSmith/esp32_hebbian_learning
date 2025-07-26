@@ -24,7 +24,6 @@ static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_FAIL_BIT      BIT1
 
 // --- Extern variables from main.c that we need to access ---
-extern SemaphoreHandle_t g_uart1_mutex;
 extern uint8_t servo_ids[NUM_SERVOS];
 extern bool g_learning_loop_active;
 
@@ -386,21 +385,15 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
         const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
         const cJSON *pos_json = cJSON_GetObjectItem(args_json, "pos");
         if (cJSON_IsNumber(id_json) && cJSON_IsNumber(pos_json)) {
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                feetech_write_word((uint8_t)id_json->valueint, REG_GOAL_POSITION, (uint16_t)pos_json->valueint);
-                xSemaphoreGive(g_uart1_mutex);
-            }
+            feetech_write_word((uint8_t)id_json->valueint, REG_GOAL_POSITION, (uint16_t)pos_json->valueint);
             result_json = cJSON_CreateString("OK");
         }
     } else if (strcmp(tool_name, "get_pos") == 0) {
         const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
         if (cJSON_IsNumber(id_json)) {
             uint16_t current_pos = 0;
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_POSITION, &current_pos, 100) == ESP_OK) {
-                    result_json = cJSON_CreateNumber(current_pos);
-                }
-                xSemaphoreGive(g_uart1_mutex);
+            if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_POSITION, &current_pos, 100) == ESP_OK) {
+                result_json = cJSON_CreateNumber(current_pos);
             }
         }
     } else if (strcmp(tool_name, "babble_start") == 0) {
@@ -413,20 +406,14 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
         const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
         const cJSON *torque_json = cJSON_GetObjectItem(args_json, "torque");
         if (cJSON_IsNumber(id_json) && cJSON_IsBool(torque_json)) {
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                feetech_write_byte((uint8_t)id_json->valueint, REG_TORQUE_ENABLE, cJSON_IsTrue(torque_json) ? 1 : 0);
-                xSemaphoreGive(g_uart1_mutex);
-            }
+            feetech_write_byte((uint8_t)id_json->valueint, REG_TORQUE_ENABLE, cJSON_IsTrue(torque_json) ? 1 : 0);
             result_json = cJSON_CreateString("OK");
         }
     } else if (strcmp(tool_name, "set_acceleration") == 0) {
         const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
         const cJSON *accel_json = cJSON_GetObjectItem(args_json, "accel");
         if (cJSON_IsNumber(id_json) && cJSON_IsNumber(accel_json)) {
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                feetech_write_byte((uint8_t)id_json->valueint, REG_ACCELERATION, (uint8_t)accel_json->valueint);
-                xSemaphoreGive(g_uart1_mutex);
-            }
+            feetech_write_byte((uint8_t)id_json->valueint, REG_ACCELERATION, (uint8_t)accel_json->valueint);
             result_json = cJSON_CreateString("OK");
         }
     } else if (strcmp(tool_name, "get_status") == 0) {
@@ -434,32 +421,26 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
         if (cJSON_IsNumber(id_json)) {
             uint8_t moving = 0;
             uint16_t pos = 0, load = 0, current = 0, voltage = 0;
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                feetech_read_byte((uint8_t)id_json->valueint, REG_MOVING, &moving, 100);
-                feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_POSITION, &pos, 100);
-                feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_LOAD, &load, 100);
-                feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100);
-                feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_VOLTAGE, &voltage, 100);
-                xSemaphoreGive(g_uart1_mutex);
+            feetech_read_byte((uint8_t)id_json->valueint, REG_MOVING, &moving, 100);
+            feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_POSITION, &pos, 100);
+            feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_LOAD, &load, 100);
+            feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100);
+            feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_VOLTAGE, &voltage, 100);
 
-                cJSON *status_obj = cJSON_CreateObject();
-                cJSON_AddBoolToObject(status_obj, "moving", moving);
-                cJSON_AddNumberToObject(status_obj, "pos", pos);
-                cJSON_AddNumberToObject(status_obj, "load", load);
-                cJSON_AddNumberToObject(status_obj, "current", current);
-                cJSON_AddNumberToObject(status_obj, "voltage", voltage);
-                result_json = status_obj;
-            }
+            cJSON *status_obj = cJSON_CreateObject();
+            cJSON_AddBoolToObject(status_obj, "moving", moving);
+            cJSON_AddNumberToObject(status_obj, "pos", pos);
+            cJSON_AddNumberToObject(status_obj, "load", load);
+            cJSON_AddNumberToObject(status_obj, "current", current);
+            cJSON_AddNumberToObject(status_obj, "voltage", voltage);
+            result_json = status_obj;
         }
     } else if (strcmp(tool_name, "get_current") == 0) {
         const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
         if (cJSON_IsNumber(id_json)) {
             uint16_t current = 0;
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100) == ESP_OK) {
-                    result_json = cJSON_CreateNumber(current);
-                }
-                xSemaphoreGive(g_uart1_mutex);
+            if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100) == ESP_OK) {
+                result_json = cJSON_CreateNumber(current);
             }
         }
     } else if (strcmp(tool_name, "get_power") == 0) {
@@ -467,25 +448,19 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
         if (cJSON_IsNumber(id_json)) {
             uint16_t current = 0;
             uint16_t voltage = 0;
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100) == ESP_OK &&
-                   feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_VOLTAGE, &voltage, 100) == ESP_OK) {
-                    // Power (mW) = Voltage (mV) * Current (mA) / 1000
-                    // The servo returns voltage in mV and current in mA.
-                    result_json = cJSON_CreateNumber((float)(current * voltage) / 1000.0);
-                }
-                xSemaphoreGive(g_uart1_mutex);
+            if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100) == ESP_OK &&
+               feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_VOLTAGE, &voltage, 100) == ESP_OK) {
+                // Power (mW) = Voltage (mV) * Current (mA) / 1000
+                // The servo returns voltage in mV and current in mA.
+                result_json = cJSON_CreateNumber((float)(current * voltage) / 1000.0);
             }
         }
     } else if (strcmp(tool_name, "get_torque") == 0) {
         const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
         if (cJSON_IsNumber(id_json)) {
             uint16_t torque = 0;
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_LOAD, &torque, 100) == ESP_OK) {
-                    result_json = cJSON_CreateNumber(torque);
-                }
-                xSemaphoreGive(g_uart1_mutex);
+            if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_LOAD, &torque, 100) == ESP_OK) {
+                result_json = cJSON_CreateNumber(torque);
             }
         }
     } else if (strcmp(tool_name, "calibrate") == 0) {
