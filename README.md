@@ -74,19 +74,16 @@ This project is built using the **ESP-IDF v5.4**. It relies on the following man
 
 ## Project Structure
 
-.├── main/│
-          ├── bma400_driver.c│
-          ├── bma400_driver.h│
-          ├── feetech_protocol.c│
-          ├── feetech_protocol.h│
-          ├── led_indicator.c│
-          ├── led_indicator.h│
-          ├── main.c│
-          └── CMakeLists.txt
- ├── .gitignore
- ├── CMakeLists.txt
- ├── idf_component.yml
- └── README.md
+.
+├── main/
+├── components/
+├── tests/
+├── training/
+├── examples/
+├── .gitignore
+├── CMakeLists.txt
+├── idf_component.yml
+└── README.md
 ## Setup & Build Instructions
 
 1.  **Clone the Repository:**

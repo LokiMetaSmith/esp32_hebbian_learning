@@ -33,14 +33,10 @@ For more detailed information, please refer to the [Technical Report](https://gi
 ## Project Structure
 
 *   `main/`: Contains the main application source code.
-    *   `main.c`: The main application entry point.
-    *   `mcp_server.c`: Implements the MCP server for remote control.
-    *   `feetech_protocol.c`: Handles communication with the Feetech servos.
-    *   `nvs_storage.c`: Manages non-volatile storage for the neural network and other data.
-    *   `bma400_driver.c`: Driver for the BMA400 accelerometer.
-    *   `led_indicator.c`: Controls the onboard RGB LED.
 *   `components/`: Contains ESP-IDF components.
-*   `simple_mcp_client.py`: A Python script for interacting with the MCP server.
+*   `tests/`: Contains unit tests.
+*   `training/`: Contains MCP servers and other training-related files.
+*   `examples/`: Contains client example code.
 
 ## Building and Flashing
 
