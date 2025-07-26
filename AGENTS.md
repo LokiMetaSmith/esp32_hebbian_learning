@@ -2,6 +2,34 @@
 
 This file contains instructions for AI agents working with this codebase.
 
+## Project Overview
+
+**Project Name:** ESP32 Hebbian Learning Robot
+
+**High-Level Goal:** To create a robotic arm that learns to control its own movements in real-time, directly on the ESP32-S3, without relying on a pre-trained model.
+
+**Core Learning Algorithm:** The system uses a biologically-inspired approach called Predictive Coding with a Hebbian Learning Rule.
+
+For more detailed information, please refer to the [Technical Report](https://github.com/LokiMetaSmith/esp32_hebbian_learning/blob/feature/add-servo-bus-mutex/docs/technical_report.md).
+
+## Hardware Stack
+
+*   **MCU:** ESP32-S3-DevKitC-1 v1.1
+*   **Servos:** 6x FeeTech Serial Bus Servos (daisy-chained)
+*   **Servo Interface:** Waveshare Bus Servo Adapter (A) (UART to Half-Duplex Serial)
+*   **Sensor:** SparkFun BMA400 Accelerometer (I2C)
+*   **Visuals:** Onboard Addressable RGB LED (GPIO 38)
+
+## Software Architecture
+
+*   **Framework:** ESP-IDF v5.4
+*   **Language:** C
+*   **Key Libraries/Components:**
+    *   `espressif/esp-dsp`: For hardware-accelerated dot product calculations in the neural network.
+    *   `espressif/led_strip`: For controlling the RGB LED.
+    *   `nvs_flash`: For saving/loading the neural network weights.
+    *   `console`, `linenoise`, `esp_vfs_console`: For the serial command interface.
+
 ## Project Structure
 
 *   `main/`: Contains the main application source code.
