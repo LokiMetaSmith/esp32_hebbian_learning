@@ -1,9 +1,6 @@
 #include "led_indicator.h"
+#include "common.h"
 #include "led_strip.h"
-#include "esp_log.h"
-#include "driver/gpio.h"
-#include "freertos/FreeRTOS.h" // For vTaskDelay
-#include "freertos/task.h"     // For vTaskDelay
 
 // Pin configuration from the ESP32-S3-DevKitC-1 documentation
 #define LED_PIN GPIO_NUM_38
