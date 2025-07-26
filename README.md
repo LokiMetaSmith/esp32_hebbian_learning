@@ -2,7 +2,7 @@
 
 An autonomous robotic arm powered by an ESP32-S3 that learns to control its own movements in real-time. This project forsakes traditional, pre-trained AI models and instead implements a self-learning system based on predictive coding and Hebbian principles.
 
-**Date:** June 30, 2025
+**Date:** July 26, 2025
 **Tags:** `ESP32-S3`, `On-Device Learning`, `Hebbian Learning`, `Predictive Coding`, `Robotics`, `ESP-IDF`
 
 ---
@@ -20,6 +20,10 @@ The main loop follows this cycle:
 4.  **Learn:** The "prediction error" (the difference between the predicted and actual state) is calculated. The neural network then uses this error to update its own weights via a Hebbian-like rule: **connections that led to accurate predictions are strengthened.**
 
 Over time, the robot builds an internal model of its own physics, learning the causal relationship between its commands and their outcomes.
+
+## Current Status
+
+The project is currently in a stable state. The bus manager has been implemented to handle all servo communication, which has resolved the previous concurrency issues. The `AGENTS.md` file has been added to provide instructions for AI agents working with the codebase.
 
 ## Features
 
@@ -126,3 +130,9 @@ This project evolved significantly from its initial concept. The journey involve
 * **Missing Header Files:** The build failed multiple times with "undeclared" or "No such file or directory" errors for headers like `gpio.h` and `uart.h`. **Solution:** Added the required component `driver` to the `REQUIRES` list in `main/CMakeLists.txt`.
 * **Component API Change:** The `led_strip` driver code failed to compile due to changes in its API. **Solution:** Updated the code to match the latest version of the component.
 * **Component Dependency:** The final issue was that the `led_strip` component itself was not found. **Solution:** Learned to use the **IDF Component Manager** and added the dependency with `idf.py add-dependency "espressif/led_strip"`, the modern way to handle external components in ESP-IDF.
+* **Bus Contention:** The system was experiencing a large number of `Timeout or insufficient data from servo` and `Response ID mismatch` errors. **Solution:** Implemented a bus manager task to serialize all UART communication with the servos.
+* **Compilation Errors:** The project was failing to compile due to a large number of "undeclared" or "No such file or directory" errors. **Solution:** Refactored the include statements to fix the compilation errors.
+
+## License
+
+This project is licensed under the MIT License. See the `LICENSE` file for details.
