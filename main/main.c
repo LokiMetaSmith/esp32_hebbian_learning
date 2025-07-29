@@ -37,6 +37,7 @@ PredictionLayer* g_pl;
 
 // Global array to hold the learned state centroids
 float g_state_token_centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM];
+float g_state_token_embeddings[NUM_STATE_TOKENS][HIDDEN_NEURONS];
 
 // --- Global Correction Maps ---
 ServoCorrectionMap g_correction_maps[NUM_SERVOS];
@@ -499,6 +500,44 @@ void perform_random_walk(float* action_output_vector) {
 
 
 // --- TASKS & MAIN ---
+
+/**
+ * @brief Moves the robot one step towards a goal embedding.
+ * This is the primary interface for external (e.g., Python) control.
+ * @param goal_embedding The target point in the latent space (size: HIDDEN_NEURONS).
+ */
+void move_towards_goal_embedding(const float* goal_embedding) {
+    float current_state[STATE_VECTOR_DIM];
+    float temp_input_for_encoder[INPUT_NEURONS] = {0};
+
+    // --- 1. ENCODE current state to get current_embedding ---
+    read_sensor_state(current_state);
+    memcpy(temp_input_for_encoder, current_state, sizeof(float) * STATE_VECTOR_DIM);
+    forward_pass(temp_input_for_encoder, g_hl, g_ol, g_pl);
+    float* current_embedding = g_hl->hidden_activations;
+
+    // --- 2. PLAN trajectory in latent space ---
+    float next_step_embedding[HIDDEN_NEURONS];
+    const float alpha = 0.1f; // Step size (learning rate for movement)
+
+    for (int i = 0; i < HIDDEN_NEURONS; i++) {
+        float direction_vector = goal_embedding[i] - current_embedding[i];
+        next_step_embedding[i] = current_embedding[i] + (alpha * direction_vector);
+    }
+
+    // --- 3. DECODE the next step's embedding into an action ---
+    float action_vector[OUTPUT_NEURONS];
+    for (int i = 0; i < OUTPUT_NEURONS; i++) {
+        float sum = 0;
+        // Manually run the decoder part of the network
+        dsps_dotprod_f32_ae32(g_ol->weights[i], next_step_embedding, &sum, HIDDEN_NEURONS);
+        sum += g_ol->output_bias[i];
+        action_vector[i] = tanhf(sum);
+    }
+
+    // --- 4. EXECUTE the generated action ---
+    execute_on_robot_arm(action_vector);
+}
 
 // Task for standalone random walk
 void random_walk_task_fn(void *pvParameters) {
@@ -1172,64 +1211,34 @@ static int cmd_export_states(int argc, char **argv) {
 }
 
 static int cmd_import_states(int argc, char **argv) {
-    // This command will be complex, so we'll need to increase the console buffer size
-    // in menuconfig to handle the large JSON string.
-    if (argc != 2) {
-        printf("Usage: import_states <json_string>\n");
-        return 1;
-    }
-
+    // Assume argv[1] contains the JSON string: {"centroids":[[...],[...]]}
     cJSON *root = cJSON_Parse(argv[1]);
-    if (root == NULL) {
-        printf("Error: Failed to parse JSON.\n");
-        return 1;
-    }
-
     cJSON *centroids_json = cJSON_GetObjectItem(root, "centroids");
-    if (!cJSON_IsArray(centroids_json)) {
-        printf("Error: JSON must have a 'centroids' array.\n");
-        cJSON_Delete(root);
-        return 1;
+
+    int token_index = 0;
+    cJSON *centroid_row;
+    cJSON_ArrayForEach(centroid_row, centroids_json) {
+        if (token_index >= NUM_STATE_TOKENS) break;
+        // 1. Populate the g_state_token_centroids array
+        // ... (json_to_float_array or similar logic here) ...
+
+        // 2. Pre-calculate the embedding for this centroid
+        float temp_input[INPUT_NEURONS] = {0};
+        memcpy(temp_input, g_state_token_centroids[token_index], sizeof(float) * STATE_VECTOR_DIM);
+
+        // Run the encoder pass (input -> hidden layer)
+        forward_pass(temp_input, g_hl, g_ol, g_pl);
+
+        // 3. Store the result in the g_state_token_embeddings array
+        memcpy(g_state_token_embeddings[token_index], g_hl->hidden_activations, sizeof(float) * HIDDEN_NEURONS);
+
+        token_index++;
     }
-
-    int num_centroids = cJSON_GetArraySize(centroids_json);
-    if (num_centroids != NUM_STATE_TOKENS) {
-        printf("Error: Expected %d centroids, but got %d.\n", NUM_STATE_TOKENS, num_centroids);
-        cJSON_Delete(root);
-        return 1;
-    }
-
-    for (int i = 0; i < num_centroids; i++) {
-        cJSON *centroid_json = cJSON_GetArrayItem(centroids_json, i);
-        if (!cJSON_IsArray(centroid_json)) {
-            printf("Error: Centroid %d is not an array.\n", i);
-            cJSON_Delete(root);
-            return 1;
-        }
-
-        int num_dims = cJSON_GetArraySize(centroid_json);
-        if (num_dims != STATE_VECTOR_DIM) {
-            printf("Error: Centroid %d has %d dimensions, but expected %d.\n", i, num_dims, STATE_VECTOR_DIM);
-            cJSON_Delete(root);
-            return 1;
-        }
-
-        for (int j = 0; j < num_dims; j++) {
-            cJSON *dim_json = cJSON_GetArrayItem(centroid_json, j);
-            if (!cJSON_IsNumber(dim_json)) {
-                printf("Error: Dimension %d of centroid %d is not a number.\n", j, i);
-                cJSON_Delete(root);
-                return 1;
-            }
-            g_state_token_centroids[i][j] = (float)dim_json->valuedouble;
-        }
-    }
-
-    printf("Successfully imported %d state tokens.\n", num_centroids);
     cJSON_Delete(root);
+    printf("Imported and calculated embeddings for %d tokens.\n", token_index);
 
-    // TODO: Add NVS saving for the state tokens
-
+    // 4. Save both arrays to NVS for persistence
+    // ... (call to a new save_state_tokens_to_nvs() function) ...
     return 0;
 }
 

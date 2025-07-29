@@ -47,6 +47,69 @@ cleanup:
     return err;
 }
 
+esp_err_t save_state_tokens_to_nvs(const float centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM], const float embeddings[NUM_STATE_TOKENS][HIDDEN_NEURONS]) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error (%s) opening NVS handle for state tokens!", esp_err_to_name(err));
+        return err;
+    }
+
+    err = nvs_set_blob(nvs_handle, "centroids", centroids, sizeof(float) * NUM_STATE_TOKENS * STATE_VECTOR_DIM);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save centroids: %s", esp_err_to_name(err));
+        goto cleanup_state_tokens;
+    }
+
+    err = nvs_set_blob(nvs_handle, "embeddings", embeddings, sizeof(float) * NUM_STATE_TOKENS * HIDDEN_NEURONS);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Failed to save embeddings: %s", esp_err_to_name(err));
+        goto cleanup_state_tokens;
+    }
+
+    err = nvs_commit(nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "NVS commit for state tokens failed: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGI(TAG, "State tokens saved successfully to NVS.");
+    }
+
+cleanup_state_tokens:
+    nvs_close(nvs_handle);
+    return err;
+}
+
+esp_err_t load_state_tokens_from_nvs(float centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM], float embeddings[NUM_STATE_TOKENS][HIDDEN_NEURONS]) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "Error (%s) opening NVS handle for state tokens!", esp_err_to_name(err));
+        return err;
+    }
+
+    size_t required_size;
+
+    required_size = sizeof(float) * NUM_STATE_TOKENS * STATE_VECTOR_DIM;
+    err = nvs_get_blob(nvs_handle, "centroids", centroids, &required_size);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to load centroids: %s", esp_err_to_name(err));
+        goto cleanup_load_state_tokens;
+    }
+
+    required_size = sizeof(float) * NUM_STATE_TOKENS * HIDDEN_NEURONS;
+    err = nvs_get_blob(nvs_handle, "embeddings", embeddings, &required_size);
+    if (err != ESP_OK) {
+        ESP_LOGW(TAG, "Failed to load embeddings: %s", esp_err_to_name(err));
+        goto cleanup_load_state_tokens;
+    }
+
+    ESP_LOGI(TAG, "State tokens loaded successfully from NVS.");
+
+cleanup_load_state_tokens:
+    nvs_close(nvs_handle);
+    return err;
+}
+
 static void json_to_float_array(cJSON *json_array, float *target_array, int array_size) {
     if (!cJSON_IsArray(json_array)) return;
     int i = 0;

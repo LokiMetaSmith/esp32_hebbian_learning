@@ -51,6 +51,7 @@ typedef struct {
 
 // Global array to hold the learned state centroids
 extern float g_state_token_centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM];
+extern float g_state_token_embeddings[NUM_STATE_TOKENS][HIDDEN_NEURONS];
 
 // --- Correction Map Data Structures ---
 #define CORRECTION_MAP_POINTS 17 // Number of points for calibration map (0% to 100% in 6.25% steps)

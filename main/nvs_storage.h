@@ -77,5 +77,23 @@ esp_err_t set_raw_network_blob(const uint8_t *buffer, size_t size);
  */
 esp_err_t save_network_from_json(const cJSON *nn_json);
 
+/**
+ * @brief Saves the state tokens to NVS.
+ *
+ * @param centroids Pointer to the array of state token centroids.
+ * @param embeddings Pointer to the array of state token embeddings.
+ * @return esp_err_t Result of the save operation.
+ */
+esp_err_t save_state_tokens_to_nvs(const float centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM], const float embeddings[NUM_STATE_TOKENS][HIDDEN_NEURONS]);
+
+/**
+ * @brief Loads the state tokens from NVS.
+ *
+ * @param centroids Pointer to the array of state token centroids to be populated.
+ * @param embeddings Pointer to the array of state token embeddings to be populated.
+ * @return esp_err_t Result of the load operation.
+ */
+esp_err_t load_state_tokens_from_nvs(float centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM], float embeddings[NUM_STATE_TOKENS][HIDDEN_NEURONS]);
+
 
 #endif // NVS_STORAGE_H
