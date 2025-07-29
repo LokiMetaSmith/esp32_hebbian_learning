@@ -13,6 +13,7 @@
 #include "common.h"
 
 // --- Application Configuration ---
+#define NUM_ARMS 2
 #define NUM_SERVOS 6
 
 // --- Bus Manager Data Structures ---
