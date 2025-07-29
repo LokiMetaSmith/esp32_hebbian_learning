@@ -35,6 +35,9 @@ HiddenLayer* g_hl;
 OutputLayer* g_ol;
 PredictionLayer* g_pl;
 
+// Global array to hold the learned state centroids
+float g_state_token_centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM];
+
 // --- Global Correction Maps ---
 ServoCorrectionMap g_correction_maps[NUM_SERVOS];
 
@@ -233,7 +236,7 @@ void bus_manager_task(void *pvParameters) {
     for (;;) {
         // Wait indefinitely for a request to arrive
         if (xQueueReceive(g_bus_request_queue, &request, portMAX_DELAY) == pdTRUE) {
-
+            
             // Default response values
             response.status = ESP_FAIL;
             response.value = 0;
@@ -247,9 +250,9 @@ void bus_manager_task(void *pvParameters) {
                 case CMD_WRITE_WORD:
                     // Write functions are "fire and forget", so we don't get a status back.
                     feetech_write_word(request.servo_id, request.reg_address, request.value);
-                    response.status = ESP_OK;
+                    response.status = ESP_OK; 
                     break;
-
+                
                 case CMD_WRITE_BYTE:
                     feetech_write_byte(request.servo_id, request.reg_address, (uint8_t)request.value);
                     response.status = ESP_OK;
@@ -307,7 +310,7 @@ void read_sensor_state(float* sensor_data) {
 
         sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
         sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
-
+        
         // 3. Request Current
         request.reg_address = REG_PRESENT_CURRENT;
         xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
@@ -320,10 +323,10 @@ void read_sensor_state(float* sensor_data) {
             sensor_data[current_sensor_index++] = 0.0f;
         }
     }
-
+    
     // --- NEW: Clean up the response queue ---
     vQueueDelete(response_queue);
-
+    
     if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
         if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             ESP_LOGI(TAG, "Total servo current this cycle: %.3f A", total_current_A_cycle);
@@ -497,6 +500,25 @@ void perform_random_walk(float* action_output_vector) {
 
 // --- TASKS & MAIN ---
 
+// In main.c, a helper function to find the closest token
+int get_state_token(const float* state_vector) {
+    float min_dist = -1.0f;
+    int best_token = 0;
+    for (int i = 0; i < NUM_STATE_TOKENS; i++) {
+        float dist = 0;
+        // Calculate squared Euclidean distance
+        for (int j = 0; j < STATE_VECTOR_DIM; j++) {
+            float diff = state_vector[j] - g_state_token_centroids[i][j];
+            dist += diff * diff;
+        }
+        if (min_dist < 0 || dist < min_dist) {
+            min_dist = dist;
+            best_token = i;
+        }
+    }
+    return best_token;
+}
+
 // Task for standalone random walk
 void random_walk_task_fn(void *pvParameters) {
     ESP_LOGI(TAG, "Random Walk Task started.");
@@ -511,109 +533,57 @@ void random_walk_task_fn(void *pvParameters) {
 }
 
 void learning_loop_task(void *pvParameters) {
-    long cycle = 0;
-    float* combined_input = malloc(sizeof(float) * INPUT_NEURONS);
-    float* state_t_plus_1 = malloc(sizeof(float) * PRED_NEURONS);
+    float* current_state = malloc(sizeof(float) * STATE_VECTOR_DIM);
+    float* next_state = malloc(sizeof(float) * STATE_VECTOR_DIM);
+    float* nn_input = malloc(sizeof(float) * INPUT_NEURONS);
 
-    if (!combined_input || !state_t_plus_1) {
-        ESP_LOGE(TAG, "Failed to allocate memory for learning_loop_task buffers!");
-        // If memory allocation fails, there's no point in continuing this task.
-        // Consider how to handle this error more gracefully if needed (e.g. global error flag).
-        vTaskDelete(NULL);
-        return; // Important to return after vTaskDelete if it's not the last line.
-    }
-
-    while (1) {
+    while(1) {
         if (g_learning_loop_active) {
-            // 1. SENSE current state (first part of combined_input)
-            read_sensor_state(combined_input);
+            // 1. SENSE current state
+            read_sensor_state(current_state);
 
-            // 2. BABBLE: Generate an action (positions and accelerations) and place it in the combined_input vector
-            int action_vector_start_index = NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS);
-            float* action_part = combined_input + action_vector_start_index; // Pointer to the start of action data
-            
-            if (g_best_fitness_achieved > 0.8f) {
-                // Generate fully random actions (positions and accelerations) if fitness is high
-                for (int i = 0; i < NUM_ACTION_PARAMS; i++) { // NUM_ACTION_PARAMS is NUM_SERVOS * 2
-                    action_part[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
-                }
-                // Execute these new random actions (positions and accelerations)
-                execute_on_robot_arm(action_part);
-            } else {
-                // Otherwise, use perform_random_walk for position exploration,
-                // and generate random accelerations separately.
+            // 2. CHOOSE a goal state token (for now, randomly)
+            int goal_token_idx = rand() % NUM_STATE_TOKENS;
+            float* goal_state_vector = g_state_token_centroids[goal_token_idx];
 
-                // perform_random_walk fills the first NUM_SERVOS elements of action_part with positions
-                // and also executes the moves with current g_servo_acceleration (which is fine for this phase).
-                perform_random_walk(action_part);
+            // 3. PREPARE NN INPUT: (current_state + goal_state)
+            memcpy(nn_input, current_state, sizeof(float) * STATE_VECTOR_DIM);
+            memcpy(nn_input + STATE_VECTOR_DIM, goal_state_vector, sizeof(float) * STATE_VECTOR_DIM);
 
-                // Now, generate and store random accelerations for the learning input
-                // Now, generate and store random accelerations and torques for the learning input
-                for (int i = 0; i < NUM_SERVOS; i++) {
-                    action_part[NUM_SERVOS + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized acceleration
-                    action_part[NUM_SERVOS * 2 + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized torque
-                }
-                // Note: The accelerations set by execute_on_robot_arm in the next step will override
-                // the g_servo_acceleration used by perform_random_walk for this learning cycle's execution.
-                // This is a bit indirect but means the NN learns based on accelerations it *would* set.
-                // For more direct control, perform_random_walk would need not to execute.
-                // For now, we will execute the full action_part (including newly random accelerations)
-                // via execute_on_robot_arm below, which will set the new accelerations.
-                execute_on_robot_arm(action_part);
-            }
+            // 4. PREDICT ACTION: Forward pass to get an action from the Output Layer
+            forward_pass(nn_input, g_hl, g_ol, g_pl);
+            // The action is now in g_ol->output_activations
 
-            // 3. PREDICT outcome based on the state and the chosen action (now including accelerations)
-            forward_pass(combined_input, g_hl, g_ol, g_pl);
-            
-            // 4. DELAY to allow action to complete and state to change
+            // 5. EXECUTE the predicted action
+            execute_on_robot_arm(g_ol->output_activations);
+
+            // 6. DELAY to allow the action to have an effect
             vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
-            
-            // 5. OBSERVE the new state resulting from the action
-            read_sensor_state(state_t_plus_1);
 
-            // 6. LEARN from the prediction error
-            float total_error = 0;
-            float state_change_magnitude = 0;
-            for (int i = 0; i < PRED_NEURONS; i++) { 
-                total_error += fabsf(state_t_plus_1[i] - g_pl->pred_activations[i]); 
-                if (i < NUM_ACCEL_GYRO_PARAMS) { // Consider only accelerometer/gyro changes for magnitude
-                    state_change_magnitude += fabsf(state_t_plus_1[i] - combined_input[i]); // Compare new sensor state to old sensor state part of combined_input
-                }
-            }
-            
-            float prediction_accuracy = fmaxf(0, 1.0f - (total_error / PRED_NEURONS));
-            // Correctness boosted by how much the state changed, encouraging more dynamic actions
-            float correctness = prediction_accuracy * (1.0f + state_change_magnitude);
-            
-            update_weights_hebbian(combined_input, correctness, g_hl, g_ol, g_pl);
-            led_indicator_set_color_from_fitness(correctness);
+            // 7. OBSERVE the resulting state
+            read_sensor_state(next_state);
 
-            if (g_network_weights_updated) {
-                if (correctness > g_best_fitness_achieved + MIN_FITNESS_IMPROVEMENT_TO_SAVE) {
-                    if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-                        ESP_LOGI(TAG, "Fitness improved (%.2f -> %.2f). Auto-saving...", g_best_fitness_achieved, correctness);
-                        xSemaphoreGive(g_console_mutex);
-                    }
-                    if (save_network_to_nvs(g_hl, g_ol, g_pl) == ESP_OK) {
-                        g_best_fitness_achieved = correctness;
-                        g_network_weights_updated = false; // Reset flag after successful save
-                    }
-                } else if (correctness > g_best_fitness_achieved) {
-                    // Update best_fitness even if not saved, to track actual best
-                    g_best_fitness_achieved = correctness;
-                }
+            // 8. LEARN by calculating correctness
+            float dist_before = 0;
+            float dist_after = 0;
+            for (int i = 0; i < STATE_VECTOR_DIM; i++) {
+                float diff_before = current_state[i] - goal_state_vector[i];
+                float diff_after = next_state[i] - goal_state_vector[i];
+                dist_before += diff_before * diff_before;
+                dist_after += diff_after * diff_after;
             }
-            cycle++;
+
+            // Correctness is positive if we got closer to the goal, negative otherwise
+            float correctness = dist_before - dist_after;
+
+            // Update weights based on this "progress" signal
+            update_weights_hebbian(nn_input, correctness, g_hl, g_ol, g_pl);
+
+            // ... (logging, auto-saving, etc.)
         } else {
             vTaskDelay(pdMS_TO_TICKS(100)); // Sleep when not active
         }
-    } // End while(1)
-
-    // This part of the code will not be reached due to the infinite while(1) loop,
-    // but it's good practice for resource cleanup if the loop could terminate.
-    free(combined_input);
-    free(state_t_plus_1);
-    vTaskDelete(NULL); // Task should delete itself if it ever exits the loop.
+    }
 }
 
 // --- CONSOLE COMMANDS & SETUP ---
@@ -660,7 +630,7 @@ static int cmd_start_map_cal(int argc, char **argv) {
     request.reg_address = REG_TORQUE_ENABLE;
     request.value = 0; // Disable torque
     xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
-
+    
     printf("1. Manually move servo %d to its MINIMUM position, then press ENTER.\n", servo_id);
     while(get_char_with_timeout(100) != '\n'); // Wait for Enter
 
@@ -700,7 +670,7 @@ static int cmd_start_map_cal(int argc, char **argv) {
         float fraction = (float)i / (CORRECTION_MAP_POINTS - 1);
         uint16_t commanded_pos = min_pos + (uint16_t)(fraction * (max_pos - min_pos));
         map->points[i].commanded_pos = commanded_pos;
-
+        
         request.command = CMD_WRITE_WORD;
         request.reg_address = REG_GOAL_POSITION;
         request.value = commanded_pos;
@@ -708,7 +678,7 @@ static int cmd_start_map_cal(int argc, char **argv) {
         xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
 
         vTaskDelay(pdMS_TO_TICKS(400)); // Wait for move to complete
-
+        
         request.command = CMD_READ_WORD;
         request.reg_address = REG_PRESENT_POSITION;
         request.response_queue = response_queue;
@@ -765,7 +735,7 @@ static int cmd_set_torque_limit(int argc, char **argv) {
 
     // Read back to verify
     vTaskDelay(pdMS_TO_TICKS(20)); // Give a moment for the write to be processed before reading back
-
+    
     QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
     if (response_queue == NULL) {
         printf("Error: Failed to create response queue.\n");
@@ -775,7 +745,7 @@ static int cmd_set_torque_limit(int argc, char **argv) {
     request.command = CMD_READ_WORD;
     request.response_queue = response_queue;
     xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
-
+    
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
         if (response.status == ESP_OK) {
@@ -1199,6 +1169,89 @@ static int cmd_set_mode(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_export_states(int argc, char **argv) {
+    int num_samples = 2000; // Default
+    // TODO: Add argument parsing for num_samples
+    printf("--- BEGIN STATE EXPORT ---\n");
+    float sensor_data[PRED_NEURONS]; // Use PRED_NEURONS as it's the size of the state vector
+
+    for (int i = 0; i < num_samples; i++) {
+        perform_random_walk(NULL); // Perform a random walk step
+        vTaskDelay(pdMS_TO_TICKS(100)); // Wait a moment for the move to settle
+        read_sensor_state(sensor_data);
+
+        for (int j = 0; j < PRED_NEURONS; j++) {
+            printf("%f,", sensor_data[j]);
+        }
+        printf("\n");
+        vTaskDelay(pdMS_TO_TICKS(10)); // Yield
+    }
+    printf("--- END STATE EXPORT ---\n");
+    return 0;
+}
+
+static int cmd_import_states(int argc, char **argv) {
+    // This command will be complex, so we'll need to increase the console buffer size
+    // in menuconfig to handle the large JSON string.
+    if (argc != 2) {
+        printf("Usage: import_states <json_string>\n");
+        return 1;
+    }
+
+    cJSON *root = cJSON_Parse(argv[1]);
+    if (root == NULL) {
+        printf("Error: Failed to parse JSON.\n");
+        return 1;
+    }
+
+    cJSON *centroids_json = cJSON_GetObjectItem(root, "centroids");
+    if (!cJSON_IsArray(centroids_json)) {
+        printf("Error: JSON must have a 'centroids' array.\n");
+        cJSON_Delete(root);
+        return 1;
+    }
+
+    int num_centroids = cJSON_GetArraySize(centroids_json);
+    if (num_centroids != NUM_STATE_TOKENS) {
+        printf("Error: Expected %d centroids, but got %d.\n", NUM_STATE_TOKENS, num_centroids);
+        cJSON_Delete(root);
+        return 1;
+    }
+
+    for (int i = 0; i < num_centroids; i++) {
+        cJSON *centroid_json = cJSON_GetArrayItem(centroids_json, i);
+        if (!cJSON_IsArray(centroid_json)) {
+            printf("Error: Centroid %d is not an array.\n", i);
+            cJSON_Delete(root);
+            return 1;
+        }
+
+        int num_dims = cJSON_GetArraySize(centroid_json);
+        if (num_dims != STATE_VECTOR_DIM) {
+            printf("Error: Centroid %d has %d dimensions, but expected %d.\n", i, num_dims, STATE_VECTOR_DIM);
+            cJSON_Delete(root);
+            return 1;
+        }
+
+        for (int j = 0; j < num_dims; j++) {
+            cJSON *dim_json = cJSON_GetArrayItem(centroid_json, j);
+            if (!cJSON_IsNumber(dim_json)) {
+                printf("Error: Dimension %d of centroid %d is not a number.\n", j, i);
+                cJSON_Delete(root);
+                return 1;
+            }
+            g_state_token_centroids[i][j] = (float)dim_json->valuedouble;
+        }
+    }
+
+    printf("Successfully imported %d state tokens.\n", num_centroids);
+    cJSON_Delete(root);
+
+    // TODO: Add NVS saving for the state tokens
+
+    return 0;
+}
+
 static int cmd_get_stats(int argc, char **argv) {
     char *stats_buffer = malloc(2048);
     if (stats_buffer) {
@@ -1445,6 +1498,12 @@ void initialize_console(void) {
 
     const esp_console_cmd_t stats_cmd = { .command = "get_stats", .help = "Get task runtime stats", .func = &cmd_get_stats };
     ESP_ERROR_CHECK(esp_console_cmd_register(&stats_cmd));
+
+    const esp_console_cmd_t export_states_cmd = { .command = "export_states", .help = "Export sensor states to the console", .func = &cmd_export_states };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&export_states_cmd));
+
+    const esp_console_cmd_t import_states_cmd = { .command = "import_states", .help = "Import state tokens from JSON", .func = &cmd_import_states };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&import_states_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
