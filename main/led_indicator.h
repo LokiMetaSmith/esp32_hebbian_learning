@@ -1,3 +1,12 @@
+/**
+ * @file led_indicator.h
+ * @brief Header file for the LED indicator control.
+ *
+ * This file declares the functions for initializing the LED indicator
+ * and setting its state (e.g., on, off, blinking) to provide visual
+ * feedback on the robot's status.
+ */
+
 #ifndef LED_INDICATOR_H
 #define LED_INDICATOR_H
 

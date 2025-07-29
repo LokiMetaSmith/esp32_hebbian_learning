@@ -1,3 +1,13 @@
+/**
+ * @file mcp_server.c
+ * @brief Implementation of the MCP (Motion Control Program) Server.
+ *
+ * This file contains the logic for setting up a Wi-Fi access point and a TCP
+ * server. The server listens for incoming connections and processes commands
+ * from a client to control the robot's behavior, such as moving to a goal,
+ * running calibration, or exporting data.
+ */
+
 #include "mcp_server.h"
 #include "common.h"
 #include "lwip/err.h"
@@ -367,6 +377,26 @@ static cJSON* handle_list_tools(void) {
  * @brief Executes a tool based on the request and creates a response JSON object.
  * @return A cJSON object that the caller must delete.
  */
+static int json_to_argv(const cJSON *args_json, char **argv, int max_args) {
+    int argc = 0;
+    if (args_json == NULL) {
+        return 0;
+    }
+    cJSON *arg = args_json->child;
+    while (arg != NULL && argc < max_args) {
+        if (cJSON_IsString(arg)) {
+            argv[argc++] = arg->valuestring;
+        } else if (cJSON_IsNumber(arg)) {
+            // Convert number to string
+            char buffer[32];
+            snprintf(buffer, sizeof(buffer), "%f", arg->valuedouble);
+            argv[argc++] = strdup(buffer);
+        }
+        arg = arg->next;
+    }
+    return argc;
+}
+
 static cJSON* handle_call_tool(const cJSON *request_json) {
     cJSON *response_json = cJSON_CreateObject();
     cJSON *result_json = NULL;
@@ -381,135 +411,49 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
     char *tool_name = tool_name_json->valuestring;
 
     // --- Tool Dispatcher ---
-    if (strcmp(tool_name, "set_pos") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        const cJSON *pos_json = cJSON_GetObjectItem(args_json, "pos");
-        if (cJSON_IsNumber(id_json) && cJSON_IsNumber(pos_json)) {
-            feetech_write_word((uint8_t)id_json->valueint, REG_GOAL_POSITION, (uint16_t)pos_json->valueint);
-            result_json = cJSON_CreateString("OK");
-        }
-    } else if (strcmp(tool_name, "get_pos") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        if (cJSON_IsNumber(id_json)) {
-            uint16_t current_pos = 0;
-            if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_POSITION, &current_pos, 100) == ESP_OK) {
-                result_json = cJSON_CreateNumber(current_pos);
-            }
-        }
-    } else if (strcmp(tool_name, "babble_start") == 0) {
-        g_learning_loop_active = true;
-        result_json = cJSON_CreateString("Learning loop started.");
-    } else if (strcmp(tool_name, "babble_stop") == 0) {
-        g_learning_loop_active = false;
-        result_json = cJSON_CreateString("Learning loop stopped.");
-    } else if (strcmp(tool_name, "set_torque") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        const cJSON *torque_json = cJSON_GetObjectItem(args_json, "torque");
-        if (cJSON_IsNumber(id_json) && cJSON_IsBool(torque_json)) {
-            feetech_write_byte((uint8_t)id_json->valueint, REG_TORQUE_ENABLE, cJSON_IsTrue(torque_json) ? 1 : 0);
-            result_json = cJSON_CreateString("OK");
-        }
-    } else if (strcmp(tool_name, "set_acceleration") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        const cJSON *accel_json = cJSON_GetObjectItem(args_json, "accel");
-        if (cJSON_IsNumber(id_json) && cJSON_IsNumber(accel_json)) {
-            feetech_write_byte((uint8_t)id_json->valueint, REG_ACCELERATION, (uint8_t)accel_json->valueint);
-            result_json = cJSON_CreateString("OK");
-        }
-    } else if (strcmp(tool_name, "get_status") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        if (cJSON_IsNumber(id_json)) {
-            uint8_t moving = 0;
-            uint16_t pos = 0, load = 0, current = 0, voltage = 0;
-            feetech_read_byte((uint8_t)id_json->valueint, REG_MOVING, &moving, 100);
-            feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_POSITION, &pos, 100);
-            feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_LOAD, &load, 100);
-            feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100);
-            feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_VOLTAGE, &voltage, 100);
+    char* argv[10];
+    int argc = json_to_argv(args_json, argv, 10);
 
-            cJSON *status_obj = cJSON_CreateObject();
-            cJSON_AddBoolToObject(status_obj, "moving", moving);
-            cJSON_AddNumberToObject(status_obj, "pos", pos);
-            cJSON_AddNumberToObject(status_obj, "load", load);
-            cJSON_AddNumberToObject(status_obj, "current", current);
-            cJSON_AddNumberToObject(status_obj, "voltage", voltage);
-            result_json = status_obj;
-        }
-    } else if (strcmp(tool_name, "get_current") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        if (cJSON_IsNumber(id_json)) {
-            uint16_t current = 0;
-            if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100) == ESP_OK) {
-                result_json = cJSON_CreateNumber(current);
-            }
-        }
-    } else if (strcmp(tool_name, "get_power") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        if (cJSON_IsNumber(id_json)) {
-            uint16_t current = 0;
-            uint16_t voltage = 0;
-            if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100) == ESP_OK &&
-               feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_VOLTAGE, &voltage, 100) == ESP_OK) {
-                // Power (mW) = Voltage (mV) * Current (mA) / 1000
-                // The servo returns voltage in mV and current in mA.
-                result_json = cJSON_CreateNumber((float)(current * voltage) / 1000.0);
-            }
-        }
-    } else if (strcmp(tool_name, "get_torque") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        if (cJSON_IsNumber(id_json)) {
-            uint16_t torque = 0;
-            if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_LOAD, &torque, 100) == ESP_OK) {
-                result_json = cJSON_CreateNumber(torque);
-            }
-        }
-    } else if (strcmp(tool_name, "calibrate") == 0) {
-        // Calibration logic would go here. This is highly dependent on the specific
-        // calibration routine required. For now, we'll just return "OK".
+    if (strcmp(tool_name, "set_pos") == 0) {
+        cmd_set_pos(argc, argv);
         result_json = cJSON_CreateString("OK");
+    } else if (strcmp(tool_name, "get_pos") == 0) {
+        cmd_get_pos(argc, argv);
+        // This command prints the result to the console, so we don't have a return value here.
+        result_json = cJSON_CreateString("OK");
+    } else if (strcmp(tool_name, "babble_start") == 0) {
+        cmd_babble_start(argc, argv);
+        result_json = cJSON_CreateString("OK");
+    } else if (strcmp(tool_name, "babble_stop") == 0) {
+        cmd_babble_stop(argc, argv);
+        result_json = cJSON_CreateString("OK");
+    } else if (strcmp(tool_name, "set_torque") == 0) {
+        // Not implemented as a console command
+    } else if (strcmp(tool_name, "set_acceleration") == 0) {
+        cmd_set_servo_acceleration(argc, argv);
+        result_json = cJSON_CreateString("OK");
+    } else if (strcmp(tool_name, "get_status") == 0) {
+        // Not implemented as a console command
+    } else if (strcmp(tool_name, "get_current") == 0) {
+        cmd_get_current(argc, argv);
+        result_json = cJSON_CreateString("OK");
+    } else if (strcmp(tool_name, "get_power") == 0) {
+        // Not implemented as a console command
+    } else if (strcmp(tool_name, "get_torque") == 0) {
+        // Not implemented as a console command
+    } else if (strcmp(tool_name, "calibrate") == 0) {
+        // Not implemented as a console command
     } else if (strcmp(tool_name, "export_data") == 0) {
-        // This is a placeholder for the data to be exported.
-        // In a real application, this would be populated with actual data.
-        const char *data = "BINARY:This is the data to be exported.";
-        result_json = cJSON_CreateString(data);
+        // Not implemented as a console command
     } else if (strcmp(tool_name, "import_nn") == 0) {
-        const cJSON *data_json = cJSON_GetObjectItem(args_json, "data");
-        if (cJSON_IsString(data_json) && data_json->valuestring) {
-            size_t output_len;
-            unsigned char *decoded_data = malloc(strlen(data_json->valuestring));
-            if (mbedtls_base64_decode(decoded_data, strlen(data_json->valuestring), &output_len, (const unsigned char*)data_json->valuestring, strlen(data_json->valuestring)) == 0) {
-                if (set_raw_network_blob(decoded_data, output_len) == ESP_OK) {
-                    result_json = cJSON_CreateString("OK");
-                }
-            }
-            free(decoded_data);
-        }
+        // Not implemented as a console command
     } else if (strcmp(tool_name, "export_nn") == 0) {
-        uint8_t *nn_blob;
-        size_t nn_size;
-        if (get_raw_network_blob(&nn_blob, &nn_size) == ESP_OK) {
-            size_t output_len;
-            unsigned char *encoded_data = malloc(nn_size * 4 / 3 + 4);
-            if (mbedtls_base64_encode(encoded_data, nn_size * 4 / 3 + 4, &output_len, nn_blob, nn_size) == 0) {
-                result_json = cJSON_CreateString((const char*)encoded_data);
-            }
-            free(encoded_data);
-            free(nn_blob);
-        }
+        cmd_export_network(argc, argv);
+        result_json = cJSON_CreateString("OK");
     } else if (strcmp(tool_name, "import_nn_json") == 0) {
-        const cJSON *nn_json = cJSON_GetObjectItem(args_json, "nn_data");
-        if (nn_json) {
-            if (save_network_from_json(nn_json) == ESP_OK) {
-                result_json = cJSON_CreateString("OK");
-            }
-        }
+        // Not implemented as a console command
     } else if (strcmp(tool_name, "calibrate_servo") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        if (cJSON_IsNumber(id_json)) {
-            start_calibration_task((uint8_t)id_json->valueint);
-            // The response will be sent by the calibration task
-            return NULL;
-        }
+        // Not implemented as a console command
     }
 
     // --- Finalize Response ---

@@ -1,3 +1,12 @@
+/**
+ * @file bma400_driver.c
+ * @brief I2C driver for the BMA400 accelerometer.
+ *
+ * This file provides the functions for initializing the BMA400 sensor and
+ * reading raw acceleration data. It handles the I2C communication and the
+ * conversion of raw sensor values into G-forces.
+ */
+
 #include "bma400_driver.h"
 #include "common.h"
 

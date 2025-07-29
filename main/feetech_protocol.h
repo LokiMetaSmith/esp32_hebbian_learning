@@ -1,3 +1,12 @@
+/**
+ * @file feetech_protocol.h
+ * @brief Header file for the FeeTech servo communication protocol.
+ *
+ * This file defines the register addresses, instruction codes, and function
+ * prototypes for interacting with FeeTech servos. It provides a low-level
+ * interface for sending commands and reading data from the servos.
+ */
+
 #ifndef FEETECH_PROTOCOL_H
 #define FEETECH_PROTOCOL_H
 

@@ -1,3 +1,11 @@
+/**
+ * @file nvs_storage.h
+ * @brief Header file for Non-Volatile Storage (NVS) operations.
+ *
+ * This file declares the functions for initializing NVS and for saving/loading
+ * the neural network, servo correction maps, and state tokens to and from NVS.
+ */
+
 #ifndef NVS_STORAGE_H
 #define NVS_STORAGE_H
 

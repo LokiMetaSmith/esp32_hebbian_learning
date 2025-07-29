@@ -1,3 +1,12 @@
+/**
+ * @file common.h
+ * @brief Common header file for shared includes and definitions.
+ *
+ * This file includes a set of standard libraries and project-specific headers
+ * that are used across multiple files. It helps to reduce redundant include
+ * statements and provides a central place for common definitions.
+ */
+
 #ifndef COMMON_H
 #define COMMON_H
 

@@ -1,3 +1,13 @@
+/**
+ * @file nvs_storage.c
+ * @brief Implementation of Non-Volatile Storage (NVS) operations.
+ *
+ * This file provides the functions for saving and loading critical data,
+ * such as the neural network weights and servo calibration maps, to the
+ * ESP32's non-volatile flash memory. This allows the robot's learned
+ * state and configuration to persist across reboots.
+ */
+
 #include "nvs_storage.h"
 #include "common.h"
 

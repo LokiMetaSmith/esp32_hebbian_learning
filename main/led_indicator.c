@@ -1,3 +1,13 @@
+/**
+ * @file led_indicator.c
+ * @brief Implementation of the LED indicator control.
+ *
+ * This file provides the functions for controlling the onboard LED to indicate
+ * the robot's status. It uses the RMT peripheral to drive a WS2812 RGB LED,
+ * allowing for various color-based feedback, such as a startup sequence and
+ * a fitness-based color gradient.
+ */
+
 #include "led_indicator.h"
 #include "common.h"
 #include "led_strip.h"

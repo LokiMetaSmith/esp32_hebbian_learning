@@ -1,3 +1,11 @@
+/**
+ * @file bma400_driver.h
+ * @brief Header file for the BMA400 accelerometer driver.
+ *
+ * This file declares the functions for initializing the BMA400 sensor
+ * and reading acceleration data from it via the I2C bus.
+ */
+
 #ifndef BMA400_DRIVER_H
 #define BMA400_DRIVER_H
 
