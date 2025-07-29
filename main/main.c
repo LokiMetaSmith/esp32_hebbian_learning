@@ -38,6 +38,9 @@ PredictionLayer* g_pl;
 // Global array to hold the learned state centroids
 float g_state_token_centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM];
 
+// Global array to hold the learned state centroids
+float g_state_token_centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM];
+
 // --- Global Correction Maps ---
 ServoCorrectionMap g_correction_maps[NUM_SERVOS];
 
@@ -236,7 +239,7 @@ void bus_manager_task(void *pvParameters) {
     for (;;) {
         // Wait indefinitely for a request to arrive
         if (xQueueReceive(g_bus_request_queue, &request, portMAX_DELAY) == pdTRUE) {
-            
+
             // Default response values
             response.status = ESP_FAIL;
             response.value = 0;
@@ -250,9 +253,9 @@ void bus_manager_task(void *pvParameters) {
                 case CMD_WRITE_WORD:
                     // Write functions are "fire and forget", so we don't get a status back.
                     feetech_write_word(request.servo_id, request.reg_address, request.value);
-                    response.status = ESP_OK; 
+                    response.status = ESP_OK;
                     break;
-                
+
                 case CMD_WRITE_BYTE:
                     feetech_write_byte(request.servo_id, request.reg_address, (uint8_t)request.value);
                     response.status = ESP_OK;
@@ -310,7 +313,7 @@ void read_sensor_state(float* sensor_data) {
 
         sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
         sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
-        
+
         // 3. Request Current
         request.reg_address = REG_PRESENT_CURRENT;
         xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
@@ -323,10 +326,10 @@ void read_sensor_state(float* sensor_data) {
             sensor_data[current_sensor_index++] = 0.0f;
         }
     }
-    
+
     // --- NEW: Clean up the response queue ---
     vQueueDelete(response_queue);
-    
+
     if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
         if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
             ESP_LOGI(TAG, "Total servo current this cycle: %.3f A", total_current_A_cycle);
@@ -630,7 +633,7 @@ static int cmd_start_map_cal(int argc, char **argv) {
     request.reg_address = REG_TORQUE_ENABLE;
     request.value = 0; // Disable torque
     xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
-    
+
     printf("1. Manually move servo %d to its MINIMUM position, then press ENTER.\n", servo_id);
     while(get_char_with_timeout(100) != '\n'); // Wait for Enter
 
@@ -670,7 +673,7 @@ static int cmd_start_map_cal(int argc, char **argv) {
         float fraction = (float)i / (CORRECTION_MAP_POINTS - 1);
         uint16_t commanded_pos = min_pos + (uint16_t)(fraction * (max_pos - min_pos));
         map->points[i].commanded_pos = commanded_pos;
-        
+
         request.command = CMD_WRITE_WORD;
         request.reg_address = REG_GOAL_POSITION;
         request.value = commanded_pos;
@@ -678,7 +681,7 @@ static int cmd_start_map_cal(int argc, char **argv) {
         xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
 
         vTaskDelay(pdMS_TO_TICKS(400)); // Wait for move to complete
-        
+
         request.command = CMD_READ_WORD;
         request.reg_address = REG_PRESENT_POSITION;
         request.response_queue = response_queue;
@@ -735,7 +738,7 @@ static int cmd_set_torque_limit(int argc, char **argv) {
 
     // Read back to verify
     vTaskDelay(pdMS_TO_TICKS(20)); // Give a moment for the write to be processed before reading back
-    
+
     QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
     if (response_queue == NULL) {
         printf("Error: Failed to create response queue.\n");
@@ -745,7 +748,7 @@ static int cmd_set_torque_limit(int argc, char **argv) {
     request.command = CMD_READ_WORD;
     request.response_queue = response_queue;
     xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
-    
+
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
         if (response.status == ESP_OK) {
@@ -1252,6 +1255,89 @@ static int cmd_import_states(int argc, char **argv) {
     return 0;
 }
 
+static int cmd_export_states(int argc, char **argv) {
+    int num_samples = 2000; // Default
+    // TODO: Add argument parsing for num_samples
+    printf("--- BEGIN STATE EXPORT ---\n");
+    float sensor_data[PRED_NEURONS]; // Use PRED_NEURONS as it's the size of the state vector
+
+    for (int i = 0; i < num_samples; i++) {
+        perform_random_walk(NULL); // Perform a random walk step
+        vTaskDelay(pdMS_TO_TICKS(100)); // Wait a moment for the move to settle
+        read_sensor_state(sensor_data);
+
+        for (int j = 0; j < PRED_NEURONS; j++) {
+            printf("%f,", sensor_data[j]);
+        }
+        printf("\n");
+        vTaskDelay(pdMS_TO_TICKS(10)); // Yield
+    }
+    printf("--- END STATE EXPORT ---\n");
+    return 0;
+}
+
+static int cmd_import_states(int argc, char **argv) {
+    // This command will be complex, so we'll need to increase the console buffer size
+    // in menuconfig to handle the large JSON string.
+    if (argc != 2) {
+        printf("Usage: import_states <json_string>\n");
+        return 1;
+    }
+
+    cJSON *root = cJSON_Parse(argv[1]);
+    if (root == NULL) {
+        printf("Error: Failed to parse JSON.\n");
+        return 1;
+    }
+
+    cJSON *centroids_json = cJSON_GetObjectItem(root, "centroids");
+    if (!cJSON_IsArray(centroids_json)) {
+        printf("Error: JSON must have a 'centroids' array.\n");
+        cJSON_Delete(root);
+        return 1;
+    }
+
+    int num_centroids = cJSON_GetArraySize(centroids_json);
+    if (num_centroids != NUM_STATE_TOKENS) {
+        printf("Error: Expected %d centroids, but got %d.\n", NUM_STATE_TOKENS, num_centroids);
+        cJSON_Delete(root);
+        return 1;
+    }
+
+    for (int i = 0; i < num_centroids; i++) {
+        cJSON *centroid_json = cJSON_GetArrayItem(centroids_json, i);
+        if (!cJSON_IsArray(centroid_json)) {
+            printf("Error: Centroid %d is not an array.\n", i);
+            cJSON_Delete(root);
+            return 1;
+        }
+
+        int num_dims = cJSON_GetArraySize(centroid_json);
+        if (num_dims != STATE_VECTOR_DIM) {
+            printf("Error: Centroid %d has %d dimensions, but expected %d.\n", i, num_dims, STATE_VECTOR_DIM);
+            cJSON_Delete(root);
+            return 1;
+        }
+
+        for (int j = 0; j < num_dims; j++) {
+            cJSON *dim_json = cJSON_GetArrayItem(centroid_json, j);
+            if (!cJSON_IsNumber(dim_json)) {
+                printf("Error: Dimension %d of centroid %d is not a number.\n", j, i);
+                cJSON_Delete(root);
+                return 1;
+            }
+            g_state_token_centroids[i][j] = (float)dim_json->valuedouble;
+        }
+    }
+
+    printf("Successfully imported %d state tokens.\n", num_centroids);
+    cJSON_Delete(root);
+
+    // TODO: Add NVS saving for the state tokens
+
+    return 0;
+}
+
 static int cmd_get_stats(int argc, char **argv) {
     char *stats_buffer = malloc(2048);
     if (stats_buffer) {
@@ -1498,6 +1584,12 @@ void initialize_console(void) {
 
     const esp_console_cmd_t stats_cmd = { .command = "get_stats", .help = "Get task runtime stats", .func = &cmd_get_stats };
     ESP_ERROR_CHECK(esp_console_cmd_register(&stats_cmd));
+
+    const esp_console_cmd_t export_states_cmd = { .command = "export_states", .help = "Export sensor states to the console", .func = &cmd_export_states };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&export_states_cmd));
+
+    const esp_console_cmd_t import_states_cmd = { .command = "import_states", .help = "Import state tokens from JSON", .func = &cmd_import_states };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&import_states_cmd));
 
     const esp_console_cmd_t export_states_cmd = { .command = "export_states", .help = "Export sensor states to the console", .func = &cmd_export_states };
     ESP_ERROR_CHECK(esp_console_cmd_register(&export_states_cmd));
