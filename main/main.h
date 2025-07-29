@@ -41,10 +41,16 @@ typedef struct {
 #define OUTPUT_NEURONS NUM_ACTION_PARAMS
 
 // Input to the network: current sensor state PLUS the intended action vector (positions & accelerations).
-#define INPUT_NEURONS (NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS) + NUM_ACTION_PARAMS)
+#define INPUT_NEURONS (STATE_VECTOR_DIM * 2)
 #define HIDDEN_NEURONS 16
 // Prediction layer predicts the next sensor state only (does not predict actions themselves)
 #define PRED_NEURONS (NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS))
+
+#define STATE_VECTOR_DIM PRED_NEURONS // A state is defined by the predictable sensor values
+#define NUM_STATE_TOKENS 16          // Must match the Python script
+
+// Global array to hold the learned state centroids
+extern float g_state_token_centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM];
 
 // --- Correction Map Data Structures ---
 #define CORRECTION_MAP_POINTS 17 // Number of points for calibration map (0% to 100% in 6.25% steps)
