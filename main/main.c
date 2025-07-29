@@ -38,9 +38,6 @@ PredictionLayer* g_pl;
 // Global array to hold the learned state centroids
 float g_state_token_centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM];
 
-// Global array to hold the learned state centroids
-float g_state_token_centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM];
-
 // --- Global Correction Maps ---
 ServoCorrectionMap g_correction_maps[NUM_SERVOS];
 
@@ -502,25 +499,6 @@ void perform_random_walk(float* action_output_vector) {
 
 
 // --- TASKS & MAIN ---
-
-// In main.c, a helper function to find the closest token
-int get_state_token(const float* state_vector) {
-    float min_dist = -1.0f;
-    int best_token = 0;
-    for (int i = 0; i < NUM_STATE_TOKENS; i++) {
-        float dist = 0;
-        // Calculate squared Euclidean distance
-        for (int j = 0; j < STATE_VECTOR_DIM; j++) {
-            float diff = state_vector[j] - g_state_token_centroids[i][j];
-            dist += diff * diff;
-        }
-        if (min_dist < 0 || dist < min_dist) {
-            min_dist = dist;
-            best_token = i;
-        }
-    }
-    return best_token;
-}
 
 // Task for standalone random walk
 void random_walk_task_fn(void *pvParameters) {
@@ -1276,6 +1254,7 @@ static int cmd_export_states(int argc, char **argv) {
     return 0;
 }
 
+
 static int cmd_import_states(int argc, char **argv) {
     // This command will be complex, so we'll need to increase the console buffer size
     // in menuconfig to handle the large JSON string.
@@ -1590,9 +1569,6 @@ void initialize_console(void) {
 
     const esp_console_cmd_t import_states_cmd = { .command = "import_states", .help = "Import state tokens from JSON", .func = &cmd_import_states };
     ESP_ERROR_CHECK(esp_console_cmd_register(&import_states_cmd));
-
-    const esp_console_cmd_t export_states_cmd = { .command = "export_states", .help = "Export sensor states to the console", .func = &cmd_export_states };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&export_states_cmd));
 
     const esp_console_cmd_t import_states_cmd = { .command = "import_states", .help = "Import state tokens from JSON", .func = &cmd_import_states };
     ESP_ERROR_CHECK(esp_console_cmd_register(&import_states_cmd));
