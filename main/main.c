@@ -1238,7 +1238,7 @@ static int cmd_import_states(int argc, char **argv) {
     printf("Imported and calculated embeddings for %d tokens.\n", token_index);
 
     // 4. Save both arrays to NVS for persistence
-    // ... (call to a new save_state_tokens_to_nvs() function) ...
+    save_state_tokens_to_nvs(g_state_token_centroids, g_state_token_embeddings);
     return 0;
 }
 
@@ -1665,6 +1665,12 @@ void app_main(void) {
         }
     } else {
         ESP_LOGI(TAG, "Correction maps loaded successfully from NVS.");
+    }
+
+    if (load_state_tokens_from_nvs(g_state_token_centroids, g_state_token_embeddings) != ESP_OK) {
+        ESP_LOGW(TAG, "No state tokens found in NVS. Please run `import_states` to generate them.");
+    } else {
+        ESP_LOGI(TAG, "State tokens loaded successfully from NVS.");
     }
     initialize_robot_arm();
     // Initialize smoothed goal positions to the current actual positions
