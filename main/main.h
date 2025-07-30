@@ -13,7 +13,7 @@
 #include "common.h"
 
 // --- Application Configuration ---
-#define NUM_ARMS 2
+#define NUM_ARMS 3
 #define NUM_SERVOS 6
 
 // --- Bus Manager Data Structures ---
@@ -27,6 +27,7 @@ typedef enum {
 
 /** @brief Structure for a request message sent to the bus manager task. */
 typedef struct {
+    uint8_t arm_id;                 /**< The ID of the arm to command. */
     BusCommand_t command;           /**< The type of command to execute. */
     uint8_t servo_id;               /**< Target servo ID. */
     uint8_t reg_address;            /**< Target register address. */
@@ -67,6 +68,8 @@ typedef struct {
 // Global array to hold the learned state centroids
 extern float g_state_token_centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM];
 extern float g_state_token_embeddings[NUM_STATE_TOKENS][HIDDEN_NEURONS];
+
+extern QueueHandle_t g_bus_request_queues[NUM_ARMS];
 
 // --- Correction Map Data Structures ---
 /** @brief Number of points in the servo position correction map. */

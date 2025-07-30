@@ -403,6 +403,7 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
 
     const cJSON *tool_name_json = cJSON_GetObjectItem(request_json, "tool_name");
     const cJSON *args_json = cJSON_GetObjectItem(request_json, "arguments");
+    const cJSON *arm_id_json = cJSON_GetObjectItem(request_json, "arm_id");
 
     if (!cJSON_IsString(tool_name_json) || !tool_name_json->valuestring) {
         cJSON_AddStringToObject(response_json, "error", "Missing or invalid 'tool_name'.");
@@ -410,9 +411,24 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
     }
     char *tool_name = tool_name_json->valuestring;
 
+    int arm_id = 0;
+    if (cJSON_IsNumber(arm_id_json)) {
+        arm_id = arm_id_json->valueint;
+    }
+
     // --- Tool Dispatcher ---
-    char* argv[10];
+    char* argv[11]; // Increased size for arm_id
     int argc = json_to_argv(args_json, argv, 10);
+
+    // Prepend arm_id to argv
+    char arm_id_str[4];
+    snprintf(arm_id_str, sizeof(arm_id_str), "%d", arm_id);
+    for (int i = argc; i > 0; i--) {
+        argv[i] = argv[i-1];
+    }
+    argv[0] = arm_id_str;
+    argc++;
+
 
     if (strcmp(tool_name, "set_pos") == 0) {
         cmd_set_pos(argc, argv);

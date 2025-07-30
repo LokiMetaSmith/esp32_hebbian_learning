@@ -93,8 +93,8 @@ static uint16_t g_trajectory_step_size = 10; // Max change per trajectory step
 
 // --- Mutex for protecting console output ---
 SemaphoreHandle_t g_console_mutex;
-// --- Queue for servo bus requests ---
-QueueHandle_t g_bus_request_queue;
+// --- Queues for servo bus requests ---
+QueueHandle_t g_bus_request_queues[NUM_ARMS];
 
 // --- Forward Declarations ---
 void learning_loop_task(void *pvParameters);
@@ -146,14 +146,15 @@ void move_servo_smoothly(uint8_t servo_id, uint16_t goal_position) {
  * This serializes all reads and writes to prevent collisions.
  */
 void bus_manager_task(void *pvParameters) {
+    int arm_id = (int)pvParameters;
     BusRequest_t request;
     BusResponse_t response;
 
-    ESP_LOGI(TAG, "Bus Manager Task started.");
+    ESP_LOGI(TAG, "Bus Manager Task for arm %d started.", arm_id);
 
     for (;;) {
         // Wait indefinitely for a request to arrive
-        if (xQueueReceive(g_bus_request_queue, &request, portMAX_DELAY) == pdTRUE) {
+        if (xQueueReceive(g_bus_request_queues[arm_id], &request, portMAX_DELAY) == pdTRUE) {
 
             // Default response values
             response.status = ESP_FAIL;
@@ -186,7 +187,7 @@ void bus_manager_task(void *pvParameters) {
 }
 
 
-void read_sensor_state(float* sensor_data) {
+void read_sensor_state(float* sensor_data, int arm_id) {
     float ax, ay, az;
     if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
         sensor_data[0] = ax; sensor_data[1] = ay; sensor_data[2] = az;
@@ -214,14 +215,14 @@ void read_sensor_state(float* sensor_data) {
         request.command = CMD_READ_WORD;
         request.servo_id = servo_ids[i];
         request.reg_address = REG_PRESENT_POSITION;
-        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
         if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
             servo_pos = response.value;
         }
 
         // 2. Request Load
         request.reg_address = REG_PRESENT_LOAD;
-        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
         if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
             servo_load = response.value;
         }
@@ -231,7 +232,7 @@ void read_sensor_state(float* sensor_data) {
 
         // 3. Request Current
         request.reg_address = REG_PRESENT_CURRENT;
-        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
         if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
             servo_raw_current = response.value;
             float current_A = (float)servo_raw_current * 0.0065f;
@@ -247,15 +248,15 @@ void read_sensor_state(float* sensor_data) {
 
     if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
         if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            ESP_LOGI(TAG, "Total servo current this cycle: %.3f A", total_current_A_cycle);
+            ESP_LOGI(TAG, "Total servo current this cycle on arm %d: %.3f A", arm_id, total_current_A_cycle);
             g_last_logged_total_current_A = total_current_A_cycle;
             xSemaphoreGive(g_console_mutex);
         }
     }
 }
 
-void initialize_robot_arm() {
-    ESP_LOGI(TAG, "Initializing servos: Setting acceleration and enabling torque.");
+void initialize_robot_arm(int arm_id) {
+    ESP_LOGI(TAG, "Initializing servos on arm %d: Setting acceleration and enabling torque.", arm_id);
     BusRequest_t request;
     request.response_queue = NULL; // No response needed for writes
 
@@ -265,19 +266,19 @@ void initialize_robot_arm() {
         request.servo_id = servo_ids[i];
         request.reg_address = REG_ACCELERATION;
         request.value = g_servo_acceleration;
-        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
 
         // Enable torque
         request.command = CMD_WRITE_BYTE;
         request.servo_id = servo_ids[i];
         request.reg_address = REG_TORQUE_ENABLE;
         request.value = 1;
-        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
     }
-    ESP_LOGI(TAG, "Servos initialized with acceleration %d and torque enabled.", g_servo_acceleration);
+    ESP_LOGI(TAG, "Servos on arm %d initialized with acceleration %d and torque enabled.", arm_id, g_servo_acceleration);
 }
 
-void execute_on_robot_arm(const float* action_vector) {
+void execute_on_robot_arm(const float* action_vector, int arm_id) {
     BusRequest_t request;
     request.response_queue = NULL; // No response needed for writes
 
@@ -293,7 +294,7 @@ void execute_on_robot_arm(const float* action_vector) {
         request.servo_id = servo_ids[i];
         request.reg_address = REG_ACCELERATION;
         request.value = commanded_accel;
-        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
 
         // --- Decode and Clamp Torque ---
         float norm_torque = action_vector[NUM_SERVOS * 2 + i]; // Normalized torque from NN [-1, 1]
@@ -305,7 +306,7 @@ void execute_on_robot_arm(const float* action_vector) {
         request.servo_id = servo_ids[i];
         request.reg_address = REG_TORQUE_LIMIT;
         request.value = commanded_torque;
-        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
 
         // --- Decode and set position ---
         float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
@@ -316,7 +317,7 @@ void execute_on_robot_arm(const float* action_vector) {
         request.servo_id = servo_ids[i];
         request.reg_address = REG_GOAL_POSITION;
         request.value = corrected_position;
-        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
     }
 }
 
@@ -399,7 +400,7 @@ void update_weights_hebbian(const float* input, float correctness, HiddenLayer* 
 // --- RANDOM WALK FUNCTION ---
 // action_output_vector should point to the segment of combined_input where actions are stored.
 // If action_output_vector is NULL, actions are not stored (used for standalone random walk).
-void perform_random_walk(float* action_output_vector) {
+void perform_random_walk(float* action_output_vector, int arm_id) {
     int64_t current_time_us = esp_timer_get_time();
     if ((current_time_us - g_last_random_walk_time_us) < (g_random_walk_interval_ms * 1000LL)) {
         // If not time yet, do nothing.
@@ -409,7 +410,7 @@ void perform_random_walk(float* action_output_vector) {
         return;
     }
 
-    // ESP_LOGI(TAG, "Performing random walk step...");
+    // ESP_LOGI(TAG, "Performing random walk step for arm %d...", arm_id);
     // This function is not yet refactored to use the bus manager,
     // so it is temporarily disabled.
     g_last_random_walk_time_us = current_time_us;
@@ -458,18 +459,20 @@ void move_towards_goal_embedding(const float* goal_embedding) {
 
 // Task for standalone random walk
 void random_walk_task_fn(void *pvParameters) {
-    ESP_LOGI(TAG, "Random Walk Task started.");
+    int arm_id = (int)pvParameters;
+    ESP_LOGI(TAG, "Random Walk Task for arm %d started.", arm_id);
     while (g_random_walk_active) {
-        perform_random_walk(NULL); // Pass NULL as no action vector needed for learning
+        perform_random_walk(NULL, arm_id); // Pass NULL as no action vector needed for learning
         // The delay is implicitly handled by g_last_random_walk_time_us inside perform_random_walk
         // However, we need a yield here to prevent busy-waiting if interval is short or no move happens
         vTaskDelay(pdMS_TO_TICKS(10)); // Yield for other tasks
     }
-    ESP_LOGI(TAG, "Random Walk Task stopped.");
+    ESP_LOGI(TAG, "Random Walk Task for arm %d stopped.", arm_id);
     vTaskDelete(NULL); // Delete self
 }
 
 void learning_loop_task(void *pvParameters) {
+    int arm_id = 0; // Hardcoded to arm 0 for now
     float* current_state = malloc(sizeof(float) * STATE_VECTOR_DIM);
     float* next_state = malloc(sizeof(float) * STATE_VECTOR_DIM);
     float* nn_input = malloc(sizeof(float) * INPUT_NEURONS);
@@ -477,7 +480,7 @@ void learning_loop_task(void *pvParameters) {
     while(1) {
         if (g_learning_loop_active) {
             // 1. SENSE current state
-            read_sensor_state(current_state);
+            read_sensor_state(current_state, arm_id);
 
             // 2. CHOOSE a goal state token (for now, randomly)
             int goal_token_idx = rand() % NUM_STATE_TOKENS;
@@ -492,13 +495,13 @@ void learning_loop_task(void *pvParameters) {
             // The action is now in g_ol->output_activations
 
             // 5. EXECUTE the predicted action
-            execute_on_robot_arm(g_ol->output_activations);
+            execute_on_robot_arm(g_ol->output_activations, arm_id);
 
             // 6. DELAY to allow the action to have an effect
             vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
 
             // 7. OBSERVE the resulting state
-            read_sensor_state(next_state);
+            read_sensor_state(next_state, arm_id);
 
             // 8. LEARN by calculating correctness
             float dist_before = 0;
@@ -767,7 +770,9 @@ void app_main(void) {
     if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory!"); return; }
 
     g_console_mutex = xSemaphoreCreateMutex();
-    g_bus_request_queue = xQueueCreate(10, sizeof(BusRequest_t));
+    for (int i = 0; i < NUM_ARMS; i++) {
+        g_bus_request_queues[i] = xQueueCreate(10, sizeof(BusRequest_t));
+    }
 
     nvs_storage_initialize();
     feetech_initialize(); 
@@ -800,12 +805,18 @@ void app_main(void) {
     } else {
         ESP_LOGI(TAG, "State tokens loaded successfully from NVS.");
     }
-    initialize_robot_arm();
+    for (int i = 0; i < NUM_ARMS; i++) {
+        initialize_robot_arm(i);
+    }
     // Initialize smoothed goal positions to the current actual positions
     // This part is not yet refactored to use the bus manager, so it is temporarily disabled.
     ESP_LOGI(TAG, "Initial smoothed goals set from current positions.");
 
-    xTaskCreate(bus_manager_task, "bus_manager_task", 4096, NULL, 10, NULL);
+    for (int i = 0; i < NUM_ARMS; i++) {
+        char task_name[32];
+        snprintf(task_name, sizeof(task_name), "bus_manager_task_%d", i);
+        xTaskCreate(bus_manager_task, task_name, 4096, (void*)i, 10, NULL);
+    }
     xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
     xTaskCreate(feetech_slave_task, "feetech_slave_task", 4096, NULL, 5, NULL);
     xTaskCreate(console_task, "console_task", 4096, NULL, 1, NULL);
