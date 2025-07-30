@@ -110,6 +110,14 @@ typedef struct {
     float pred_bias[PRED_NEURONS];               /**< Bias values for the prediction neurons. */
 } PredictionLayer;
 
+// --- Operating Mode ---
+typedef enum {
+    MODE_PASSTHROUGH = 0,
+    MODE_CORRECTION = 1,
+    MODE_SMOOTHING = 2,
+    MODE_HYBRID = 3,
+} OperatingMode;
+
 void start_calibration_task(uint8_t servo_id);
 
 

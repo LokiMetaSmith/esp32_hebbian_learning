@@ -71,12 +71,6 @@ static float g_last_logged_total_current_A = -1.0f;
 static const float CURRENT_LOGGING_THRESHOLD_A = 0.005f;
 
 // --- Operating Mode ---
-typedef enum {
-    MODE_PASSTHROUGH = 0,
-    MODE_CORRECTION = 1,
-    MODE_SMOOTHING = 2,
-    MODE_HYBRID = 3,
-} OperatingMode;
 static OperatingMode g_current_mode = MODE_PASSTHROUGH;
 
 // --- Servo Configuration ---

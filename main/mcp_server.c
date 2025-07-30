@@ -11,6 +11,8 @@
 #include "mcp_server.h"
 #include "common.h"
 #include "mcp_server_commands.h"
+#include "argtable3/argtable3.h"
+#include "cJSON.h"
 #include "lwip/err.h"
 #include "lwip/sockets.h"
 #include "lwip/sys.h"
@@ -48,6 +50,8 @@ extern int64_t g_last_random_walk_time_us;
 extern OperatingMode g_current_mode;
 
 // --- Forward Declarations ---
+void perform_random_walk(float* action_output_vector, int arm_id);
+void read_sensor_state(float* sensor_data, int arm_id);
 static void wifi_init_sta(void);
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 static void mcp_server_task(void *pvParameters);
