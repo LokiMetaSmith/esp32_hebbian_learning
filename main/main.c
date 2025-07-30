@@ -529,7 +529,7 @@ static struct {
     struct arg_end *end;
 } set_mode_args;
 
-static int cmd_set_mode(int argc, char **argv) {
+int cmd_set_mode(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_mode_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_mode_args.end, argv[0]);
@@ -545,7 +545,7 @@ static int cmd_set_mode(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_export_states(int argc, char **argv) {
+int cmd_export_states(int argc, char **argv) {
     int num_samples = 2000; // Default
     // TODO: Add argument parsing for num_samples
     printf("--- BEGIN STATE EXPORT ---\n");
@@ -566,7 +566,7 @@ static int cmd_export_states(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_import_states(int argc, char **argv) {
+int cmd_import_states(int argc, char **argv) {
     // This command will be complex, so we'll need to increase the console buffer size
     // in menuconfig to handle the large JSON string.
     if (argc != 2) {
@@ -636,7 +636,7 @@ static struct {
     struct arg_end *end;
 } rw_set_params_args;
 
-static int cmd_rw_set_params(int argc, char **argv) {
+int cmd_rw_set_params(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&rw_set_params_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, rw_set_params_args.end, argv[0]);
