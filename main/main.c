@@ -24,7 +24,6 @@
 #include "tinyusb.h"
 #include "tusb_cdc_acm.h"
 #include "mcp_server.h"
-#include "mcp_server_commands.h"
 #include "argtable3/argtable3.h"
 #include "cJSON.h"
 #include <string.h>

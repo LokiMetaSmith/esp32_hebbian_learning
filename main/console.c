@@ -17,7 +17,6 @@
 #include "argtable3/argtable3.h"
 #include "feetech_protocol.h"
 #include "nvs_storage.h"
-#include "mcp_server_commands.h"
 #include "bma400_driver.h"
 
 // --- Extern variables from main.c that we need to access ---
@@ -448,7 +447,7 @@ void console_task(void *pvParameters) {
     }
 }
 
-static int cmd_set_accel(int argc, char **argv) {
+int cmd_set_accel(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_accel_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_accel_args.end, argv[0]);
@@ -478,7 +477,7 @@ static int cmd_set_accel(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_save_network(int argc, char **argv) {
+int cmd_save_network(int argc, char **argv) {
     ESP_LOGI(TAG, "Manual save: Saving network to NVS...");
     if (save_network_to_nvs(g_hl, g_ol, g_pl) == ESP_OK) {
         g_network_weights_updated = false;
@@ -496,7 +495,7 @@ static int get_char_with_timeout(uint32_t timeout_ms) {
     return -1;
 }
 
-static int cmd_start_map_cal(int argc, char **argv) {
+int cmd_start_map_cal(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&start_map_cal_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, start_map_cal_args.end, argv[0]);
@@ -601,7 +600,7 @@ static int cmd_start_map_cal(int argc, char **argv) {
  }
 
 // Function for the 'set_tl' command (re-implementation)
-static int cmd_set_torque_limit(int argc, char **argv) {
+int cmd_set_torque_limit(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_torque_limit_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_torque_limit_args.end, argv[0]);
@@ -666,7 +665,7 @@ static int cmd_set_torque_limit(int argc, char **argv) {
 }
 
 // Function for 'set_sa' command
-static int cmd_set_servo_acceleration(int argc, char **argv) {
+int cmd_set_servo_acceleration(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_servo_acceleration_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_servo_acceleration_args.end, argv[0]);
@@ -702,7 +701,7 @@ static int cmd_set_servo_acceleration(int argc, char **argv) {
 }
 
 // Function for 'get_sa' command
-static int cmd_get_servo_acceleration(int argc, char **argv) {
+int cmd_get_servo_acceleration(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&get_servo_acceleration_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, get_servo_acceleration_args.end, argv[0]);
@@ -750,7 +749,7 @@ static int cmd_get_servo_acceleration(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_get_accel_raw(int argc, char **argv) {
+int cmd_get_accel_raw(int argc, char **argv) {
     float ax, ay, az;
     if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
         printf("Raw Accelerometer: X=%.4f, Y=%.4f, Z=%.4f (G)\n", ax, ay, az);
@@ -761,7 +760,7 @@ static int cmd_get_accel_raw(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_reset_network(int argc, char **argv) {
+int cmd_reset_network(int argc, char **argv) {
     /* FORCED RE-INIT || load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK */
     initialize_network(g_hl, g_ol, g_pl);
     g_best_fitness_achieved = 0.0f; // Also reset fitness
@@ -770,7 +769,7 @@ static int cmd_reset_network(int argc, char **argv) {
 	return 0;
 }
 
-static int cmd_export_network(int argc, char **argv) {
+int cmd_export_network(int argc, char **argv) {
     printf("\n--- BEGIN NN EXPORT ---\n");
     printf("{\"hidden_layer\":{\"bias\":[");
     for(int i=0; i<HIDDEN_NEURONS; i++) {
@@ -827,7 +826,7 @@ static int cmd_export_network(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_set_pos(int argc, char **argv) {
+int cmd_set_pos(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_pos_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_pos_args.end, argv[0]);
@@ -861,7 +860,7 @@ static int cmd_set_pos(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_get_pos(int argc, char **argv) {
+int cmd_get_pos(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&get_pos_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, get_pos_args.end, argv[0]);
@@ -907,7 +906,7 @@ static int cmd_get_pos(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_get_current(int argc, char **argv) {
+int cmd_get_current(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&get_current_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, get_current_args.end, argv[0]);
@@ -954,7 +953,7 @@ static int cmd_get_current(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_babble_start(int argc, char **argv) {
+int cmd_babble_start(int argc, char **argv) {
     if (!g_learning_loop_active) {
         g_learning_loop_active = true;
         ESP_LOGI(TAG, "Learning loop (motor babble) started.");
@@ -964,7 +963,7 @@ static int cmd_babble_start(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_babble_stop(int argc, char **argv) {
+int cmd_babble_stop(int argc, char **argv) {
     if (g_learning_loop_active) {
         g_learning_loop_active = false;
         ESP_LOGI(TAG, "Learning loop (motor babble) stopped.");
@@ -974,7 +973,7 @@ static int cmd_babble_stop(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_rw_start(int argc, char **argv) {
+int cmd_rw_start(int argc, char **argv) {
     if (!g_random_walk_active) {
         int arm_id = 0;
         if (argc > 0) {
@@ -1007,7 +1006,7 @@ static int cmd_rw_start(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_rw_stop(int argc, char **argv) {
+int cmd_rw_stop(int argc, char **argv) {
     if (g_random_walk_active) {
         g_random_walk_active = false;
         // The task will see the flag and delete itself.
@@ -1020,7 +1019,7 @@ static int cmd_rw_stop(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_set_max_torque(int argc, char **argv) {
+int cmd_set_max_torque(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_max_torque_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_max_torque_args.end, argv[0]);
@@ -1036,7 +1035,7 @@ static int cmd_set_max_torque(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_set_traj_step(int argc, char **argv) {
+int cmd_set_traj_step(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_traj_step_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_traj_step_args.end, argv[0]);
@@ -1052,7 +1051,7 @@ static int cmd_set_traj_step(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_set_ema_alpha(int argc, char **argv) {
+int cmd_set_ema_alpha(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_ema_alpha_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_ema_alpha_args.end, argv[0]);
@@ -1068,7 +1067,7 @@ static int cmd_set_ema_alpha(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_set_max_accel(int argc, char **argv) {
+int cmd_set_max_accel(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_max_accel_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_max_accel_args.end, argv[0]);

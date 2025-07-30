@@ -10,7 +10,6 @@
 
 #include "mcp_server.h"
 #include "common.h"
-#include "mcp_server_commands.h"
 #include "argtable3/argtable3.h"
 #include "cJSON.h"
 #include "lwip/err.h"
