@@ -24,6 +24,11 @@
 #include "tinyusb.h"
 #include "tusb_cdc_acm.h"
 #include "mcp_server.h"
+#include "mcp_server_commands.h"
+#include "argtable3/argtable3.h"
+#include "cJSON.h"
+#include <string.h>
+
 
 // --- Application Configuration ---
 
@@ -51,14 +56,11 @@ ServoCorrectionMap g_correction_maps[NUM_SERVOS];
 
 // --- Global variables for smart network saving ---
 static bool g_network_weights_updated = false;
-static float g_best_fitness_achieved = 0.0f;
-static const float MIN_FITNESS_IMPROVEMENT_TO_SAVE = 0.01f;
 
 // --- Global flag for learning loop ---
 bool g_learning_loop_active = false;
 // --- Global flag for standalone random walk ---
 static bool g_random_walk_active = false;
-static TaskHandle_t g_random_walk_task_handle = NULL;
 // CORRECTED: Slower and smaller random walk parameters
 static uint16_t g_random_walk_max_delta_pos = 15; // Smaller position change per step
 static int g_random_walk_interval_ms = 500;      // Longer interval between steps
@@ -84,11 +86,6 @@ static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
 // --- Babble Safety Limit Configuration ---
 static uint16_t g_max_torque_limit = 200; // Default max torque for babble (0-1000)
 static uint8_t g_min_accel_value = 200; // Default min acceleration for babble (0-254, 0=fastest)
-
-// --- Smoothing / Damping Configuration ---
-static float g_ema_alpha = 0.3f; // Smoothing factor for EMA filter
-static float g_smoothed_goal[NUM_SERVOS]; // Per-servo smoothed goal position
-static uint16_t g_trajectory_step_size = 10; // Max change per trajectory step
 
 
 // --- Mutex for protecting console output ---
@@ -136,7 +133,6 @@ static uint16_t get_corrected_position(uint8_t servo_id, uint16_t commanded_pos)
 
 // Helper function to move a servo along a smooth trajectory
 void move_servo_smoothly(uint8_t servo_id, uint16_t goal_position) {
-    uint16_t current_pos = 0;
     // This function is not yet refactored to use the bus manager,
     // so it is temporarily disabled.
 }
@@ -429,7 +425,7 @@ void move_towards_goal_embedding(const float* goal_embedding) {
     float temp_input_for_encoder[INPUT_NEURONS] = {0};
 
     // --- 1. ENCODE current state to get current_embedding ---
-    read_sensor_state(current_state);
+    read_sensor_state(current_state, 0);
     memcpy(temp_input_for_encoder, current_state, sizeof(float) * STATE_VECTOR_DIM);
     forward_pass(temp_input_for_encoder, g_hl, g_ol, g_pl);
     float* current_embedding = g_hl->hidden_activations;
@@ -454,7 +450,7 @@ void move_towards_goal_embedding(const float* goal_embedding) {
     }
 
     // --- 4. EXECUTE the generated action ---
-    execute_on_robot_arm(action_vector);
+    execute_on_robot_arm(action_vector, 0);
 }
 
 // Task for standalone random walk
@@ -528,6 +524,11 @@ void learning_loop_task(void *pvParameters) {
 
 // --- CONSOLE COMMANDS & SETUP ---
 
+static struct {
+    struct arg_int *mode;
+    struct arg_end *end;
+} set_mode_args;
+
 static int cmd_set_mode(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_mode_args);
     if (nerrors != 0) {
@@ -551,9 +552,9 @@ static int cmd_export_states(int argc, char **argv) {
     float sensor_data[PRED_NEURONS]; // Use PRED_NEURONS as it's the size of the state vector
 
     for (int i = 0; i < num_samples; i++) {
-        perform_random_walk(NULL); // Perform a random walk step
+        perform_random_walk(NULL, 0); // Perform a random walk step
         vTaskDelay(pdMS_TO_TICKS(100)); // Wait a moment for the move to settle
-        read_sensor_state(sensor_data);
+        read_sensor_state(sensor_data, 0);
 
         for (int j = 0; j < PRED_NEURONS; j++) {
             printf("%f,", sensor_data[j]);
@@ -564,60 +565,6 @@ static int cmd_export_states(int argc, char **argv) {
     printf("--- END STATE EXPORT ---\n");
     return 0;
 }
-
-static int cmd_import_states(int argc, char **argv) {
-    // Assume argv[1] contains the JSON string: {"centroids":[[...],[...]]}
-    cJSON *root = cJSON_Parse(argv[1]);
-    cJSON *centroids_json = cJSON_GetObjectItem(root, "centroids");
-
-    int token_index = 0;
-    cJSON *centroid_row;
-    cJSON_ArrayForEach(centroid_row, centroids_json) {
-        if (token_index >= NUM_STATE_TOKENS) break;
-        // 1. Populate the g_state_token_centroids array
-        // ... (json_to_float_array or similar logic here) ...
-
-        // 2. Pre-calculate the embedding for this centroid
-        float temp_input[INPUT_NEURONS] = {0};
-        memcpy(temp_input, g_state_token_centroids[token_index], sizeof(float) * STATE_VECTOR_DIM);
-
-        // Run the encoder pass (input -> hidden layer)
-        forward_pass(temp_input, g_hl, g_ol, g_pl);
-
-        // 3. Store the result in the g_state_token_embeddings array
-        memcpy(g_state_token_embeddings[token_index], g_hl->hidden_activations, sizeof(float) * HIDDEN_NEURONS);
-
-        token_index++;
-    }
-    cJSON_Delete(root);
-    printf("Imported and calculated embeddings for %d tokens.\n", token_index);
-
-    // 4. Save both arrays to NVS for persistence
-    save_state_tokens_to_nvs(g_state_token_centroids, g_state_token_embeddings);
-    return 0;
-}
-
-static int cmd_export_states(int argc, char **argv) {
-    int num_samples = 2000; // Default
-    // TODO: Add argument parsing for num_samples
-    printf("--- BEGIN STATE EXPORT ---\n");
-    float sensor_data[PRED_NEURONS]; // Use PRED_NEURONS as it's the size of the state vector
-
-    for (int i = 0; i < num_samples; i++) {
-        perform_random_walk(NULL); // Perform a random walk step
-        vTaskDelay(pdMS_TO_TICKS(100)); // Wait a moment for the move to settle
-        read_sensor_state(sensor_data);
-
-        for (int j = 0; j < PRED_NEURONS; j++) {
-            printf("%f,", sensor_data[j]);
-        }
-        printf("\n");
-        vTaskDelay(pdMS_TO_TICKS(10)); // Yield
-    }
-    printf("--- END STATE EXPORT ---\n");
-    return 0;
-}
-
 
 static int cmd_import_states(int argc, char **argv) {
     // This command will be complex, so we'll need to increase the console buffer size
@@ -681,17 +628,13 @@ static int cmd_import_states(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_get_stats(int argc, char **argv) {
-    char *stats_buffer = malloc(2048);
-    if (stats_buffer) {
-        vTaskGetRunTimeStats(stats_buffer);
-        printf("--- Task Runtime Stats ---\n");
-        printf("%s\n", stats_buffer);
-        free(stats_buffer);
-    }
-    return 0;
-}
 
+
+static struct {
+    struct arg_int *delta_pos;
+    struct arg_int *interval_ms;
+    struct arg_end *end;
+} rw_set_params_args;
 
 static int cmd_rw_set_params(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&rw_set_params_args);

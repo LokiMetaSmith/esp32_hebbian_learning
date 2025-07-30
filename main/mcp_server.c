@@ -10,6 +10,7 @@
 
 #include "mcp_server.h"
 #include "common.h"
+#include "mcp_server_commands.h"
 #include "lwip/err.h"
 #include "lwip/sockets.h"
 #include "lwip/sys.h"
