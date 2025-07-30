@@ -37,6 +37,15 @@ static EventGroupHandle_t s_wifi_event_group;
 // --- Extern variables from main.c that we need to access ---
 extern uint8_t servo_ids[NUM_SERVOS];
 extern bool g_learning_loop_active;
+extern HiddenLayer* g_hl;
+extern OutputLayer* g_ol;
+extern PredictionLayer* g_pl;
+extern float g_state_token_centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM];
+extern float g_state_token_embeddings[NUM_STATE_TOKENS][HIDDEN_NEURONS];
+extern uint16_t g_random_walk_max_delta_pos;
+extern int g_random_walk_interval_ms;
+extern int64_t g_last_random_walk_time_us;
+extern OperatingMode g_current_mode;
 
 // --- Forward Declarations ---
 static void wifi_init_sta(void);
@@ -499,4 +508,144 @@ void mcp_server_init(void) {
     wifi_init_sta();
 
     xTaskCreate(mcp_server_task, "mcp_server_task", 4096, NULL, 5, NULL);
+}
+
+static struct {
+    struct arg_int *mode;
+    struct arg_end *end;
+} set_mode_args;
+
+int cmd_set_mode(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_mode_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_mode_args.end, argv[0]);
+        return 1;
+    }
+    int mode = set_mode_args.mode->ival[0];
+    if (mode < 0 || mode > 3) {
+        printf("Error: Invalid mode. Please use 0, 1, 2, or 3.\n");
+        return 1;
+    }
+    g_current_mode = (OperatingMode)mode;
+    printf("Operating mode set to: %d\n", g_current_mode);
+    return 0;
+}
+
+int cmd_export_states(int argc, char **argv) {
+    int num_samples = 2000; // Default
+    // TODO: Add argument parsing for num_samples
+    printf("--- BEGIN STATE EXPORT ---\n");
+    float sensor_data[PRED_NEURONS]; // Use PRED_NEURONS as it's the size of the state vector
+
+    for (int i = 0; i < num_samples; i++) {
+        perform_random_walk(NULL, 0); // Perform a random walk step
+        vTaskDelay(pdMS_TO_TICKS(100)); // Wait a moment for the move to settle
+        read_sensor_state(sensor_data, 0);
+
+        for (int j = 0; j < PRED_NEURONS; j++) {
+            printf("%f,", sensor_data[j]);
+        }
+        printf("\n");
+        vTaskDelay(pdMS_TO_TICKS(10)); // Yield
+    }
+    printf("--- END STATE EXPORT ---\n");
+    return 0;
+}
+
+int cmd_import_states(int argc, char **argv) {
+    // This command will be complex, so we'll need to increase the console buffer size
+    // in menuconfig to handle the large JSON string.
+    if (argc != 2) {
+        printf("Usage: import_states <json_string>\n");
+        return 1;
+    }
+
+    cJSON *root = cJSON_Parse(argv[1]);
+    if (root == NULL) {
+        printf("Error: Failed to parse JSON.\n");
+        return 1;
+    }
+
+    cJSON *centroids_json = cJSON_GetObjectItem(root, "centroids");
+    if (!cJSON_IsArray(centroids_json)) {
+        printf("Error: JSON must have a 'centroids' array.\n");
+        cJSON_Delete(root);
+        return 1;
+    }
+
+    int num_centroids = cJSON_GetArraySize(centroids_json);
+    if (num_centroids != NUM_STATE_TOKENS) {
+        printf("Error: Expected %d centroids, but got %d.\n", NUM_STATE_TOKENS, num_centroids);
+        cJSON_Delete(root);
+        return 1;
+    }
+
+    for (int i = 0; i < num_centroids; i++) {
+        cJSON *centroid_json = cJSON_GetArrayItem(centroids_json, i);
+        if (!cJSON_IsArray(centroid_json)) {
+            printf("Error: Centroid %d is not an array.\n", i);
+            cJSON_Delete(root);
+            return 1;
+        }
+
+        int num_dims = cJSON_GetArraySize(centroid_json);
+        if (num_dims != STATE_VECTOR_DIM) {
+            printf("Error: Centroid %d has %d dimensions, but expected %d.\n", i, num_dims, STATE_VECTOR_DIM);
+            cJSON_Delete(root);
+            return 1;
+        }
+
+        for (int j = 0; j < num_dims; j++) {
+            cJSON *dim_json = cJSON_GetArrayItem(centroid_json, j);
+            if (!cJSON_IsNumber(dim_json)) {
+                printf("Error: Dimension %d of centroid %d is not a number.\n", j, i);
+                cJSON_Delete(root);
+                return 1;
+            }
+            g_state_token_centroids[i][j] = (float)dim_json->valuedouble;
+        }
+    }
+
+    printf("Successfully imported %d state tokens.\n", num_centroids);
+    cJSON_Delete(root);
+
+    // TODO: Add NVS saving for the state tokens
+
+    return 0;
+}
+
+
+
+static struct {
+    struct arg_int *delta_pos;
+    struct arg_int *interval_ms;
+    struct arg_end *end;
+} rw_set_params_args;
+
+int cmd_rw_set_params(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&rw_set_params_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, rw_set_params_args.end, argv[0]);
+        return 1;
+    }
+    int delta_pos = rw_set_params_args.delta_pos->ival[0];
+    int interval_ms = rw_set_params_args.interval_ms->ival[0];
+
+    if (delta_pos <= 0 || delta_pos > 1000) { // Max reasonable delta
+        printf("Error: Max delta position must be between 1 and 1000.\n");
+        return 1;
+    }
+    if (interval_ms < 20 || interval_ms > 60000) { // Enforce minimum interval of 20ms
+        printf("Error: Interval MS must be between 20 and 60000.\n");
+        return 1;
+    }
+
+    g_random_walk_max_delta_pos = (uint16_t)delta_pos;
+    g_random_walk_interval_ms = interval_ms;
+    g_last_random_walk_time_us = 0; // Reset timer to apply new interval immediately if needed
+
+    ESP_LOGI(TAG, "Random walk params updated: max_delta_pos=%u, interval_ms=%d",
+             g_random_walk_max_delta_pos, g_random_walk_interval_ms);
+    printf("Random walk parameters updated.\n");
+    return 0;
 }
