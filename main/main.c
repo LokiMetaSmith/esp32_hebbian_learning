@@ -24,11 +24,8 @@
 #include "tinyusb.h"
 #include "tusb_cdc_acm.h"
 #include "mcp_server.h"
-#include "mcp_server_commands.h"
 #include "argtable3/argtable3.h"
-#include "cJSON.h"
-#include <string.h>
-
+#include "commands.h"
 
 // --- Application Configuration ---
 
@@ -628,16 +625,6 @@ static int cmd_import_states(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_get_stats(int argc, char **argv) {
-    char *stats_buffer = malloc(2048);
-    if (stats_buffer) {
-        vTaskGetRunTimeStats(stats_buffer);
-        printf("--- Task Runtime Stats ---\n");
-        printf("%s\n", stats_buffer);
-        free(stats_buffer);
-    }
-    return 0;
-}
 
 
 static struct {

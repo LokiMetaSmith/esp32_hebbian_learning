@@ -17,6 +17,7 @@
 #include "argtable3/argtable3.h"
 #include "feetech_protocol.h"
 #include "nvs_storage.h"
+#include "commands.h"
 
 // --- argtable3 structs for console commands ---
 static struct {

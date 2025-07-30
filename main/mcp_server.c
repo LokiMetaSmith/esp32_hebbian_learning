@@ -10,7 +10,6 @@
 
 #include "mcp_server.h"
 #include "common.h"
-#include "mcp_server_commands.h"
 #include "lwip/err.h"
 #include "lwip/sockets.h"
 #include "lwip/sys.h"
@@ -18,6 +17,8 @@
 #include "mbedtls/base64.h"
 #include "feetech_protocol.h"
 #include "nvs_storage.h"
+#include "commands.h"
+#include "commands.h"
 
 // --- Wi-Fi & Server Configuration ---
 #define WIFI_SSID      "OKLATHON_25"      // <-- IMPORTANT: SET YOUR WIFI SSID
@@ -398,89 +399,6 @@ static int json_to_argv(const cJSON *args_json, char **argv, int max_args) {
     return argc;
 }
 
-static cJSON* handle_call_tool(const cJSON *request_json) {
-    cJSON *response_json = cJSON_CreateObject();
-    cJSON *result_json = NULL;
-
-    const cJSON *tool_name_json = cJSON_GetObjectItem(request_json, "tool_name");
-    const cJSON *args_json = cJSON_GetObjectItem(request_json, "arguments");
-    const cJSON *arm_id_json = cJSON_GetObjectItem(request_json, "arm_id");
-
-    if (!cJSON_IsString(tool_name_json) || !tool_name_json->valuestring) {
-        cJSON_AddStringToObject(response_json, "error", "Missing or invalid 'tool_name'.");
-        return response_json;
-    }
-    char *tool_name = tool_name_json->valuestring;
-
-    int arm_id = 0;
-    if (cJSON_IsNumber(arm_id_json)) {
-        arm_id = arm_id_json->valueint;
-    }
-
-    // --- Tool Dispatcher ---
-    char* argv[11]; // Increased size for arm_id
-    int argc = json_to_argv(args_json, argv, 10);
-
-    // Prepend arm_id to argv
-    char arm_id_str[4];
-    snprintf(arm_id_str, sizeof(arm_id_str), "%d", arm_id);
-    for (int i = argc; i > 0; i--) {
-        argv[i] = argv[i-1];
-    }
-    argv[0] = arm_id_str;
-    argc++;
-
-
-    if (strcmp(tool_name, "set_pos") == 0) {
-        cmd_set_pos(argc, argv);
-        result_json = cJSON_CreateString("OK");
-    } else if (strcmp(tool_name, "get_pos") == 0) {
-        cmd_get_pos(argc, argv);
-        // This command prints the result to the console, so we don't have a return value here.
-        result_json = cJSON_CreateString("OK");
-    } else if (strcmp(tool_name, "babble_start") == 0) {
-        cmd_babble_start(argc, argv);
-        result_json = cJSON_CreateString("OK");
-    } else if (strcmp(tool_name, "babble_stop") == 0) {
-        cmd_babble_stop(argc, argv);
-        result_json = cJSON_CreateString("OK");
-    } else if (strcmp(tool_name, "set_torque") == 0) {
-        // Not implemented as a console command
-    } else if (strcmp(tool_name, "set_acceleration") == 0) {
-        cmd_set_servo_acceleration(argc, argv);
-        result_json = cJSON_CreateString("OK");
-    } else if (strcmp(tool_name, "get_status") == 0) {
-        // Not implemented as a console command
-    } else if (strcmp(tool_name, "get_current") == 0) {
-        cmd_get_current(argc, argv);
-        result_json = cJSON_CreateString("OK");
-    } else if (strcmp(tool_name, "get_power") == 0) {
-        // Not implemented as a console command
-    } else if (strcmp(tool_name, "get_torque") == 0) {
-        // Not implemented as a console command
-    } else if (strcmp(tool_name, "calibrate") == 0) {
-        // Not implemented as a console command
-    } else if (strcmp(tool_name, "export_data") == 0) {
-        // Not implemented as a console command
-    } else if (strcmp(tool_name, "import_nn") == 0) {
-        // Not implemented as a console command
-    } else if (strcmp(tool_name, "export_nn") == 0) {
-        cmd_export_network(argc, argv);
-        result_json = cJSON_CreateString("OK");
-    } else if (strcmp(tool_name, "import_nn_json") == 0) {
-        // Not implemented as a console command
-    } else if (strcmp(tool_name, "calibrate_servo") == 0) {
-        // Not implemented as a console command
-    }
-
-    // --- Finalize Response ---
-    if (result_json) {
-        cJSON_AddItemToObject(response_json, "result", result_json);
-    } else {
-        cJSON_AddStringToObject(response_json, "error", "Failed to execute tool or invalid arguments.");
-    }
-    return response_json;
-}
 
 /**
  * @brief Public function to initialize the MCP server.
