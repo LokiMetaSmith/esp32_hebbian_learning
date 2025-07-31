@@ -10,8 +10,28 @@ This directory contains unit tests for the project.
 
 ## Running the Tests
 
-To run the tests, execute the `unit_test_script.py` script:
+### Integration Tests (Python)
+
+To run the Python-based integration tests, which require a running ESP32 device, execute the `unit_test_script.py` script. You will need to provide the IP address of the device and the correct serial ports.
 
 ```bash
-python unit_test_script.py
+# Example
+python unit_test_script.py 192.168.1.100 /dev/ttyACM0 /dev/ttyACM1
+```
+
+### Unit Tests (C)
+
+A self-contained unit test file `unit_tests.c` is provided to test C functions in isolation. It uses a simple internal testing framework and does not require a running ESP32.
+
+To compile and run these tests, you will need a C compiler (like GCC). You must link the test file against the C source files it is testing.
+
+**Compilation Command:**
+```bash
+gcc -o unit_tests tests/unit_tests.c -I./main -lm
+```
+*Note: This command includes the C source files directly from the `main` directory. This is a simple approach for this self-contained test file. The `-lm` flag is included to link the math library.*
+
+**Running the Tests:**
+```bash
+./unit_tests
 ```
