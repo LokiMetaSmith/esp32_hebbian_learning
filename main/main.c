@@ -677,6 +677,7 @@ void learning_loop_task(void *pvParameters) {
     free(combined_input);
     free(state_t_plus_1);
     vTaskDelete(NULL); // Task should delete itself if it ever exits the loop.
+}
 
 }
 
