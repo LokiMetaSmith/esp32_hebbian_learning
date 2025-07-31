@@ -495,13 +495,14 @@ def run_console_tests(port):
         print("  [CONSOLE] Test 1 (get_pos): PASSED")
 
         # Test 2: Random Walk Start/Stop
-        output = client.send_command("rw_start")
-        assert "Random Walk task created" in output or "resumed/started" in output, "Console Test 2 Failed: 'rw_start' output incorrect."
-        print("  [CONSOLE] Test 2 (rw_start): PASSED")
-        time.sleep(1)
-        output = client.send_command("rw_stop")
-        assert "stopped" in output, "Console Test 2 Failed: 'rw_stop' output incorrect."
-        print("  [CONSOLE] Test 2 (rw_stop): PASSED")
+        if not use_mock: # This test requires real hardware interaction
+            output = client.send_command("rw_start")
+            assert "Random Walk task created" in output or "resumed/started" in output, "Console Test 2 Failed: 'rw_start' output incorrect."
+            print("  [CONSOLE] Test 2 (rw_start): PASSED")
+            time.sleep(1)
+            output = client.send_command("rw_stop")
+            assert "stopped" in output, "Console Test 2 Failed: 'rw_stop' output incorrect."
+            print("  [CONSOLE] Test 2 (rw_stop): PASSED")
 
         # Test 3: Invalid Command
         output = client.send_command("this_is_not_a_command")
@@ -516,20 +517,21 @@ def run_console_tests(port):
         print("  [CONSOLE] Test 4 (set-learning): PASSED")
 
         # Test 5: State Learning Loop Moves Servos
-        output = client.send_command("get_pos 1")
-        start_pos_str = output.split("position:")[1].strip()
-        start_pos = int(start_pos_str)
+        if not use_mock: # This test requires real hardware interaction
+            output = client.send_command("get_pos 1")
+            start_pos_str = output.split("position:")[1].strip()
+            start_pos = int(start_pos_str)
 
-        client.send_command("set-learning states on")
-        time.sleep(1) # Let it run for a second
-        client.send_command("set-learning states off")
+            client.send_command("set-learning states on")
+            time.sleep(1) # Let it run for a second
+            client.send_command("set-learning states off")
 
-        output = client.send_command("get_pos 1")
-        end_pos_str = output.split("position:")[1].strip()
-        end_pos = int(end_pos_str)
+            output = client.send_command("get_pos 1")
+            end_pos_str = output.split("position:")[1].strip()
+            end_pos = int(end_pos_str)
 
-        assert start_pos != end_pos, "Console Test 5 Failed: State learning loop did not move the servo."
-        print(f"  [CONSOLE] Test 5 (state learning moves servos): PASSED (pos changed from {start_pos} to {end_pos})")
+            assert start_pos != end_pos, "Console Test 5 Failed: State learning loop did not move the servo."
+            print(f"  [CONSOLE] Test 5 (state learning moves servos): PASSED (pos changed from {start_pos} to {end_pos})")
 
     except (AssertionError, IndexError, ValueError) as e:
         print(f"  [CONSOLE] !!! TEST FAILED: {e}")
