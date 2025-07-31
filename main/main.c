@@ -678,11 +678,22 @@ void learning_loop_task(void *pvParameters) {
     vTaskDelete(NULL); // Task should delete itself if it ever exits the loop.
 
 }
-/*
+
 void learning_states_loop_task(void *pvParameters) {
+    int arm_id = 0; // Hardcoded to arm 0 for now
     float* current_state = malloc(sizeof(float) * STATE_VECTOR_DIM);
     float* next_state = malloc(sizeof(float) * STATE_VECTOR_DIM);
     float* nn_input = malloc(sizeof(float) * INPUT_NEURONS);
+
+    if (!current_state || !next_state || !nn_input) {
+        ESP_LOGE(TAG, "Failed to allocate memory for learning_states_loop_task buffers!");
+        // If we failed, free any that might have succeeded
+        if (current_state) free(current_state);
+        if (next_state) free(next_state);
+        if (nn_input) free(nn_input);
+        vTaskDelete(NULL);
+        return;
+    }
 
     while(1) {
         if (g_learning_loop_active) {
@@ -732,7 +743,6 @@ void learning_states_loop_task(void *pvParameters) {
         }
     }
 }
-*/
 
 // --- CONSOLE COMMANDS & SETUP ---
 
@@ -973,6 +983,7 @@ void app_main(void) {
         xTaskCreate(bus_manager_task, task_name, 4096, (void*)i, 10, NULL);
     }
     xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
+    xTaskCreate(learning_states_loop_task, "learning_states_loop", 4096, NULL, 5, NULL);
     xTaskCreate(feetech_slave_task, "feetech_slave_task", 4096, NULL, 5, NULL);
     xTaskCreate(console_task, "console_task", 4096, NULL, 1, NULL);
 }
