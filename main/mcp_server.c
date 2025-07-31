@@ -28,7 +28,7 @@
 #define WIFI_CONNECT_TIMEOUT_MS 60000 // 1 minute
 
 // --- Tag for logging ---
-static const char *TAG = "MCP_WIFI_SERVER";
+const char *TAG = "MCP_WIFI_SERVER";
 
 // --- FreeRTOS event group to signal when we are connected ---
 static EventGroupHandle_t s_wifi_event_group;
