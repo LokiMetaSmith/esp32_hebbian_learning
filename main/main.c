@@ -35,7 +35,7 @@
 #define UART_BUF_SIZE (256)
 #define MAX_EXPECTED_SERVO_CURRENT_A 2.0f
 
-static const char *TAG = "HEBBIAN_ROBOT";
+const char *TAG = "HEBBIAN_ROBOT";
 uint8_t servo_ids[NUM_SERVOS] = {1, 2, 3, 4, 5, 6};
 
 // --- Global Network Pointers ---
@@ -52,12 +52,12 @@ ServoCorrectionMap g_correction_maps[NUM_SERVOS];
 
 
 // --- Global variables for smart network saving ---
-static bool g_network_weights_updated = false;
+bool g_network_weights_updated = false;
 
 // --- Global flag for learning loop ---
 bool g_learning_loop_active = false;
 // --- Global flag for standalone random walk ---
-static bool g_random_walk_active = false;
+bool g_random_walk_active = false;
 // CORRECTED: Slower and smaller random walk parameters
 uint16_t g_random_walk_max_delta_pos = 15; // Smaller position change per step
 int g_random_walk_interval_ms = 500;      // Longer interval between steps
@@ -78,7 +78,7 @@ static OperatingMode g_current_mode = MODE_PASSTHROUGH;
 
 // --- Servo Configuration ---
 #define DEFAULT_SERVO_ACCELERATION 50 // Default acceleration value (0-254, 0=instant)
-static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
+uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
 
 // --- Babble Safety Limit Configuration ---
 uint16_t g_max_torque_limit = 200; // Default max torque for babble (0-1000)
@@ -528,7 +528,7 @@ static struct {
     struct arg_end *end;
 } set_mode_args;
 
-static int cmd_set_mode(int argc, char **argv) {
+int cmd_set_mode(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_mode_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_mode_args.end, argv[0]);
@@ -544,7 +544,7 @@ static int cmd_set_mode(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_export_states(int argc, char **argv) {
+int cmd_export_states(int argc, char **argv) {
     int num_samples = 2000; // Default
     // TODO: Add argument parsing for num_samples
     printf("--- BEGIN STATE EXPORT ---\n");
@@ -565,7 +565,7 @@ static int cmd_export_states(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_import_states(int argc, char **argv) {
+int cmd_import_states(int argc, char **argv) {
     // This command will be complex, so we'll need to increase the console buffer size
     // in menuconfig to handle the large JSON string.
     if (argc != 2) {
@@ -635,7 +635,7 @@ static struct {
     struct arg_end *end;
 } rw_set_params_args;
 
-static int cmd_rw_set_params(int argc, char **argv) {
+int cmd_rw_set_params(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&rw_set_params_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, rw_set_params_args.end, argv[0]);
