@@ -59,9 +59,9 @@ bool g_learning_loop_active = false;
 // --- Global flag for standalone random walk ---
 static bool g_random_walk_active = false;
 // CORRECTED: Slower and smaller random walk parameters
-static uint16_t g_random_walk_max_delta_pos = 15; // Smaller position change per step
-static int g_random_walk_interval_ms = 500;      // Longer interval between steps
-static int64_t g_last_random_walk_time_us = 0;
+uint16_t g_random_walk_max_delta_pos = 15; // Smaller position change per step
+int g_random_walk_interval_ms = 500;      // Longer interval between steps
+int64_t g_last_random_walk_time_us = 0;
 
 // --- Static variables for conditional total current logging ---
 static float g_last_logged_total_current_A = -1.0f;
@@ -81,9 +81,10 @@ static OperatingMode g_current_mode = MODE_PASSTHROUGH;
 static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
 
 // --- Babble Safety Limit Configuration ---
-static uint16_t g_max_torque_limit = 200; // Default max torque for babble (0-1000)
+uint16_t g_max_torque_limit = 200; // Default max torque for babble (0-1000)
 uint8_t g_min_accel_value = 200; // Default min acceleration for babble (0-254, 0=fastest)
 float g_ema_alpha = 0.1f; // Default EMA alpha for smoothing
+uint16_t g_trajectory_step_size = 10; // Default trajectory step size
 
 
 // --- Mutex for protecting console output ---
