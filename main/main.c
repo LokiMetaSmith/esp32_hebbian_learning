@@ -247,6 +247,24 @@ void bus_manager_task(void *pvParameters) {
                     feetech_write_byte(request.servo_id, request.reg_address, (uint8_t)request.value);
                     response.status = ESP_OK;
                     break;
+                case CMD_REG_WRITE_BYTE:
+                    {
+                        uint8_t data[] = { (uint8_t)request.value };
+                        feetech_reg_write(request.servo_id, request.reg_address, data, 1);
+                        response.status = ESP_OK;
+                    }
+                    break;
+                case CMD_REG_WRITE_WORD:
+                    {
+                        uint8_t data[] = { (uint8_t)(request.value & 0xFF), (uint8_t)((request.value >> 8) & 0xFF) };
+                        feetech_reg_write(request.servo_id, request.reg_address, data, 2);
+                        response.status = ESP_OK;
+                    }
+                    break;
+                case CMD_ACTION:
+                    feetech_action();
+                    response.status = ESP_OK;
+                    break;
             }
 
             // If the requesting task provided a response queue, send the result back.
@@ -361,7 +379,7 @@ void execute_on_robot_arm(const float* action_vector, int arm_id) {
         if (commanded_accel < g_min_accel_value) {
             commanded_accel = g_min_accel_value;
         }
-        request.command = CMD_WRITE_BYTE;
+        request.command = CMD_REG_WRITE_BYTE;
         request.servo_id = servo_ids[i];
         request.reg_address = REG_ACCELERATION;
         request.value = commanded_accel;
@@ -373,7 +391,7 @@ void execute_on_robot_arm(const float* action_vector, int arm_id) {
         if (commanded_torque > g_max_torque_limit) {
             commanded_torque = g_max_torque_limit;
         }
-        request.command = CMD_WRITE_WORD;
+        request.command = CMD_REG_WRITE_WORD;
         request.servo_id = servo_ids[i];
         request.reg_address = REG_TORQUE_LIMIT;
         request.value = commanded_torque;
@@ -384,12 +402,17 @@ void execute_on_robot_arm(const float* action_vector, int arm_id) {
         float scaled_pos = (norm_pos + 1.0f) / 2.0f; // Scale to 0-1
         uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
         uint16_t corrected_position = get_corrected_position(servo_ids[i], goal_position);
-        request.command = CMD_WRITE_WORD;
+        request.command = CMD_REG_WRITE_WORD;
         request.servo_id = servo_ids[i];
         request.reg_address = REG_GOAL_POSITION;
         request.value = corrected_position;
         xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
     }
+
+    // After buffering all the commands, send a single ACTION command to execute them simultaneously.
+    request.command = CMD_ACTION;
+    request.servo_id = 0; // Not used by bus manager for ACTION, but set to 0 for clarity.
+    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
 }
 
 // --- NEURAL NETWORK FUNCTIONS ---

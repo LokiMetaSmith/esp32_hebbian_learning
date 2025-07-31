@@ -20,18 +20,21 @@
 
 /** @brief Defines the types of commands the bus manager can process. */
 typedef enum {
-    CMD_READ_WORD,  /**< Read a 16-bit word from a servo register. */
-    CMD_WRITE_WORD, /**< Write a 16-bit word to a servo register. */
-    CMD_WRITE_BYTE  /**< Write an 8-bit byte to a servo register. */
+    CMD_READ_WORD,      /**< Read a 16-bit word from a servo register. */
+    CMD_WRITE_WORD,     /**< Write a 16-bit word to a servo register. */
+    CMD_WRITE_BYTE,     /**< Write an 8-bit byte to a servo register. */
+    CMD_REG_WRITE_BYTE, /**< Buffer a byte write on a servo (executes on ACTION). */
+    CMD_REG_WRITE_WORD, /**< Buffer a word write on a servo (executes on ACTION). */
+    CMD_ACTION,         /**< Trigger all buffered REG_WRITE commands for an arm. */
 } BusCommand_t;
 
 /** @brief Structure for a request message sent to the bus manager task. */
 typedef struct {
     uint8_t arm_id;                 /**< The ID of the arm to command. */
     BusCommand_t command;           /**< The type of command to execute. */
-    uint8_t servo_id;               /**< Target servo ID. */
+    uint8_t servo_id;               /**< Target servo ID. 0 for broadcast commands like ACTION. */
     uint8_t reg_address;            /**< Target register address. */
-    uint16_t value;                 /**< Value to write (for write commands). */
+    uint16_t value;                 /**< Value to write for word/byte commands. */
     QueueHandle_t response_queue;   /**< Optional queue to send the result back to. If NULL, no response is sent. */
 } BusRequest_t;
 
