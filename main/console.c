@@ -867,7 +867,7 @@ static int cmd_rw_stop(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_set_max_torque(int argc, char **argv) {
+int cmd_set_max_torque(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_max_torque_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_max_torque_args.end, argv[0]);
@@ -883,7 +883,7 @@ static int cmd_set_max_torque(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_set_traj_step(int argc, char **argv) {
+int cmd_set_traj_step(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_traj_step_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_traj_step_args.end, argv[0]);
@@ -899,7 +899,7 @@ static int cmd_set_traj_step(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_set_ema_alpha(int argc, char **argv) {
+int cmd_set_ema_alpha(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_ema_alpha_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_ema_alpha_args.end, argv[0]);
@@ -915,7 +915,7 @@ static int cmd_set_ema_alpha(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_set_max_accel(int argc, char **argv) {
+int cmd_set_max_accel(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_max_accel_args);
     if (nerrors != 0) {
         arg_print_errors(stderr, set_max_accel_args.end, argv[0]);
