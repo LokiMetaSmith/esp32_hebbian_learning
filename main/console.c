@@ -21,6 +21,9 @@
 #include "bma400_driver.h"
 #include "esp_log.h"
 
+static const char *TAG = "CONSOLE";
+
+
 // --- argtable3 structs for console commands ---
 static struct {
     struct arg_int *id;

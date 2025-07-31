@@ -126,7 +126,6 @@ extern bool g_random_walk_active;
 extern TaskHandle_t g_random_walk_task_handle;
 extern uint8_t g_servo_acceleration;
 extern uint8_t servo_ids[NUM_SERVOS];
-extern const char *TAG;
 extern float g_best_fitness_achieved;
 
 void initialize_network(HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl);
