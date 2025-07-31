@@ -70,6 +70,7 @@ extern float g_state_token_centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM];
 extern float g_state_token_embeddings[NUM_STATE_TOKENS][HIDDEN_NEURONS];
 
 extern QueueHandle_t g_bus_request_queues[NUM_ARMS];
+extern uint8_t g_min_accel_value;
 
 // --- Correction Map Data Structures ---
 /** @brief Number of points in the servo position correction map. */

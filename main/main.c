@@ -82,7 +82,7 @@ static uint8_t g_servo_acceleration = DEFAULT_SERVO_ACCELERATION;
 
 // --- Babble Safety Limit Configuration ---
 static uint16_t g_max_torque_limit = 200; // Default max torque for babble (0-1000)
-static uint8_t g_min_accel_value = 200; // Default min acceleration for babble (0-254, 0=fastest)
+uint8_t g_min_accel_value = 200; // Default min acceleration for babble (0-254, 0=fastest)
 
 
 // --- Mutex for protecting console output ---
