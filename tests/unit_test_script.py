@@ -5,6 +5,133 @@ import serial
 import argparse
 import struct
 import sys
+import threading
+
+# --- Mock Server and Ports ---
+
+class MockMCPServer(threading.Thread):
+    """A mock TCP server that emulates the ESP32's MCP server."""
+    def __init__(self, host='localhost', port=8888):
+        super().__init__()
+        self.host = host
+        self.port = port
+        self.server_socket = None
+        self.running = False
+        self.tool_list = [
+            {"name": "set_torque"}, {"name": "set_acceleration"},
+            {"name": "get_status"}, {"name": "get_current"},
+            {"name": "get_power"}, {"name": "get_torque"},
+            {"name": "export_data"}, {"name": "export_nn"},
+            {"name": "import_nn"}, {"name": "import_nn_json"},
+            {"name": "calibrate_servo"}, {"name": "babble_start"},
+            {"name": "babble_stop"}, {"name": "set_pos"}, {"name": "get_pos"}
+        ]
+
+    def handle_client(self, conn, addr):
+        print(f"  [MOCK_MCP] Client connected: {addr}")
+        while self.running:
+            try:
+                data = conn.recv(1024)
+                if not data:
+                    break
+                request = json.loads(data.decode('utf-8').strip())
+                command = request.get("command")
+                response = {}
+                if command == "list_tools":
+                    response = {"tools": self.tool_list}
+                elif command == "call_tool":
+                    response = {"result": "OK", "tool_name": request.get("tool_name")}
+                    if request.get("tool_name") == "get_pos":
+                        response["result"] = 2048 # Return a dummy position
+                    if request.get("tool_name") == "get_status":
+                        response["result"] = {"pos": 2048, "moving": False}
+                    if request.get("tool_name") == "export_nn":
+                        response["result"] = {"dummy_nn": True}
+                    if request.get("tool_name") == "calibrate_servo":
+                         response = {"prompt": "Move servo to min and press enter."}
+
+                conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
+            except (ConnectionResetError, json.JSONDecodeError):
+                break
+        conn.close()
+        print(f"  [MOCK_MCP] Client disconnected: {addr}")
+
+    def run(self):
+        self.running = True
+        self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.server_socket.bind((self.host, self.port))
+        self.server_socket.listen(1)
+        self.server_socket.settimeout(1.0) # Timeout to check self.running
+        print(f"  [MOCK_MCP] Server listening on {self.host}:{self.port}")
+
+        while self.running:
+            try:
+                conn, addr = self.server_socket.accept()
+                client_thread = threading.Thread(target=self.handle_client, args=(conn, addr))
+                client_thread.daemon = True
+                client_thread.start()
+            except socket.timeout:
+                continue
+
+        print("  [MOCK_MCP] Server shutting down.")
+
+    def stop(self):
+        self.running = False
+        if self.server_socket:
+            self.server_socket.close()
+
+class MockSerial:
+    """A mock serial port that emulates pyserial for offline testing."""
+    def __init__(self, port=None, baudrate=None, timeout=None):
+        self.port = port
+        self.is_open = True
+        self._in_buffer = b''
+        self._out_buffer = b''
+        self.name = port
+        # Pre-populate with a prompt for the console client
+        self.write(b"robot>")
+
+    def close(self):
+        self.is_open = False
+
+    def flushInput(self):
+        self._in_buffer = b''
+
+    def write(self, data):
+        self._out_buffer += data
+        # Emulate the device responding to commands
+        if b"get_pos 1" in data:
+            self._in_buffer += b"Servo 1 current position: 1234\nrobot>"
+        elif b"set-learning" in data:
+            self._in_buffer += data.replace(b'\n', b'').decode('utf-8') + b" command received\nrobot>"
+        elif b"this_is_not_a_command" in data:
+            self._in_buffer += b"Unknown command\nrobot>"
+        # Feetech write commands get a status packet response
+        elif len(data) == 8 and data[4] == 0x03: # WRITE
+             self._in_buffer += b'\xFF\xFF' + data[2:3] + b'\x02\x00' + b'\xFA'
+        return len(data)
+
+    def read(self, size=1):
+        if not self._in_buffer:
+            time.sleep(0.1) # Emulate timeout
+            return b''
+        data = self._in_buffer[:size]
+        self._in_buffer = self._in_buffer[size:]
+        return data
+
+    def readline(self):
+        # Find the first newline character
+        newline_pos = self._in_buffer.find(b'\n')
+        if newline_pos != -1:
+            line = self._in_buffer[:newline_pos+1]
+            self._in_buffer = self._in_buffer[newline_pos+1:]
+            return line
+        # If no newline, return what's left after a short delay (emulating timeout)
+        time.sleep(0.1)
+        line = self._in_buffer
+        self._in_buffer = b''
+        return line
 
 # --- Configuration ---
 MCP_PORT = 8888
@@ -18,9 +145,14 @@ class MCPClient:
         self.port = port
         self.sock = None
 
-    def connect(self):
+    def connect(self, use_mock=False, mock_server=None):
         """Connects to the TCP server."""
-        print(f"  [MCP] Connecting to {self.host}:{self.port}...")
+        if use_mock:
+            self.host = 'localhost' # Mock server is always local
+            print(f"  [MCP] Connecting to MOCK server at {self.host}:{self.port}...")
+        else:
+            print(f"  [MCP] Connecting to REAL server at {self.host}:{self.port}...")
+
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.sock.settimeout(5)
@@ -84,9 +216,14 @@ class ConsoleClient:
         self.port = port
         self.ser = None
 
-    def connect(self):
+    def connect(self, use_mock=False):
         """Connects to the serial port."""
-        print(f"\n  [CONSOLE] Connecting to {self.port}...")
+        if use_mock:
+            print(f"\n  [CONSOLE] Connecting to MOCK port {self.port}...")
+            self.ser = MockSerial(self.port)
+            return True
+
+        print(f"\n  [CONSOLE] Connecting to REAL port {self.port}...")
         try:
             self.ser = serial.Serial(self.port, SERIAL_BAUDRATE, timeout=SERIAL_TIMEOUT)
             time.sleep(2) # Wait for device to settle
@@ -182,14 +319,48 @@ class FeetechClient:
         params = [reg_addr, 2] # Read 2 bytes
         return self._send_packet(servo_id, 0x02, params) # 0x02 = INST_READ
 
-def run_mcp_tests(host, port):
+    def reg_write_word(self, servo_id, reg_addr, value):
+        """Sends a REG_WRITE_WORD command."""
+        low_byte = value & 0xFF
+        high_byte = (value >> 8) & 0xFF
+        params = [reg_addr, low_byte, high_byte]
+        return self._send_packet(servo_id, 0x04, params) # 0x04 = INST_REG_WRITE
+
+    def action(self):
+        """Sends a broadcast ACTION command."""
+        return self._send_packet(0xFE, 0x05) # 0xFE = broadcast, 0x05 = INST_ACTION
+
+    def reset(self, servo_id):
+        """Sends a RESET command."""
+        return self._send_packet(servo_id, 0x06)
+
+    def sync_write(self, reg_addr, data_len_per_servo, servo_data):
+        """
+        Sends a SYNC_WRITE command.
+        servo_data is a list of tuples, e.g., [(id1, [d1, d2]), (id2, [d1, d2])]
+        """
+        params = [reg_addr, data_len_per_servo]
+        for servo_id, data_bytes in servo_data:
+            params.append(servo_id)
+            params.extend(data_bytes)
+        return self._send_packet(0xFE, 0x83, params) # 0xFE = broadcast, 0x83 = INST_SYNC_WRITE
+
+def run_mcp_tests(host, port, use_mock=False):
     """Runs a suite of tests against the MCP server."""
+    mock_server = None
     print("\n" + "="*50)
-    print(">>> RUNNING MCP SERVER TESTS (Wi-Fi)")
+    if use_mock:
+        print(">>> RUNNING MCP SERVER UNIT TESTS (Mocked)")
+        mock_server = MockMCPServer(host, port)
+        mock_server.start()
+        time.sleep(0.1) # Give server time to start
+    else:
+        print(">>> RUNNING MCP SERVER INTEGRATION TESTS (Wi-Fi)")
     print("="*50)
 
     client = MCPClient(host, port)
-    if not client.connect():
+    if not client.connect(use_mock=use_mock):
+        if mock_server: mock_server.stop()
         return False
 
     try:
@@ -300,6 +471,9 @@ def run_mcp_tests(host, port):
         return False
     finally:
         client.disconnect()
+        if mock_server:
+            mock_server.stop()
+            mock_server.join()
 
     print("\n>>> MCP TESTS COMPLETED SUCCESSFULLY <<<")
     return True
@@ -334,7 +508,30 @@ def run_console_tests(port):
         assert "Unknown command" in output, "Console Test 3 Failed: Did not get error for invalid command."
         print("  [CONSOLE] Test 3 (invalid command): PASSED")
 
-    except AssertionError as e:
+        # Test 4: Set Learning
+        output = client.send_command("set-learning motors on")
+        assert "Motor learning loop set to on" in output, "Console Test 4 Failed: 'set-learning motors on' output incorrect."
+        output = client.send_command("set-learning states off")
+        assert "State learning loop set to off" in output, "Console Test 4 Failed: 'set-learning states off' output incorrect."
+        print("  [CONSOLE] Test 4 (set-learning): PASSED")
+
+        # Test 5: State Learning Loop Moves Servos
+        output = client.send_command("get_pos 1")
+        start_pos_str = output.split("position:")[1].strip()
+        start_pos = int(start_pos_str)
+
+        client.send_command("set-learning states on")
+        time.sleep(1) # Let it run for a second
+        client.send_command("set-learning states off")
+
+        output = client.send_command("get_pos 1")
+        end_pos_str = output.split("position:")[1].strip()
+        end_pos = int(end_pos_str)
+
+        assert start_pos != end_pos, "Console Test 5 Failed: State learning loop did not move the servo."
+        print(f"  [CONSOLE] Test 5 (state learning moves servos): PASSED (pos changed from {start_pos} to {end_pos})")
+
+    except (AssertionError, IndexError, ValueError) as e:
         print(f"  [CONSOLE] !!! TEST FAILED: {e}")
         return False
     finally:
@@ -377,6 +574,39 @@ def run_feetech_tests(port):
             f"Feetech Test 2 Failed: Position mismatch. Expected ~{test_pos}, got {read_val}."
         print(f"  [FEETECH] Test 2 (read_word): PASSED (Read back {read_val})")
 
+        # Test 3: REG_WRITE and ACTION
+        test_pos_3 = 3000
+        client.reg_write_word(servo_id, 42, test_pos_3) # No response expected for REG_WRITE
+        time.sleep(0.1)
+        client.action() # No response for broadcast ACTION
+        time.sleep(0.5)
+        response = client.read_word(servo_id, 56)
+        read_val_3 = struct.unpack('<H', response[5:7])[0]
+        assert abs(read_val_3 - test_pos_3) < 50, \
+            f"Feetech Test 3 Failed: REG_WRITE/ACTION position mismatch. Expected ~{test_pos_3}, got {read_val_3}."
+        print(f"  [FEETECH] Test 3 (reg_write/action): PASSED (Read back {read_val_3})")
+
+        # Test 4: SYNC_WRITE
+        servo_data = [
+            (1, [1024 & 0xFF, (1024 >> 8) & 0xFF]),
+            (2, [3072 & 0xFF, (3072 >> 8) & 0xFF])
+        ]
+        client.sync_write(42, 2, servo_data) # No response for SYNC_WRITE
+        time.sleep(0.5)
+        response1 = client.read_word(1, 56)
+        read_val1 = struct.unpack('<H', response1[5:7])[0]
+        assert abs(read_val1 - 1024) < 50, f"Feetech Test 4 Failed: SYNC_WRITE pos mismatch for servo 1. Got {read_val1}"
+        response2 = client.read_word(2, 56)
+        read_val2 = struct.unpack('<H', response2[5:7])[0]
+        assert abs(read_val2 - 3072) < 50, f"Feetech Test 4 Failed: SYNC_WRITE pos mismatch for servo 2. Got {read_val2}"
+        print(f"  [FEETECH] Test 4 (sync_write): PASSED (Read back {read_val1}, {read_val2})")
+
+        # Test 5: RESET
+        response = client.reset(servo_id)
+        assert len(response) >= 6 and response[4] == 0x00, "Feetech Test 5 Failed: Invalid status packet on RESET."
+        print("  [FEETECH] Test 5 (reset): PASSED")
+
+
     except (AssertionError, IndexError, struct.error) as e:
         print(f"  [FEETECH] !!! TEST FAILED: {e}")
         return False
@@ -386,25 +616,42 @@ def run_feetech_tests(port):
     print("\n>>> FEETECH TESTS COMPLETED SUCCESSFULLY <<<")
     return True
 
+def run_unit_tests():
+    """Runs all test suites against mock objects."""
+    print("\n" + "#"*60)
+    print("### RUNNING ALL UNIT TESTS (NO HARDWARE REQUIRED)")
+    print("#"*60)
+    mcp_ok = run_mcp_tests('localhost', MCP_PORT, use_mock=True)
+    console_ok = run_console_tests('mock_console_port', use_mock=True)
+    feetech_ok = run_feetech_tests('mock_feetech_port', use_mock=True)
+    return all([mcp_ok, console_ok, feetech_ok])
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ESP32 Hebbian Robot Test Suite")
-    parser.add_argument("ip_address", help="IP address of the ESP32 device for MCP tests.")
-    parser.add_argument("console_port", help="Serial port for the Console CLI (e.g., /dev/ttyACM0).")
-    parser.add_argument("feetech_port", help="Serial port for the Feetech Protocol Proxy (e.g., /dev/ttyACM1).")
+    parser.add_argument("--mode", choices=['unit', 'integration'], default='integration', help="Test mode: 'unit' (mocked) or 'integration' (real hardware).")
+    parser.add_argument("--ip_address", help="IP address of the ESP32 device for integration tests.")
+    parser.add_argument("--console_port", help="Serial port for the Console CLI for integration tests.")
+    parser.add_argument("--feetech_port", help="Serial port for the Feetech Protocol Proxy for integration tests.")
     args = parser.parse_args()
 
-    # Run all test suites
-    mcp_ok = run_mcp_tests(args.ip_address, MCP_PORT)
-    console_ok = run_console_tests(args.console_port)
-    feetech_ok = run_feetech_tests(args.feetech_port)
+    success = False
+    if args.mode == 'unit':
+        success = run_unit_tests()
+    else:
+        if not all([args.ip_address, args.console_port, args.feetech_port]):
+            parser.error("For 'integration' mode, --ip_address, --console_port, and --feetech_port are required.")
+
+        mcp_ok = run_mcp_tests(args.ip_address, MCP_PORT)
+        console_ok = run_console_tests(args.console_port)
+        feetech_ok = run_feetech_tests(args.feetech_port)
+        success = all([mcp_ok, console_ok, feetech_ok])
 
     print("\n" + "="*50)
     print(">>> FINAL TEST SUMMARY")
     print("="*50)
-    print(f"  MCP Server (Wi-Fi):      {'PASSED' if mcp_ok else 'FAILED'}")
-    print(f"  Console CLI (USB):       {'PASSED' if console_ok else 'FAILED'}")
-    print(f"  Feetech Protocol (USB):  {'PASSED' if feetech_ok else 'FAILED'}")
+    print(f"  Mode: {args.mode.upper()}")
+    print(f"  Overall Result: {'PASSED' if success else 'FAILED'}")
     print("="*50)
 
-    if not all([mcp_ok, console_ok, feetech_ok]):
-        sys.exit(1) # Exit with error code if any test failed
+    if not success:
+        sys.exit(1)

@@ -19,19 +19,23 @@ To run the Python-based integration tests, which require a running ESP32 device,
 python unit_test_script.py 192.168.1.100 /dev/ttyACM0 /dev/ttyACM1
 ```
 
-### Unit Tests (C)
+### Test Modes
 
-A self-contained unit test file `unit_tests.c` is provided to test C functions in isolation. It uses a simple internal testing framework and does not require a running ESP32.
+The main test script `unit_test_script.py` can be run in two modes:
 
-To compile and run these tests, you will need a C compiler (like GCC). You must link the test file against the C source files it is testing.
+#### 1. Unit Test Mode (Default)
 
-**Compilation Command:**
+This mode runs the Python client code against a mock ESP32 server and mock serial ports. It does **not** require any hardware and can be run on any machine with Python and `pyserial` installed. It is useful for quickly verifying the logic of the Python scripts.
+
 ```bash
-gcc -o unit_tests tests/unit_tests.c -I./main -lm
+python unit_test_script.py --mode unit
 ```
-*Note: This command includes the C source files directly from the `main` directory. This is a simple approach for this self-contained test file. The `-lm` flag is included to link the math library.*
 
-**Running the Tests:**
+#### 2. Integration Test Mode
+
+This mode runs the tests against a real, running ESP32 device. You must provide the device's IP address and the correct serial port names for the console and Feetech interfaces.
+
 ```bash
-./unit_tests
+# Example
+python unit_test_script.py --mode integration --ip_address 192.168.1.100 --console_port /dev/ttyACM0 --feetech_port /dev/ttyACM1
 ```
