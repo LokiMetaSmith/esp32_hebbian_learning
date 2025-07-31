@@ -77,6 +77,17 @@ extern uint16_t g_trajectory_step_size;
 extern uint16_t g_random_walk_max_delta_pos;
 extern int g_random_walk_interval_ms;
 extern int64_t g_last_random_walk_time_us;
+extern HiddenLayer* g_hl;
+extern OutputLayer* g_ol;
+extern PredictionLayer* g_pl;
+extern bool g_network_weights_updated;
+extern ServoCorrectionMap g_correction_maps[NUM_SERVOS];
+extern bool g_learning_loop_active;
+extern bool g_random_walk_active;
+extern TaskHandle_t g_random_walk_task_handle;
+extern uint8_t g_servo_acceleration;
+extern uint8_t servo_ids[NUM_SERVOS];
+extern const char *TAG;
 
 // --- Correction Map Data Structures ---
 /** @brief Number of points in the servo position correction map. */
