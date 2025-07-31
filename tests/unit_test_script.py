@@ -16,7 +16,7 @@ class MockMCPServer(threading.Thread):
         self.host = host
         self.port = port
         self.server_socket = None
-        self.running = False
+        self._stop_event = threading.Event()
         self.tool_list = [
             {"name": "set_torque"}, {"name": "set_acceleration"},
             {"name": "get_status"}, {"name": "get_current"},
@@ -29,34 +29,50 @@ class MockMCPServer(threading.Thread):
 
     def handle_client(self, conn, addr):
         print(f"  [MOCK_MCP] Client connected: {addr}")
-        try:
-            data = conn.recv(1024)
-            if data:
-                request = json.loads(data.decode('utf-8').strip())
-                command = request.get("command")
+        conn.settimeout(1.0)
+        buffer = ""
+        while not self._stop_event.is_set():
+            try:
+                data = conn.recv(4096) # Increased buffer size
+                if not data:
+                    break # Client closed connection
+
+                buffer += data.decode('utf-8')
+
+                # Process buffer line-by-line (requests are newline-terminated JSON)
+                while '\n' in buffer:
+                    line, buffer = buffer.split('\n', 1)
+                    if not line.strip():
+                        continue
+
+                    request = json.loads(line.strip())
+                    command = request.get("command")
                 response = {}
                 if command == "list_tools":
                     response = {"tools": self.tool_list}
                 elif command == "call_tool":
-                    response = {"result": "OK", "tool_name": request.get("tool_name")}
-                    if request.get("tool_name") == "get_pos":
+                    tool_name = request.get("tool_name")
+                    response = {"result": "OK", "tool_name": tool_name}
+                    if tool_name == "get_pos":
                         response["result"] = 2048
-                    if request.get("tool_name") == "get_status":
+                    elif tool_name == "get_status":
                         response["result"] = {"pos": 2048, "moving": False}
-                    if request.get("tool_name") == "export_nn":
+                    elif tool_name == "export_nn":
                         response["result"] = {"dummy_nn": True}
-                    if request.get("tool_name") == "calibrate_servo":
+                    elif tool_name == "calibrate_servo":
                         response = {"prompt": "Move servo to min and press enter."}
+                    elif tool_name == "babble_start":
+                        response["result"] = "babble task started"
+                    elif tool_name == "babble_stop":
+                        response["result"] = "babble task stopped"
 
                 conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
-        except (socket.timeout, ConnectionResetError, json.JSONDecodeError) as e:
-            print(f"  [MOCK_MCP] Handle client error: {e}")
-        finally:
-            conn.close()
-            print(f"  [MOCK_MCP] Client disconnected: {addr}")
+            except (socket.timeout, ConnectionResetError, json.JSONDecodeError):
+                break # Break loop on timeout or error
+        conn.close()
+        print(f"  [MOCK_MCP] Client disconnected: {addr}")
 
     def run(self):
-        self.running = True
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))
@@ -64,25 +80,21 @@ class MockMCPServer(threading.Thread):
         self.server_socket.settimeout(0.5)
         print(f"  [MOCK_MCP] Server listening on {self.host}:{self.port}")
 
-        while self.running:
+        while not self._stop_event.is_set():
             try:
                 conn, addr = self.server_socket.accept()
-                # Let the handler manage the connection, don't create a new thread for each request
-                # This simplifies shutdown and prevents race conditions.
-                self.handle_client(conn, addr)
+                client_thread = threading.Thread(target=self.handle_client, args=(conn, addr))
+                client_thread.daemon = True
+                client_thread.start()
             except socket.timeout:
                 continue
-            except OSError:
-                break # Socket was closed by stop()
 
         print("  [MOCK_MCP] Server loop finished.")
+        self.server_socket.close()
 
     def stop(self):
         print("  [MOCK_MCP] Stopping server...")
-        self.running = False
-        if self.server_socket:
-            self.server_socket.close()
-            self.server_socket = None
+        self._stop_event.set()
 
 class MockSerial:
     """A mock serial port that emulates pyserial for offline testing."""
@@ -92,6 +104,7 @@ class MockSerial:
         self._in_buffer = b''
         self._out_buffer = b''
         self.name = port
+        self.servo_positions = {} # Store servo positions
         # Pre-populate with a prompt for the console client
         self.write(b"robot>")
 
@@ -103,16 +116,63 @@ class MockSerial:
 
     def write(self, data):
         self._out_buffer += data
-        # Emulate the device responding to commands
+        # --- Emulate Console Responses ---
         if b"get_pos 1" in data:
-            self._in_buffer += b"Servo 1 current position: 1234\nrobot>"
-        elif b"set-learning" in data:
-            self._in_buffer += data.replace(b'\n', b'') + b" command received\nrobot>"
+            pos = self.servo_positions.get(1, 1234) # Get servo 1 pos or default
+            self._in_buffer += f"Servo 1 current position: {pos}\nrobot>".encode('utf-8')
+        elif b"set-learning motors on" in data:
+            self._in_buffer += b"Motor learning loop set to on\nrobot>"
+        elif b"set-learning states off" in data:
+            self._in_buffer += b"State learning loop set to off\nrobot>"
         elif b"this_is_not_a_command" in data:
             self._in_buffer += b"Unknown command\nrobot>"
-        # Feetech write commands get a status packet response
-        elif len(data) == 8 and data[4] == 0x03: # WRITE
-             self._in_buffer += b'\xFF\xFF' + data[2:3] + b'\x02\x00' + b'\xFA'
+
+        # --- Emulate Feetech Responses ---
+        elif data.startswith(b'\xFF\xFF'):
+            servo_id = data[2]
+            instruction = data[4]
+
+            # WRITE or REG_WRITE
+            if instruction == 0x03 or instruction == 0x04:
+                # Check if it's a write to the goal position register (42)
+                if len(data) > 6 and data[5] == 42:
+                    pos = struct.unpack('<H', data[6:8])[0]
+                    self.servo_positions[servo_id] = pos
+                # For WRITE, send a status packet back
+                if instruction == 0x03:
+                    checksum = (~(servo_id + 0x02 + 0x00)) & 0xFF
+                    self._in_buffer += bytes([0xFF, 0xFF, servo_id, 0x02, 0x00, checksum])
+
+            # READ
+            elif instruction == 0x02:
+                # Check if it's a read from the present position register (56)
+                if len(data) > 5 and data[5] == 56:
+                    val = self.servo_positions.get(servo_id, 0) # Get pos or default to 0
+                    val_low = val & 0xFF
+                    val_high = (val >> 8) & 0xFF
+                    checksum = (~(servo_id + 0x04 + 0x00 + val_low + val_high)) & 0xFF
+                    self._in_buffer += bytes([0xFF, 0xFF, servo_id, 0x04, 0x00, val_low, val_high, checksum])
+
+            # SYNC_WRITE
+            elif instruction == 0x83:
+                if len(data) > 7:
+                    # reg_addr = data[5] # Not needed for mock
+                    data_len_per_servo = data[6]
+
+                    # Loop through the payload
+                    i = 7
+                    while i < len(data) - 1: # -1 for checksum
+                        sync_servo_id = data[i]
+                        servo_data = data[i+1 : i+1+data_len_per_servo]
+                        if data_len_per_servo == 2: # Assuming word
+                            pos = struct.unpack('<H', bytearray(servo_data))[0]
+                            self.servo_positions[sync_servo_id] = pos
+                        i += 1 + data_len_per_servo
+
+            # RESET
+            elif instruction == 0x06:
+                checksum = (~(servo_id + 0x02 + 0x00)) & 0xFF
+                self._in_buffer += bytes([0xFF, 0xFF, servo_id, 0x02, 0x00, checksum])
         return len(data)
 
     def read(self, size=1):
