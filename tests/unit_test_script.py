@@ -107,7 +107,7 @@ class MockSerial:
         if b"get_pos 1" in data:
             self._in_buffer += b"Servo 1 current position: 1234\nrobot>"
         elif b"set-learning" in data:
-            self._in_buffer += data.replace(b'\n', b'').decode('utf-8') + b" command received\nrobot>"
+            self._in_buffer += data.replace(b'\n', b'') + b" command received\nrobot>"
         elif b"this_is_not_a_command" in data:
             self._in_buffer += b"Unknown command\nrobot>"
         # Feetech write commands get a status packet response
