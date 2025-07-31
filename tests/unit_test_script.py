@@ -242,11 +242,10 @@ class MCPClient:
         """Disconnects from the server."""
         if self.sock:
             try:
-                # Send a close command to the server for a graceful shutdown
-                self._send_request({"command": "close"})
+                # Send a close command, but don't wait for a response.
+                self.sock.sendall((json.dumps({"command": "close"}) + '\n').encode('utf-8'))
             except (socket.error, socket.timeout):
-                # Ignore errors on close, as the server might already be down
-                pass
+                pass # Ignore errors, the goal is to close the socket anyway.
             finally:
                 self.sock.close()
                 self.sock = None
