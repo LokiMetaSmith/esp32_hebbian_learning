@@ -32,46 +32,47 @@ class MockMCPServer(threading.Thread):
         print(f"  [MOCK_MCP] Client connected: {addr}")
         conn.settimeout(1.0)
         buffer = ""
-        while not self._stop_event.is_set():
-            try:
-                data = conn.recv(4096) # Increased buffer size
-                if not data:
-                    break # Client closed connection
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    data = conn.recv(4096)
+                    if not data:
+                        break
 
-                buffer += data.decode('utf-8')
+                    buffer += data.decode('utf-8')
 
-                # Process buffer line-by-line (requests are newline-terminated JSON)
-                while '\n' in buffer:
-                    line, buffer = buffer.split('\n', 1)
-                    if not line.strip():
-                        continue
+                    while '\n' in buffer:
+                        line, buffer = buffer.split('\n', 1)
+                        if not line.strip():
+                            continue
 
-                    request = json.loads(line.strip())
-                    command = request.get("command")
-                response = {}
-                if command == "list_tools":
-                    response = {"tools": self.tool_list}
-                elif command == "call_tool":
-                    tool_name = request.get("tool_name")
-                    response = {"result": "OK", "tool_name": tool_name}
-                    if tool_name == "get_pos":
-                        response["result"] = 2048
-                    elif tool_name == "get_status":
-                        response["result"] = {"pos": 2048, "moving": False}
-                    elif tool_name == "export_nn":
-                        response["result"] = {"dummy_nn": True}
-                    elif tool_name == "calibrate_servo":
-                        response = {"prompt": "Move servo to min and press enter."}
-                    elif tool_name == "babble_start":
-                        response["result"] = "babble task started"
-                    elif tool_name == "babble_stop":
-                        response["result"] = "babble task stopped"
+                        request = json.loads(line.strip())
+                        command = request.get("command")
+                        response = {}
+                        if command == "list_tools":
+                            response = {"tools": self.tool_list}
+                        elif command == "call_tool":
+                            tool_name = request.get("tool_name")
+                            response = {"result": "OK", "tool_name": tool_name}
+                            if tool_name == "get_pos":
+                                response["result"] = 2048
+                            elif tool_name == "get_status":
+                                response["result"] = {"pos": 2048, "moving": False}
+                            elif tool_name == "export_nn":
+                                response["result"] = {"dummy_nn": True}
+                            elif tool_name == "calibrate_servo":
+                                response = {"prompt": "Move servo to min and press enter."}
+                            elif tool_name == "babble_start":
+                                response["result"] = "babble task started"
+                            elif tool_name == "babble_stop":
+                                response["result"] = "babble task stopped"
 
-                conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
-            except (socket.timeout, ConnectionResetError, json.JSONDecodeError):
-                break # Break loop on timeout or error
-        conn.close()
-        print(f"  [MOCK_MCP] Client disconnected: {addr}")
+                        conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
+                except (socket.timeout, ConnectionResetError, json.JSONDecodeError):
+                    break
+        finally:
+            conn.close()
+            print(f"  [MOCK_MCP] Client disconnected: {addr}")
 
     def run(self):
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -97,6 +98,7 @@ class MockMCPServer(threading.Thread):
     def stop(self):
         print("  [MOCK_MCP] Stopping server...")
         self._stop_event.set()
+        time.sleep(0.1) # Give threads time to see the event
         # Wait for all client threads to finish
         for thread in self.client_threads:
             thread.join(timeout=1.0)
