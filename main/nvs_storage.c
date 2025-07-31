@@ -12,7 +12,7 @@
 #include "common.h"
 
 #define NVS_NAMESPACE "nn_storage"
-static const char *TAG = "NVS_STORAGE";
+const char *TAG = "NVS_STORAGE";
 
 esp_err_t nvs_storage_initialize() {
     esp_err_t err = nvs_flash_init();
