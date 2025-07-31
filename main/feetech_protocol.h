@@ -29,6 +29,7 @@
 #define SCS_INST_WRITE          0x03
 #define SCS_INST_REG_WRITE      0x04
 #define SCS_INST_ACTION         0x05
+#define SCS_INST_RESET          0x06
 #define SCS_INST_SYNC_READ      0x82
 #define SCS_INST_SYNC_WRITE     0x83
 #define SCS_BROADCAST_ID        0xFE
@@ -95,6 +96,41 @@ esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *val
  * @return ESP_OK on success, ESP_ERR_TIMEOUT on timeout, ESP_FAIL on other errors (checksum, servo error).
  */
 esp_err_t feetech_read_byte(uint8_t servo_id, uint8_t reg_address, uint8_t *value, uint32_t timeout_ms);
+
+/**
+ * @brief Writes data to a register on a specific servo, but the action is deferred until an ACTION command is sent.
+ *
+ * @param servo_id The ID of the target servo.
+ * @param reg_address The starting address of the register to write to.
+ * @param data Pointer to the data to be written.
+ * @param data_len The length of the data to be written.
+ */
+void feetech_reg_write(uint8_t servo_id, uint8_t reg_address, const uint8_t* data, uint8_t data_len);
+
+/**
+ * @brief Triggers the execution of all previously buffered REG_WRITE commands on all servos.
+ * This is a broadcast command and expects no response.
+ */
+void feetech_action(void);
+
+/**
+ * @brief Writes data to the same register address on multiple servos in a single command.
+ *
+ * @param reg_address The starting address of the register to write to on all servos.
+ * @param data_len_per_servo The length of the data to be written for each individual servo.
+ * @param num_servos The number of servos to be controlled.
+ * @param servo_ids Pointer to an array of servo IDs.
+ * @param all_servo_data Pointer to a contiguous block of data for all servos. The data for each servo
+ *                       must be `data_len_per_servo` bytes long and appear in the same order as the servo IDs.
+ */
+void feetech_sync_write(uint8_t reg_address, uint8_t data_len_per_servo, uint8_t num_servos, const uint8_t* servo_ids, const uint8_t* all_servo_data);
+
+/**
+ * @brief Resets the control table of a specific servo to its factory default values.
+ *
+ * @param servo_id The ID of the servo to reset.
+ */
+void feetech_reset(uint8_t servo_id);
 
 
 #endif // FEETECH_PROTOCOL_H

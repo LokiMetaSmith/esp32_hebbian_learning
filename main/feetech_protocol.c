@@ -277,6 +277,91 @@ esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *val
     return ESP_FAIL; // Should be unreachable if loop logic is correct, but as a fallback.
 }
 
+void feetech_reg_write(uint8_t servo_id, uint8_t reg_address, const uint8_t* data, uint8_t data_len) {
+    uint8_t packet_size = 7 + data_len;
+    uint8_t packet[packet_size];
+    uint8_t params_len = 1 + data_len;
+    uint8_t params[params_len];
+    uint8_t length_field = params_len + 2;
+
+    params[0] = reg_address;
+    memcpy(&params[1], data, data_len);
+
+    packet[0] = 0xFF;
+    packet[1] = 0xFF;
+    packet[2] = servo_id;
+    packet[3] = length_field;
+    packet[4] = SCS_INST_REG_WRITE;
+
+    memcpy(&packet[5], params, params_len);
+
+    packet[packet_size - 1] = calculate_checksum(servo_id, length_field, SCS_INST_REG_WRITE, params);
+
+    uart_write_bytes(SERVO_UART_PORT, (const char*)packet, packet_size);
+}
+
+void feetech_action(void) {
+    uint8_t packet[6] = {0xFF, 0xFF, SCS_BROADCAST_ID, 0x02, SCS_INST_ACTION, 0xFA};
+    uart_write_bytes(SERVO_UART_PORT, (const char*)packet, sizeof(packet));
+}
+
+void feetech_sync_write(uint8_t reg_address, uint8_t data_len_per_servo, uint8_t num_servos, const uint8_t* servo_ids, const uint8_t* all_servo_data) {
+    uint8_t length_field = (data_len_per_servo + 1) * num_servos + 4;
+    uint16_t packet_size = length_field + 4;
+    uint8_t* packet = malloc(packet_size);
+    if (packet == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate memory for sync write packet!");
+        return;
+    }
+
+    uint16_t params_len = length_field - 2;
+    uint8_t* params = malloc(params_len);
+    if (params == NULL) {
+        ESP_LOGE(TAG, "Failed to allocate memory for sync write params!");
+        free(packet);
+        return;
+    }
+
+    params[0] = reg_address;
+    params[1] = data_len_per_servo;
+
+    uint16_t current_param_pos = 2;
+    for (int i = 0; i < num_servos; i++) {
+        params[current_param_pos++] = servo_ids[i];
+        memcpy(&params[current_param_pos], &all_servo_data[i * data_len_per_servo], data_len_per_servo);
+        current_param_pos += data_len_per_servo;
+    }
+
+    packet[0] = 0xFF;
+    packet[1] = 0xFF;
+    packet[2] = SCS_BROADCAST_ID;
+    packet[3] = length_field;
+    packet[4] = SCS_INST_SYNC_WRITE;
+
+    memcpy(&packet[5], params, params_len);
+
+    packet[packet_size - 1] = calculate_checksum(SCS_BROADCAST_ID, length_field, SCS_INST_SYNC_WRITE, params);
+
+    uart_write_bytes(SERVO_UART_PORT, (const char*)packet, packet_size);
+
+    free(packet);
+    free(params);
+}
+
+void feetech_reset(uint8_t servo_id) {
+    uint8_t packet[6];
+    uint8_t length = 2; // Instruction + Checksum
+    uint8_t instruction = SCS_INST_RESET;
+
+    packet[0] = 0xFF;
+    packet[1] = 0xFF;
+    packet[2] = servo_id;
+    packet[3] = length;
+    packet[4] = instruction;
+    packet[5] = calculate_checksum(servo_id, length, instruction, NULL);
+
+    uart_write_bytes(SERVO_UART_PORT, (const char*)packet, sizeof(packet));
+}
 
 esp_err_t feetech_read_byte(uint8_t servo_id, uint8_t reg_address, uint8_t *value, uint32_t timeout_ms) {
     if (value == NULL) {
