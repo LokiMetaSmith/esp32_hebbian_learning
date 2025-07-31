@@ -29,12 +29,7 @@
 
 // --- Application Configuration ---
 
-#define MIN_FITNESS_IMPROVEMENT_TO_SAVE 0.05f
-#define LOOP_DELAY_MS 200
-#define LEARNING_RATE 0.01f
-#define WEIGHT_DECAY  0.0001f
-#define UART_BUF_SIZE (256)
-#define MAX_EXPECTED_SERVO_CURRENT_A 2.0f
+// Definitions are now in config.h
 
 const char *TAG = "HEBBIAN_ROBOT";
 uint8_t servo_ids[NUM_SERVOS] = {1, 2, 3, 4, 5, 6};

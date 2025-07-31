@@ -11,18 +11,20 @@
 #define MAIN_H
 
 #include "common.h"
+#include "config.h" // Include the new configuration file
 
 // --- Application Configuration ---
 #define NUM_ARMS 3
 #define NUM_SERVOS 6
+#define SERVOS_PER_ARM (NUM_SERVOS / NUM_ARMS) // Define servos per arm
 
 // --- Bus Manager Data Structures ---
 
 /** @brief Defines the types of commands the bus manager can process. */
 typedef enum {
-    CMD_READ_WORD,      /**< Read a 16-bit word from a servo register. */
-    CMD_WRITE_WORD,     /**< Write a 16-bit word to a servo register. */
-    CMD_WRITE_BYTE,     /**< Write an 8-bit byte to a servo register. */
+    CMD_READ_WORD,  /**< Read a 16-bit word from a servo register. */
+    CMD_WRITE_WORD, /**< Write a 16-bit word to a servo register. */
+    CMD_WRITE_BYTE,  /**< Write an 8-bit byte to a servo register. */
     CMD_REG_WRITE_BYTE, /**< Buffer a byte write on a servo (executes on ACTION). */
     CMD_REG_WRITE_WORD, /**< Buffer a word write on a servo (executes on ACTION). */
     CMD_ACTION,         /**< Trigger all buffered REG_WRITE commands for an arm. */
