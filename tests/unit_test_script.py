@@ -29,11 +29,9 @@ class MockMCPServer(threading.Thread):
 
     def handle_client(self, conn, addr):
         print(f"  [MOCK_MCP] Client connected: {addr}")
-        while self.running:
-            try:
-                data = conn.recv(1024)
-                if not data:
-                    break
+        try:
+            data = conn.recv(1024)
+            if data:
                 request = json.loads(data.decode('utf-8').strip())
                 command = request.get("command")
                 response = {}
@@ -42,40 +40,40 @@ class MockMCPServer(threading.Thread):
                 elif command == "call_tool":
                     response = {"result": "OK", "tool_name": request.get("tool_name")}
                     if request.get("tool_name") == "get_pos":
-                        response["result"] = 2048 # Return a dummy position
+                        response["result"] = 2048
                     if request.get("tool_name") == "get_status":
                         response["result"] = {"pos": 2048, "moving": False}
                     if request.get("tool_name") == "export_nn":
                         response["result"] = {"dummy_nn": True}
                     if request.get("tool_name") == "calibrate_servo":
-                         response = {"prompt": "Move servo to min and press enter."}
+                        response = {"prompt": "Move servo to min and press enter."}
 
                 conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
-            except (ConnectionResetError, json.JSONDecodeError):
-                break
-        conn.close()
-        print(f"  [MOCK_MCP] Client disconnected: {addr}")
+        except (socket.timeout, ConnectionResetError, json.JSONDecodeError) as e:
+            print(f"  [MOCK_MCP] Handle client error: {e}")
+        finally:
+            conn.close()
+            print(f"  [MOCK_MCP] Client disconnected: {addr}")
 
     def run(self):
         self.running = True
         self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))
-        self.server_socket.listen(1)
-        self.server_socket.settimeout(0.5) # Use a shorter timeout
+        self.server_socket.listen(5)
+        self.server_socket.settimeout(0.5)
         print(f"  [MOCK_MCP] Server listening on {self.host}:{self.port}")
 
         while self.running:
             try:
                 conn, addr = self.server_socket.accept()
-                conn.settimeout(0.5)
-                client_thread = threading.Thread(target=self.handle_client, args=(conn, addr))
-                client_thread.daemon = True
-                client_thread.start()
+                # Let the handler manage the connection, don't create a new thread for each request
+                # This simplifies shutdown and prevents race conditions.
+                self.handle_client(conn, addr)
             except socket.timeout:
-                continue # Allows checking self.running flag
+                continue
             except OSError:
-                break # Socket was closed
+                break # Socket was closed by stop()
 
         print("  [MOCK_MCP] Server loop finished.")
 
