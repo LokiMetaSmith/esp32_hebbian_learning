@@ -85,6 +85,7 @@ uint16_t g_max_torque_limit = 200; // Default max torque for babble (0-1000)
 uint8_t g_min_accel_value = 200; // Default min acceleration for babble (0-254, 0=fastest)
 float g_ema_alpha = 0.1f; // Default EMA alpha for smoothing
 uint16_t g_trajectory_step_size = 10; // Default trajectory step size
+float g_best_fitness_achieved = 0.0f;
 
 
 // --- Mutex for protecting console output ---
