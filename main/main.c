@@ -29,6 +29,7 @@
 
 // --- Application Configuration ---
 
+#define MIN_FITNESS_IMPROVEMENT_TO_SAVE 0.05f
 #define LOOP_DELAY_MS 200
 #define LEARNING_RATE 0.01f
 #define WEIGHT_DECAY  0.0001f
@@ -133,12 +134,58 @@ static uint16_t get_corrected_position(uint8_t servo_id, uint16_t commanded_pos)
 }
 
 // Helper function to move a servo along a smooth trajectory
-void move_servo_smoothly(uint8_t servo_id, uint16_t goal_position) {
+void move_servo_smoothly(uint8_t servo_id, uint16_t goal_position, int arm_id) {
+    QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
+    if (response_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create response queue for move_servo_smoothly!");
+        return;
+    }
+
+    BusRequest_t request;
+    BusResponse_t response;
+    request.response_queue = response_queue;
+    request.command = CMD_READ_WORD;
+    request.servo_id = servo_id;
+    request.reg_address = REG_PRESENT_POSITION;
+
+    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+
+    uint16_t current_pos = 0;
+    if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
+        current_pos = response.value;
+    } else {
+        ESP_LOGE(TAG, "Failed to read servo %d position on arm %d", servo_id, arm_id);
+        vQueueDelete(response_queue);
+        return;
+    }
+
+    int16_t diff = goal_position - current_pos;
+    request.response_queue = NULL; // No response needed for writes in the loop
+
+    while (abs(diff) > g_trajectory_step_size) {
+        current_pos += (diff > 0) ? g_trajectory_step_size : -g_trajectory_step_size;
+        request.command = CMD_WRITE_WORD;
+        request.reg_address = REG_GOAL_POSITION;
+        request.value = current_pos;
+        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+        vTaskDelay(pdMS_TO_TICKS(20)); // Delay between steps
+        diff = goal_position - current_pos;
+    }
+
+    // Send the final goal position to ensure it lands precisely
+    request.command = CMD_WRITE_WORD;
+    request.reg_address = REG_GOAL_POSITION;
+    request.value = goal_position;
+    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+
+    vQueueDelete(response_queue);
+
+    // This function is being refactored to use the bus manager.
+    // The old implementation is left here for reference.
+    /*
     uint16_t current_pos = 0;
     BusRequest_t request;
     request.response_queue = NULL;
-    // This function is not yet refactored to use the bus manager,
-    // so it is temporarily disabled.
     request.command = CMD_READ_WORD;
     request.servo_id = servo_id;
     request.reg_address = REG_PRESENT_POSITION;
@@ -162,8 +209,7 @@ void move_servo_smoothly(uint8_t servo_id, uint16_t goal_position) {
         request.reg_address = REG_GOAL_POSITION;
         request.value = goal_position;
         xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
-
-
+    */
 }
 
 /**
@@ -515,7 +561,7 @@ void learning_loop_task(void *pvParameters) {
 
         if (g_learning_loop_active) {
             // 1. SENSE current state (first part of combined_input)
-            read_sensor_state(combined_input);
+            read_sensor_state(combined_input, arm_id);
 
             // 2. BABBLE: Generate an action (positions and accelerations) and place it in the combined_input vector
             int action_vector_start_index = NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS);
@@ -527,14 +573,14 @@ void learning_loop_task(void *pvParameters) {
                     action_part[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
                 }
                 // Execute these new random actions (positions and accelerations)
-                execute_on_robot_arm(action_part);
+                execute_on_robot_arm(action_part, arm_id);
             } else {
                 // Otherwise, use perform_random_walk for position exploration,
                 // and generate random accelerations separately.
 
                 // perform_random_walk fills the first NUM_SERVOS elements of action_part with positions
                 // and also executes the moves with current g_servo_acceleration (which is fine for this phase).
-                perform_random_walk(action_part);
+                perform_random_walk(action_part, arm_id);
 
                 // Now, generate and store random accelerations for the learning input
                 // Now, generate and store random accelerations and torques for the learning input
@@ -548,7 +594,7 @@ void learning_loop_task(void *pvParameters) {
                 // For more direct control, perform_random_walk would need not to execute.
                 // For now, we will execute the full action_part (including newly random accelerations)
                 // via execute_on_robot_arm below, which will set the new accelerations.
-                execute_on_robot_arm(action_part);
+                execute_on_robot_arm(action_part, arm_id);
             }
 
 
@@ -561,7 +607,7 @@ void learning_loop_task(void *pvParameters) {
             vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
             
             // 5. OBSERVE the new state resulting from the action
-            read_sensor_state(state_t_plus_1);
+            read_sensor_state(state_t_plus_1, arm_id);
 
             // 6. LEARN from the prediction error
             float total_error = 0;
@@ -609,6 +655,7 @@ void learning_loop_task(void *pvParameters) {
     vTaskDelete(NULL); // Task should delete itself if it ever exits the loop.
 
 }
+/*
 void learning_states_loop_task(void *pvParameters) {
     float* current_state = malloc(sizeof(float) * STATE_VECTOR_DIM);
     float* next_state = malloc(sizeof(float) * STATE_VECTOR_DIM);
@@ -662,6 +709,7 @@ void learning_states_loop_task(void *pvParameters) {
         }
     }
 }
+*/
 
 // --- CONSOLE COMMANDS & SETUP ---
 
@@ -901,7 +949,6 @@ void app_main(void) {
         snprintf(task_name, sizeof(task_name), "bus_manager_task_%d", i);
         xTaskCreate(bus_manager_task, task_name, 4096, (void*)i, 10, NULL);
     }
-    xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
     xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
     xTaskCreate(feetech_slave_task, "feetech_slave_task", 4096, NULL, 5, NULL);
     xTaskCreate(console_task, "console_task", 4096, NULL, 1, NULL);
