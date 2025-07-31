@@ -134,8 +134,36 @@ static uint16_t get_corrected_position(uint8_t servo_id, uint16_t commanded_pos)
 
 // Helper function to move a servo along a smooth trajectory
 void move_servo_smoothly(uint8_t servo_id, uint16_t goal_position) {
+    uint16_t current_pos = 0;
+    BusRequest_t request;
+    request.response_queue = NULL;
     // This function is not yet refactored to use the bus manager,
     // so it is temporarily disabled.
+    request.command = CMD_READ_WORD;
+    request.servo_id = servo_id;
+    request.reg_address = REG_PRESENT_POSITION;
+    request.response_queue = response_queue;
+    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+
+    int16_t diff = goal_position - response.value;
+    while (abs(diff) > g_trajectory_step_size) {
+        current_pos += (diff > 0) ? g_trajectory_step_size : -g_trajectory_step_size;
+        request.command = CMD_WRITE_WORD;
+        request.servo_id = servo_id;
+        request.reg_address = REG_GOAL_POSITION;
+        request.value = current_pos;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        vTaskDelay(pdMS_TO_TICKS(20)); // Delay between steps
+        diff = goal_position - current_pos;
+    }
+    // Send the final goal position to ensure it lands precisely
+        request.command = CMD_WRITE_WORD;
+        request.servo_id = servo_id;
+        request.reg_address = REG_GOAL_POSITION;
+        request.value = goal_position;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+
+
 }
 
 /**
@@ -469,7 +497,119 @@ void random_walk_task_fn(void *pvParameters) {
 }
 
 void learning_loop_task(void *pvParameters) {
+    long cycle = 0;
     int arm_id = 0; // Hardcoded to arm 0 for now
+    float* combined_input = malloc(sizeof(float) * INPUT_NEURONS);
+    float* state_t_plus_1 = malloc(sizeof(float) * PRED_NEURONS);
+
+    if (!combined_input || !state_t_plus_1) {
+        ESP_LOGE(TAG, "Failed to allocate memory for learning_loop_task buffers!");
+        // If memory allocation fails, there's no point in continuing this task.
+        // Consider how to handle this error more gracefully if needed (e.g. global error flag).
+        vTaskDelete(NULL);
+        return; // Important to return after vTaskDelete if it's not the last line.
+    }
+
+
+    while (1) {
+
+        if (g_learning_loop_active) {
+            // 1. SENSE current state (first part of combined_input)
+            read_sensor_state(combined_input);
+
+            // 2. BABBLE: Generate an action (positions and accelerations) and place it in the combined_input vector
+            int action_vector_start_index = NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS);
+            float* action_part = combined_input + action_vector_start_index; // Pointer to the start of action data
+            
+            if (g_best_fitness_achieved > 0.8f) {
+                // Generate fully random actions (positions and accelerations) if fitness is high
+                for (int i = 0; i < NUM_ACTION_PARAMS; i++) { // NUM_ACTION_PARAMS is NUM_SERVOS * 2
+                    action_part[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+                }
+                // Execute these new random actions (positions and accelerations)
+                execute_on_robot_arm(action_part);
+            } else {
+                // Otherwise, use perform_random_walk for position exploration,
+                // and generate random accelerations separately.
+
+                // perform_random_walk fills the first NUM_SERVOS elements of action_part with positions
+                // and also executes the moves with current g_servo_acceleration (which is fine for this phase).
+                perform_random_walk(action_part);
+
+                // Now, generate and store random accelerations for the learning input
+                // Now, generate and store random accelerations and torques for the learning input
+                for (int i = 0; i < NUM_SERVOS; i++) {
+                    action_part[NUM_SERVOS + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized acceleration
+                    action_part[NUM_SERVOS * 2 + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized torque
+                }
+                // Note: The accelerations set by execute_on_robot_arm in the next step will override
+                // the g_servo_acceleration used by perform_random_walk for this learning cycle's execution.
+                // This is a bit indirect but means the NN learns based on accelerations it *would* set.
+                // For more direct control, perform_random_walk would need not to execute.
+                // For now, we will execute the full action_part (including newly random accelerations)
+                // via execute_on_robot_arm below, which will set the new accelerations.
+                execute_on_robot_arm(action_part);
+            }
+
+
+            // 3. PREDICT outcome based on the state and the chosen action (now including accelerations)
+            forward_pass(combined_input, g_hl, g_ol, g_pl);
+            
+            // 4. DELAY to allow action to complete and state to change
+
+
+            vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
+            
+            // 5. OBSERVE the new state resulting from the action
+            read_sensor_state(state_t_plus_1);
+
+            // 6. LEARN from the prediction error
+            float total_error = 0;
+            float state_change_magnitude = 0;
+            for (int i = 0; i < PRED_NEURONS; i++) { 
+                total_error += fabsf(state_t_plus_1[i] - g_pl->pred_activations[i]); 
+                if (i < NUM_ACCEL_GYRO_PARAMS) { // Consider only accelerometer/gyro changes for magnitude
+                    state_change_magnitude += fabsf(state_t_plus_1[i] - combined_input[i]); // Compare new sensor state to old sensor state part of combined_input
+                }
+            }
+            
+            float prediction_accuracy = fmaxf(0, 1.0f - (total_error / PRED_NEURONS));
+            // Correctness boosted by how much the state changed, encouraging more dynamic actions
+            float correctness = prediction_accuracy * (1.0f + state_change_magnitude);
+            
+            update_weights_hebbian(combined_input, correctness, g_hl, g_ol, g_pl);
+            led_indicator_set_color_from_fitness(correctness);
+
+            if (g_network_weights_updated) {
+                if (correctness > g_best_fitness_achieved + MIN_FITNESS_IMPROVEMENT_TO_SAVE) {
+                    if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
+                        ESP_LOGI(TAG, "Fitness improved (%.2f -> %.2f). Auto-saving...", g_best_fitness_achieved, correctness);
+                        xSemaphoreGive(g_console_mutex);
+                    }
+                    if (save_network_to_nvs(g_hl, g_ol, g_pl) == ESP_OK) {
+                        g_best_fitness_achieved = correctness;
+                        g_network_weights_updated = false; // Reset flag after successful save
+                    }
+                } else if (correctness > g_best_fitness_achieved) {
+                    // Update best_fitness even if not saved, to track actual best
+                    g_best_fitness_achieved = correctness;
+                }
+
+            cycle++;
+
+        } else {
+            vTaskDelay(pdMS_TO_TICKS(100)); // Sleep when not active
+        }
+    } // End while(1)
+
+    // This part of the code will not be reached due to the infinite while(1) loop,
+    // but it's good practice for resource cleanup if the loop could terminate.
+    free(combined_input);
+    free(state_t_plus_1);
+    vTaskDelete(NULL); // Task should delete itself if it ever exits the loop.
+
+}
+void learning_states_loop_task(void *pvParameters) {
     float* current_state = malloc(sizeof(float) * STATE_VECTOR_DIM);
     float* next_state = malloc(sizeof(float) * STATE_VECTOR_DIM);
     float* nn_input = malloc(sizeof(float) * INPUT_NEURONS);
@@ -761,6 +901,7 @@ void app_main(void) {
         snprintf(task_name, sizeof(task_name), "bus_manager_task_%d", i);
         xTaskCreate(bus_manager_task, task_name, 4096, (void*)i, 10, NULL);
     }
+    xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
     xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
     xTaskCreate(feetech_slave_task, "feetech_slave_task", 4096, NULL, 5, NULL);
     xTaskCreate(console_task, "console_task", 4096, NULL, 1, NULL);
