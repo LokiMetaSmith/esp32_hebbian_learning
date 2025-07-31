@@ -932,3 +932,8 @@ int cmd_set_max_accel(int argc, char **argv) {
     printf("Babble min acceleration value set to: %u (higher is slower)\n", g_min_accel_value);
     return 0;
 }
+
+int cmd_get_stats(int argc, char **argv) {
+    printf("Task stats not implemented.\n");
+    return 0;
+}

@@ -86,6 +86,7 @@ uint8_t g_min_accel_value = 200; // Default min acceleration for babble (0-254, 
 float g_ema_alpha = 0.1f; // Default EMA alpha for smoothing
 uint16_t g_trajectory_step_size = 10; // Default trajectory step size
 float g_best_fitness_achieved = 0.0f;
+TaskHandle_t g_random_walk_task_handle = NULL;
 
 
 // --- Mutex for protecting console output ---

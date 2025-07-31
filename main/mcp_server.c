@@ -28,7 +28,7 @@
 #define WIFI_CONNECT_TIMEOUT_MS 60000 // 1 minute
 
 // --- Tag for logging ---
-const char *TAG = "MCP_WIFI_SERVER";
+static const char *TAG = "MCP_WIFI_SERVER";
 
 // --- FreeRTOS event group to signal when we are connected ---
 static EventGroupHandle_t s_wifi_event_group;
@@ -44,7 +44,11 @@ static void wifi_init_sta(void);
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 static void mcp_server_task(void *pvParameters);
 static cJSON* handle_list_tools(void);
-static cJSON* handle_call_tool(const cJSON *request_json);
+static cJSON* handle_call_tool(const cJSON *request_json) {
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddStringToObject(response, "status", "Tool not found");
+    return response;
+}
 static void send_json_response(int sock, const cJSON *response_json);
 
 
