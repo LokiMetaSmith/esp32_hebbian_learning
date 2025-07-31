@@ -17,6 +17,7 @@ class MockMCPServer(threading.Thread):
         self.port = port
         self.server_socket = None
         self._stop_event = threading.Event()
+        self.client_threads = []
         self.tool_list = [
             {"name": "set_torque"}, {"name": "set_acceleration"},
             {"name": "get_status"}, {"name": "get_current"},
@@ -86,6 +87,7 @@ class MockMCPServer(threading.Thread):
                 client_thread = threading.Thread(target=self.handle_client, args=(conn, addr))
                 client_thread.daemon = True
                 client_thread.start()
+                self.client_threads.append(client_thread)
             except socket.timeout:
                 continue
 
@@ -95,6 +97,10 @@ class MockMCPServer(threading.Thread):
     def stop(self):
         print("  [MOCK_MCP] Stopping server...")
         self._stop_event.set()
+        # Wait for all client threads to finish
+        for thread in self.client_threads:
+            thread.join(timeout=1.0)
+        print("  [MOCK_MCP] All client threads finished.")
 
 class MockSerial:
     """A mock serial port that emulates pyserial for offline testing."""
