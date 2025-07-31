@@ -62,24 +62,29 @@ class MockMCPServer(threading.Thread):
         self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.server_socket.bind((self.host, self.port))
         self.server_socket.listen(1)
-        self.server_socket.settimeout(1.0) # Timeout to check self.running
+        self.server_socket.settimeout(0.5) # Use a shorter timeout
         print(f"  [MOCK_MCP] Server listening on {self.host}:{self.port}")
 
         while self.running:
             try:
                 conn, addr = self.server_socket.accept()
+                conn.settimeout(0.5)
                 client_thread = threading.Thread(target=self.handle_client, args=(conn, addr))
                 client_thread.daemon = True
                 client_thread.start()
             except socket.timeout:
-                continue
+                continue # Allows checking self.running flag
+            except OSError:
+                break # Socket was closed
 
-        print("  [MOCK_MCP] Server shutting down.")
+        print("  [MOCK_MCP] Server loop finished.")
 
     def stop(self):
+        print("  [MOCK_MCP] Stopping server...")
         self.running = False
         if self.server_socket:
             self.server_socket.close()
+            self.server_socket = None
 
 class MockSerial:
     """A mock serial port that emulates pyserial for offline testing."""
@@ -270,9 +275,14 @@ class FeetechClient:
         self.port = port
         self.ser = None
 
-    def connect(self):
+    def connect(self, use_mock=False):
         """Connects to the serial port."""
-        print(f"\n  [FEETECH] Connecting to {self.port}...")
+        if use_mock:
+            print(f"\n  [FEETECH] Connecting to MOCK port {self.port}...")
+            self.ser = MockSerial(self.port)
+            return True
+
+        print(f"\n  [FEETECH] Connecting to REAL port {self.port}...")
         try:
             self.ser = serial.Serial(self.port, SERIAL_BAUDRATE, timeout=SERIAL_TIMEOUT)
             time.sleep(1)
@@ -478,14 +488,17 @@ def run_mcp_tests(host, port, use_mock=False):
     print("\n>>> MCP TESTS COMPLETED SUCCESSFULLY <<<")
     return True
 
-def run_console_tests(port):
+def run_console_tests(port, use_mock=False):
     """Runs a suite of tests against the console CLI."""
     print("\n" + "="*50)
-    print(">>> RUNNING CONSOLE CLI TESTS (USB)")
+    if use_mock:
+        print(">>> RUNNING CONSOLE CLI UNIT TESTS (Mocked)")
+    else:
+        print(">>> RUNNING CONSOLE CLI INTEGRATION TESTS (USB)")
     print("="*50)
 
     client = ConsoleClient(port)
-    if not client.connect():
+    if not client.connect(use_mock=use_mock):
         return False
 
     try:
@@ -542,14 +555,17 @@ def run_console_tests(port):
     print("\n>>> CONSOLE TESTS COMPLETED SUCCESSFULLY <<<")
     return True
 
-def run_feetech_tests(port):
+def run_feetech_tests(port, use_mock=False):
     """Runs tests emulating a Feetech host application."""
     print("\n" + "="*50)
-    print(">>> RUNNING FEETECH PROTOCOL TESTS (USB)")
+    if use_mock:
+        print(">>> RUNNING FEETECH PROTOCOL UNIT TESTS (Mocked)")
+    else:
+        print(">>> RUNNING FEETECH PROTOCOL INTEGRATION TESTS (USB)")
     print("="*50)
 
     client = FeetechClient(port)
-    if not client.connect():
+    if not client.connect(use_mock=use_mock):
         return False
 
     try:
