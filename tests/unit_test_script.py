@@ -48,6 +48,10 @@ class MockMCPServer(threading.Thread):
 
                         request = json.loads(line.strip())
                         command = request.get("command")
+
+                        if command == "close":
+                            break # Exit loop to close connection
+
                         response = {}
                         if command == "list_tools":
                             response = {"tools": self.tool_list}
@@ -237,9 +241,16 @@ class MCPClient:
     def disconnect(self):
         """Disconnects from the server."""
         if self.sock:
-            self.sock.close()
-            self.sock = None
-            print("  [MCP] Disconnected.")
+            try:
+                # Send a close command to the server for a graceful shutdown
+                self._send_request({"command": "close"})
+            except (socket.error, socket.timeout):
+                # Ignore errors on close, as the server might already be down
+                pass
+            finally:
+                self.sock.close()
+                self.sock = None
+                print("  [MCP] Disconnected.")
 
     def _send_request(self, request_obj):
         """Sends a JSON request and waits for a JSON response."""
