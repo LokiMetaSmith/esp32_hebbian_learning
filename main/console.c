@@ -31,6 +31,12 @@ static struct {
 } get_current_args;
 
 static struct {
+    struct arg_str *mode;
+    struct arg_str *state;
+    struct arg_end *end;
+} set_learning_args;
+
+static struct {
     struct arg_int *id;
     struct arg_end *end;
 } get_pos_args;
@@ -139,12 +145,17 @@ void initialize_console(void) {
     const esp_console_cmd_t get_current_cmd = { .command = "get_current", .help = "Get the current consumption of a servo (in mA)", .func = &cmd_get_current, .argtable = &get_current_args };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_current_cmd));
 
-    // Renamed commands for babble (learning loop)
-    const esp_console_cmd_t babble_start_cmd = { .command = "babble_start", .help = "Start learning loop (motor babble)", .func = &cmd_babble_start };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&babble_start_cmd));
-
-    const esp_console_cmd_t babble_stop_cmd = { .command = "babble_stop", .help = "Stop learning loop (motor babble)", .func = &cmd_babble_stop };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&babble_stop_cmd));
+    // Command to control learning loops
+    set_learning_args.mode = arg_str1(NULL, NULL, "<mode>", "Learning mode ('motors' or 'states')");
+    set_learning_args.state = arg_str1(NULL, NULL, "<state>", "State ('on' or 'off')");
+    set_learning_args.end = arg_end(2);
+    const esp_console_cmd_t set_learning_cmd = {
+        .command = "set-learning",
+        .help = "Set a learning mode on or off. Usage: set-learning <mode> <on|off>",
+        .func = &cmd_set_learning,
+        .argtable = &set_learning_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_learning_cmd));
 
     // New commands for standalone random walk
     const esp_console_cmd_t rw_start_cmd = { .command = "rw_start", .help = "Start standalone random walk", .func = &cmd_rw_start };
@@ -806,23 +817,35 @@ int cmd_get_current(int argc, char **argv) {
     return 0;
 }
 
-int cmd_babble_start(int argc, char **argv) {
-    if (!g_learning_loop_active) {
-        g_learning_loop_active = true;
-        ESP_LOGI(TAG, "Learning loop (motor babble) started.");
-    } else {
-        ESP_LOGI(TAG, "Learning loop (motor babble) is already active.");
+int cmd_set_learning(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_learning_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_learning_args.end, argv[0]);
+        return 1;
     }
-    return 0;
-}
 
-int cmd_babble_stop(int argc, char **argv) {
-    if (g_learning_loop_active) {
-        g_learning_loop_active = false;
-        ESP_LOGI(TAG, "Learning loop (motor babble) stopped.");
-    } else {
-        ESP_LOGI(TAG, "Learning loop (motor babble) is not active.");
+    const char *mode = set_learning_args.mode->sval[0];
+    const char *state = set_learning_args.state->sval[0];
+
+    bool is_on = false;
+    if (strcmp(state, "on") == 0) {
+        is_on = true;
+    } else if (strcmp(state, "off") != 0) {
+        printf("Error: state must be 'on' or 'off'\n");
+        return 1;
     }
+
+    if (strcmp(mode, "motors") == 0) {
+        g_learning_loop_active = is_on;
+        printf("Motor learning loop set to %s\n", state);
+    } else if (strcmp(mode, "states") == 0) {
+        g_state_learning_active = is_on;
+        printf("State learning loop set to %s\n", state);
+    } else {
+        printf("Error: mode must be 'motors' or 'states'\n");
+        return 1;
+    }
+
     return 0;
 }
 

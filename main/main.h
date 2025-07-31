@@ -126,6 +126,7 @@ extern PredictionLayer* g_pl;
 extern bool g_network_weights_updated;
 extern ServoCorrectionMap g_correction_maps[NUM_SERVOS];
 extern bool g_learning_loop_active;
+extern bool g_state_learning_active;
 extern bool g_random_walk_active;
 extern TaskHandle_t g_random_walk_task_handle;
 extern uint8_t g_servo_acceleration;

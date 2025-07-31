@@ -57,6 +57,7 @@ bool g_network_weights_updated = false;
 
 // --- Global flag for learning loop ---
 bool g_learning_loop_active = false;
+bool g_state_learning_active = false;
 // --- Global flag for standalone random walk ---
 bool g_random_walk_active = false;
 // CORRECTED: Slower and smaller random walk parameters
@@ -696,7 +697,7 @@ void learning_states_loop_task(void *pvParameters) {
     }
 
     while(1) {
-        if (g_learning_loop_active) {
+        if (g_state_learning_active) {
             // 1. SENSE current state
             read_sensor_state(current_state, arm_id);
 
