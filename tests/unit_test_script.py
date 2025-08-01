@@ -131,7 +131,10 @@ class MockSerial:
     def write(self, data):
         self._out_buffer += data
         # --- Emulate Console Responses ---
-        if b"get_pos 1" in data:
+        if b"get_pos 1 --arm 1" in data:
+            pos = self.servo_positions.get(1, 1234)
+            self._in_buffer += f"Servo 1 on arm 1 current position: {pos}\nrobot>".encode('utf-8')
+        elif b"get_pos 1" in data:
             pos = self.servo_positions.get(1, 1234) # Get servo 1 pos or default
             self._in_buffer += f"Servo 1 current position: {pos}\nrobot>".encode('utf-8')
         elif b"set-learning motors on" in data:
@@ -636,6 +639,8 @@ def run_console_tests(port, use_mock=False):
         # Test 1: Get Position
         output = client.send_command("get_pos 1")
         assert "current position" in output, "Console Test 1 Failed: 'get_pos' output incorrect."
+        output = client.send_command("get_pos 1 --arm 1")
+        assert "current position" in output, "Console Test 1 Failed: 'get_pos' with arm_id output incorrect."
         print("  [CONSOLE] Test 1 (get_pos): PASSED")
 
         # Test 2: Random Walk Start/Stop

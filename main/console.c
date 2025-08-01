@@ -30,6 +30,7 @@ static int cmd_set_learning(int argc, char **argv);
 // --- argtable3 structs for console commands ---
 static struct {
     struct arg_int *id;
+    struct arg_int *arm_id;
     struct arg_end *end;
 } get_current_args;
 
@@ -41,12 +42,14 @@ static struct {
 
 static struct {
     struct arg_int *id;
+    struct arg_int *arm_id;
     struct arg_end *end;
 } get_pos_args;
 
 static struct {
     struct arg_int *id;
     struct arg_int *pos;
+    struct arg_int *arm_id;
     struct arg_end *end;
 } set_pos_args;
 
@@ -64,6 +67,7 @@ static struct {
 static struct {
     struct arg_int *id;
     struct arg_int *accel;
+    struct arg_int *arm_id;
     struct arg_end *end;
 } set_servo_acceleration_args;
 
@@ -75,6 +79,7 @@ static struct {
 static struct {
     struct arg_int *id;
     struct arg_int *limit;
+    struct arg_int *arm_id;
     struct arg_end *end;
 } set_torque_limit_args;
 
@@ -134,17 +139,20 @@ void initialize_console(void) {
 
     set_pos_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
     set_pos_args.pos = arg_int1(NULL, NULL, "<pos>", "Position (0-4095)");
-    set_pos_args.end = arg_end(2);
+    set_pos_args.arm_id = arg_int0(NULL, "arm", "<n>", "Arm ID (0-2)");
+    set_pos_args.end = arg_end(3);
     const esp_console_cmd_t set_pos_cmd = { .command = "set_pos", .help = "Set a servo to a specific position", .func = &cmd_set_pos, .argtable = &set_pos_args };
     ESP_ERROR_CHECK(esp_console_cmd_register(&set_pos_cmd));
 
     get_pos_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID to query");
-    get_pos_args.end = arg_end(1);
+    get_pos_args.arm_id = arg_int0(NULL, "arm", "<n>", "Arm ID (0-2)");
+    get_pos_args.end = arg_end(2);
     const esp_console_cmd_t get_pos_cmd = { .command = "get_pos", .help = "Get the current position of a servo", .func = &cmd_get_pos, .argtable = &get_pos_args };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_pos_cmd));
 
     get_current_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID to query current from");
-    get_current_args.end = arg_end(1);
+    get_current_args.arm_id = arg_int0(NULL, "arm", "<n>", "Arm ID (0-2)");
+    get_current_args.end = arg_end(2);
     const esp_console_cmd_t get_current_cmd = { .command = "get_current", .help = "Get the current consumption of a servo (in mA)", .func = &cmd_get_current, .argtable = &get_current_args };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_current_cmd));
 
@@ -198,7 +206,8 @@ void initialize_console(void) {
 
     set_servo_acceleration_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
     set_servo_acceleration_args.accel = arg_int1(NULL, NULL, "<accel>", "Acceleration (0-254)");
-    set_servo_acceleration_args.end = arg_end(2);
+    set_servo_acceleration_args.arm_id = arg_int0(NULL, "arm", "<n>", "Arm ID (0-2)");
+    set_servo_acceleration_args.end = arg_end(3);
     const esp_console_cmd_t set_sa_cmd = {
         .command = "set_sa",
         .help = "Set acceleration for a specific servo",
@@ -280,7 +289,8 @@ void initialize_console(void) {
 
     set_torque_limit_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
     set_torque_limit_args.limit = arg_int1(NULL, NULL, "<limit>", "Torque limit (0-1000)");
-    set_torque_limit_args.end = arg_end(2);
+    set_torque_limit_args.arm_id = arg_int0(NULL, "arm", "<n>", "Arm ID (0-2)");
+    set_torque_limit_args.end = arg_end(3);
     const esp_console_cmd_t set_tl_cmd = {
         .command = "set_tl",
         .help = "Set torque limit for a servo (with read-back)",
@@ -508,8 +518,8 @@ int cmd_set_torque_limit(int argc, char **argv) {
         return 1;
     }
     int arm_id = 0;
-    if (argc > 2) {
-        arm_id = atoi(argv[0]);
+    if (set_torque_limit_args.arm_id->count > 0) {
+        arm_id = set_torque_limit_args.arm_id->ival[0];
     }
     int id = set_torque_limit_args.id->ival[0];
     int limit = set_torque_limit_args.limit->ival[0];
@@ -573,8 +583,8 @@ int cmd_set_servo_acceleration(int argc, char **argv) {
         return 1;
     }
     int arm_id = 0;
-    if (argc > 2) {
-        arm_id = atoi(argv[0]);
+    if (set_servo_acceleration_args.arm_id->count > 0) {
+        arm_id = set_servo_acceleration_args.arm_id->ival[0];
     }
     int id = set_servo_acceleration_args.id->ival[0];
     int accel = set_servo_acceleration_args.accel->ival[0];
@@ -734,8 +744,8 @@ int cmd_set_pos(int argc, char **argv) {
         return 1;
     }
     int arm_id = 0;
-    if (argc > 2) {
-        arm_id = atoi(argv[0]);
+    if (set_pos_args.arm_id->count > 0) {
+        arm_id = set_pos_args.arm_id->ival[0];
     }
     int id = set_pos_args.id->ival[0];
     int pos = set_pos_args.pos->ival[0];
@@ -768,8 +778,8 @@ int cmd_get_pos(int argc, char **argv) {
         return 1;
     }
     int arm_id = 0;
-    if (argc > 1) {
-        arm_id = atoi(argv[0]);
+    if (get_pos_args.arm_id->count > 0) {
+        arm_id = get_pos_args.arm_id->ival[0];
     }
     int id = get_pos_args.id->ival[0];
 
@@ -814,8 +824,8 @@ int cmd_get_current(int argc, char **argv) {
         return 1;
     }
     int arm_id = 0;
-    if (argc > 1) {
-        arm_id = atoi(argv[0]);
+    if (get_current_args.arm_id->count > 0) {
+        arm_id = get_current_args.arm_id->ival[0];
     }
     int id = get_current_args.id->ival[0];
 
