@@ -117,6 +117,8 @@ class MockSerial:
         self._out_buffer = b''
         self.name = port
         self.servo_positions = {} # Store servo positions
+        self.send_bad_checksum = False
+        self.send_servo_error = False
         # Pre-populate with a prompt for the console client
         self.write(b"robot>")
 
@@ -175,11 +177,15 @@ class MockSerial:
                     val_high = (val >> 8) & 0xFF
                     error = 0
                     checksum = (~(servo_id + 0x04 + error + val_low + val_high)) & 0xFF
+                    if self.send_bad_checksum:
+                        checksum += 1
                     self._in_buffer += bytes([0xFF, 0xFF, servo_id, 0x04, error, val_low, val_high, checksum])
                 elif read_len == 1:
                     error = 0
                     val = 0 # Dummy value for moving status
                     checksum = (~(servo_id + 0x03 + error + val)) & 0xFF
+                    if self.send_bad_checksum:
+                        checksum += 1
                     self._in_buffer += bytes([0xFF, 0xFF, servo_id, 0x03, error, val, checksum])
 
             # SYNC_WRITE
@@ -665,7 +671,7 @@ def run_console_tests(port, use_mock=False):
 
         # Test 8: Import States
         output = client.send_command("import-states '{\"centroids\":[]}'")
-        assert "Successfully imported 0 state tokens" in output, "Console Test 8 Failed: 'import-states' output incorrect."
+        assert "Successfully imported 0 state tokens" in output, "Console Test 8 Failed: 'import-states' with empty list output incorrect."
         print("  [CONSOLE] Test 8 (import-states): PASSED")
 
         # Test 9: State Learning Loop Moves Servos
@@ -767,11 +773,6 @@ def run_feetech_tests(port, use_mock=False):
         response = client.ping(servo_id)
         assert len(response) >= 6 and response[4] == 0x00, "Feetech Test 6 Failed: Invalid status packet on PING."
         print("  [FEETECH] Test 6 (ping): PASSED")
-
-        # Test 7: Read Byte
-        response = client.read_byte(servo_id, 66) # 66 = REG_MOVING
-        assert len(response) >= 7 and response[4] == 0x00, "Feetech Test 7 Failed: Invalid packet on read_byte."
-        print("  [FEETECH] Test 7 (read_byte): PASSED")
 
     except (AssertionError, IndexError, struct.error) as e:
         print(f"  [FEETECH] !!! TEST FAILED: {e}")

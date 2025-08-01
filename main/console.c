@@ -292,10 +292,22 @@ void initialize_console(void) {
     const esp_console_cmd_t stats_cmd = { .command = "get_stats", .help = "Get task runtime stats", .func = &cmd_get_stats };
     ESP_ERROR_CHECK(esp_console_cmd_register(&stats_cmd));
 
-    const esp_console_cmd_t export_states_cmd = { .command = "export_states", .help = "Export sensor states to the console", .func = &cmd_export_states };
+    const esp_console_cmd_t export_states_cmd = { .command = "export-states", .help = "Export sensor states to the console", .func = &cmd_export_states };
     ESP_ERROR_CHECK(esp_console_cmd_register(&export_states_cmd));
 
-    const esp_console_cmd_t import_states_cmd = { .command = "import_states", .help = "Import state tokens from JSON", .func = &cmd_import_states };
+    static struct {
+        struct arg_str *json;
+        struct arg_end *end;
+    } import_states_args;
+
+    import_states_args.json = arg_str1(NULL, NULL, "<json>", "JSON string of state tokens");
+    import_states_args.end = arg_end(1);
+    const esp_console_cmd_t import_states_cmd = {
+        .command = "import-states",
+        .help = "Import state tokens from JSON",
+        .func = &cmd_import_states,
+        .argtable = &import_states_args
+    };
     ESP_ERROR_CHECK(esp_console_cmd_register(&import_states_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());

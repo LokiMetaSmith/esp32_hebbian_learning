@@ -786,14 +786,13 @@ int cmd_export_states(int argc, char **argv) {
 }
 
 int cmd_import_states(int argc, char **argv) {
-    // This command will be complex, so we'll need to increase the console buffer size
-    // in menuconfig to handle the large JSON string.
-    if (argc != 2) {
-        printf("Usage: import_states <json_string>\n");
+    int nerrors = arg_parse(argc, argv, (void **)&import_states_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, import_states_args.end, argv[0]);
         return 1;
     }
 
-    cJSON *root = cJSON_Parse(argv[1]);
+    cJSON *root = cJSON_Parse(import_states_args.json->sval[0]);
     if (root == NULL) {
         printf("Error: Failed to parse JSON.\n");
         return 1;
