@@ -312,11 +312,6 @@ void initialize_console(void) {
     const esp_console_cmd_t stats_cmd = { .command = "get_stats", .help = "Get task runtime stats", .func = &cmd_get_stats };
     ESP_ERROR_CHECK(esp_console_cmd_register(&stats_cmd));
 
-    static struct {
-        struct arg_int *num_samples;
-        struct arg_end *end;
-    } export_states_args;
-
     export_states_args.num_samples = arg_int0(NULL, NULL, "<n>", "Number of samples to export (default: 2000)");
     export_states_args.end = arg_end(1);
     const esp_console_cmd_t export_states_cmd = {
@@ -326,11 +321,6 @@ void initialize_console(void) {
         .argtable = &export_states_args
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&export_states_cmd));
-
-    static struct {
-        struct arg_str *json;
-        struct arg_end *end;
-    } import_states_args;
 
     import_states_args.json = arg_str1(NULL, NULL, "<json>", "JSON string of state tokens");
     import_states_args.end = arg_end(1);
