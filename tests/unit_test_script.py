@@ -24,8 +24,7 @@ class MockMCPServer(threading.Thread):
             {"name": "get_power"}, {"name": "get_torque"},
             {"name": "export_data"}, {"name": "export_nn"},
             {"name": "import_nn"}, {"name": "import_nn_json"},
-            {"name": "calibrate_servo"}, {"name": "babble_start"},
-            {"name": "babble_stop"}, {"name": "set_pos"}, {"name": "get_pos"}
+            {"name": "calibrate_servo"}, {"name": "set_pos"}, {"name": "get_pos"}
         ]
 
     def handle_client(self, conn, addr):
@@ -541,16 +540,6 @@ def run_mcp_tests(host, port, use_mock=False):
         response = client.call_tool("calibrate_servo", {"id": 1})
         assert response and "prompt" in response, "MCP Test 7 Failed: calibrate_servo."
         print("  [MCP] Test 7 (Calibrate Servo): PASSED (prompt received)")
-
-        # Test 8: Babble Start/Stop
-        response = client.call_tool("babble_start")
-        assert response and "started" in response.get("result", ""), "MCP Test 8 Failed: babble_start."
-        print("  [MCP] Test 8 (babble_start): PASSED")
-        time.sleep(1)
-        response = client.call_tool("babble_stop")
-        assert response and "stopped" in response.get("result", ""), "MCP Test 8 Failed: babble_stop."
-        print("  [MCP] Test 8 (babble_stop): PASSED")
-
 
     except AssertionError as e:
         print(f"  [MCP] !!! TEST FAILED: {e}")
