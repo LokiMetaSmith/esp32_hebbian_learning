@@ -116,11 +116,24 @@ class MockSerial:
         self._in_buffer = b''
         self._out_buffer = b''
         self.name = port
-        self.servo_positions = {} # Store servo positions
-        self.send_bad_checksum = False
-        self.send_servo_error = False
+        self.servo_positions = {}
+
+        # --- NEW: Flags for controlling error simulation ---
+        self.simulate_no_response = False
+        self.simulate_corrupt_response = False
+        self.simulate_feetech_error_bit = False
+
         # Pre-populate with a prompt for the console client
         self.write(b"robot>")
+
+    # --- NEW: Helper method to control error flags from tests ---
+    def set_error_simulation(self, no_response=False, corrupt_response=False, feetech_error_bit=False):
+        """Sets the error simulation flags for the next interaction."""
+        self.simulate_no_response = no_response
+        self.simulate_corrupt_response = corrupt_response
+        self.simulate_feetech_error_bit = feetech_error_bit
+        # Always clear the input buffer when changing modes
+        self.flushInput()
 
     def close(self):
         self.is_open = False

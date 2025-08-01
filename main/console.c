@@ -257,26 +257,6 @@ void initialize_console(void) {
      };
     ESP_ERROR_CHECK(esp_console_cmd_register(&set_max_accel_cmd));
 
-    set_mode_args.mode = arg_int1(NULL, NULL, "<mode>", "Operating mode (0:Passthrough, 1:Correction, 2:Smoothing, 3:Hybrid)");
-    set_mode_args.end = arg_end(1);
-    const esp_console_cmd_t set_mode_cmd = {
-        .command = "set_mode",
-        .help = "Set the operating mode",
-        .func = &cmd_set_mode,
-        .argtable = &set_mode_args
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&set_mode_cmd));
-
-    set_mode_args.mode = arg_int1(NULL, NULL, "<mode>", "Operating mode (0:Passthrough, 1:Correction, 2:Smoothing, 3:Hybrid)");
-    set_mode_args.end = arg_end(1);
-    const esp_console_cmd_t set_mode_cmd = {
-        .command = "set_mode",
-        .help = "Set the operating mode",
-        .func = &cmd_set_mode,
-        .argtable = &set_mode_args
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&set_mode_cmd));
-
     get_servo_acceleration_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
     get_servo_acceleration_args.end = arg_end(1);
     const esp_console_cmd_t get_sa_cmd = {
