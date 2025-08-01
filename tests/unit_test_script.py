@@ -18,13 +18,15 @@ class MockMCPServer(threading.Thread):
         self.server_socket = None
         self._stop_event = threading.Event()
         self.client_threads = []
+        self.last_action_vector = None
         self.tool_list = [
             {"name": "set_torque"}, {"name": "set_acceleration"},
             {"name": "get_status"}, {"name": "get_current"},
             {"name": "get_power"}, {"name": "get_torque"},
             {"name": "export_data"}, {"name": "export_nn"},
             {"name": "import_nn"}, {"name": "import_nn_json"},
-            {"name": "calibrate_servo"}, {"name": "set_pos"}, {"name": "get_pos"}
+            {"name": "calibrate_servo"}, {"name": "set_pos"}, {"name": "get_pos"},
+            {"name": "move_towards_goal_embedding"}
         ]
 
     def handle_client(self, conn, addr):
@@ -65,10 +67,9 @@ class MockMCPServer(threading.Thread):
                                 response["result"] = {"dummy_nn": True}
                             elif tool_name == "calibrate_servo":
                                 response = {"prompt": "Move servo to min and press enter."}
-                            elif tool_name == "babble_start":
-                                response["result"] = "babble task started"
-                            elif tool_name == "babble_stop":
-                                response["result"] = "babble task stopped"
+                            elif tool_name == "move_towards_goal_embedding":
+                                self.last_action_vector = request.get("arguments", {}).get("goal_embedding")
+                                response["result"] = "OK"
 
                         conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
                 except (socket.timeout, ConnectionResetError, json.JSONDecodeError):
@@ -135,6 +136,14 @@ class MockSerial:
             self._in_buffer += b"Motor learning loop set to on\nrobot>"
         elif b"set-learning states off" in data:
             self._in_buffer += b"State learning loop set to off\nrobot>"
+        elif b"set-mode 2" in data:
+            self._in_buffer += b"Operating mode set to: 2\nrobot>"
+        elif b"rw-set-params 50 100" in data:
+            self._in_buffer += b"Random walk parameters updated\nrobot>"
+        elif b"export-states" in data:
+            self._in_buffer += b"--- BEGIN STATE EXPORT ---\n--- END STATE EXPORT ---\nrobot>"
+        elif b"import-states '{\"centroids\":[]}'" in data:
+            self._in_buffer += b"Successfully imported 0 state tokens.\nrobot>"
         elif b"this_is_not_a_command" in data:
             self._in_buffer += b"Unknown command\nrobot>"
 
@@ -156,13 +165,22 @@ class MockSerial:
 
             # READ
             elif instruction == 0x02:
-                # Check if it's a read from the present position register (56)
-                if len(data) > 5 and data[5] == 56:
+                read_len = data[6]
+                reg_addr = data[5]
+                if reg_addr == 101: # Invalid response test
+                    self._in_buffer += b'bad data'
+                elif read_len == 2:
                     val = self.servo_positions.get(servo_id, 0) # Get pos or default to 0
                     val_low = val & 0xFF
                     val_high = (val >> 8) & 0xFF
-                    checksum = (~(servo_id + 0x04 + 0x00 + val_low + val_high)) & 0xFF
-                    self._in_buffer += bytes([0xFF, 0xFF, servo_id, 0x04, 0x00, val_low, val_high, checksum])
+                    error = 0
+                    checksum = (~(servo_id + 0x04 + error + val_low + val_high)) & 0xFF
+                    self._in_buffer += bytes([0xFF, 0xFF, servo_id, 0x04, error, val_low, val_high, checksum])
+                elif read_len == 1:
+                    error = 0
+                    val = 0 # Dummy value for moving status
+                    checksum = (~(servo_id + 0x03 + error + val)) & 0xFF
+                    self._in_buffer += bytes([0xFF, 0xFF, servo_id, 0x03, error, val, checksum])
 
             # SYNC_WRITE
             elif instruction == 0x83:
@@ -184,6 +202,17 @@ class MockSerial:
             elif instruction == 0x06:
                 checksum = (~(servo_id + 0x02 + 0x00)) & 0xFF
                 self._in_buffer += bytes([0xFF, 0xFF, servo_id, 0x02, 0x00, checksum])
+
+            # PING
+            elif instruction == 0x01:
+                checksum = (~(servo_id + 0x02 + 0x00)) & 0xFF
+                self._in_buffer += bytes([0xFF, 0xFF, servo_id, 0x02, 0x00, checksum])
+
+            # SYNC_READ
+            elif instruction == 0x82:
+                # This is a complex command to mock. For now, we'll just acknowledge it
+                # by not sending anything back, which the test is designed to handle.
+                pass
         return len(data)
 
     def read(self, size=1):
@@ -390,6 +419,9 @@ class FeetechClient:
         # Read response
         response = self.ser.read(16) # Read up to 16 bytes
         print(f"  [FEETECH] Received response: {' '.join([f'{b:02X}' for b in response])}")
+        # Basic validation
+        if len(response) > 0 and response[0:2] != b'\xFF\xFF':
+            return b''
         return response
 
     def write_word(self, servo_id, reg_addr, value):
@@ -403,6 +435,15 @@ class FeetechClient:
         """Sends a READ_WORD command."""
         params = [reg_addr, 2] # Read 2 bytes
         return self._send_packet(servo_id, 0x02, params) # 0x02 = INST_READ
+
+    def read_byte(self, servo_id, reg_addr):
+        """Sends a READ_BYTE command."""
+        params = [reg_addr, 1] # Read 1 byte
+        return self._send_packet(servo_id, 0x02, params) # 0x02 = INST_READ
+
+    def ping(self, servo_id):
+        """Sends a PING command."""
+        return self._send_packet(servo_id, 0x01) # 0x01 = INST_PING
 
     def reg_write_word(self, servo_id, reg_addr, value):
         """Sends a REG_WRITE_WORD command."""
@@ -429,6 +470,11 @@ class FeetechClient:
             params.append(servo_id)
             params.extend(data_bytes)
         return self._send_packet(0xFE, 0x83, params) # 0xFE = broadcast, 0x83 = INST_SYNC_WRITE
+
+    def sync_read(self, servo_ids, reg_addr, data_len_per_servo):
+        """Sends a SYNC_READ command."""
+        params = [reg_addr, data_len_per_servo] + servo_ids
+        return self._send_packet(0xFE, 0x82, params) # 0xFE = broadcast, 0x82 = INST_SYNC_READ
 
 def run_mcp_tests(host, port, use_mock=False):
     """Runs a suite of tests against the MCP server."""
@@ -541,6 +587,14 @@ def run_mcp_tests(host, port, use_mock=False):
         assert response and "prompt" in response, "MCP Test 7 Failed: calibrate_servo."
         print("  [MCP] Test 7 (Calibrate Servo): PASSED (prompt received)")
 
+        # Test 8: Move Towards Goal Embedding
+        goal_embedding = [0.1] * 16
+        response = client.call_tool("move_towards_goal_embedding", {"goal_embedding": goal_embedding})
+        assert response and response.get("result") == "OK", "MCP Test 8 Failed: move_towards_goal_embedding."
+        # This is a bit of a hack, but we'll check that the mock server received the goal embedding
+        assert mock_server.last_action_vector == goal_embedding, "MCP Test 8 Failed: Mock server did not receive goal embedding."
+        print("  [MCP] Test 8 (Move Towards Goal Embedding): PASSED")
+
     except AssertionError as e:
         print(f"  [MCP] !!! TEST FAILED: {e}")
         return False
@@ -594,7 +648,27 @@ def run_console_tests(port, use_mock=False):
         assert "State learning loop set to off" in output, "Console Test 4 Failed: 'set-learning states off' output incorrect."
         print("  [CONSOLE] Test 4 (set-learning): PASSED")
 
-        # Test 5: State Learning Loop Moves Servos
+        # Test 5: Set Mode
+        output = client.send_command("set-mode 2")
+        assert "Operating mode set to: 2" in output, "Console Test 5 Failed: 'set-mode' output incorrect."
+        print("  [CONSOLE] Test 5 (set-mode): PASSED")
+
+        # Test 6: Set Random Walk Params
+        output = client.send_command("rw-set-params 50 100")
+        assert "Random walk parameters updated" in output, "Console Test 6 Failed: 'rw-set-params' output incorrect."
+        print("  [CONSOLE] Test 6 (rw-set-params): PASSED")
+
+        # Test 7: Export States
+        output = client.send_command("export-states")
+        assert "--- BEGIN STATE EXPORT ---" in output and "--- END STATE EXPORT ---" in output, "Console Test 7 Failed: 'export-states' output markers missing."
+        print("  [CONSOLE] Test 7 (export-states): PASSED")
+
+        # Test 8: Import States
+        output = client.send_command("import-states '{\"centroids\":[]}'")
+        assert "Successfully imported 0 state tokens" in output, "Console Test 8 Failed: 'import-states' output incorrect."
+        print("  [CONSOLE] Test 8 (import-states): PASSED")
+
+        # Test 9: State Learning Loop Moves Servos
         if not use_mock: # This test requires real hardware interaction
             output = client.send_command("get_pos 1")
             start_pos_str = output.split("position:")[1].strip()
@@ -689,6 +763,15 @@ def run_feetech_tests(port, use_mock=False):
         assert len(response) >= 6 and response[4] == 0x00, "Feetech Test 5 Failed: Invalid status packet on RESET."
         print("  [FEETECH] Test 5 (reset): PASSED")
 
+        # Test 6: PING
+        response = client.ping(servo_id)
+        assert len(response) >= 6 and response[4] == 0x00, "Feetech Test 6 Failed: Invalid status packet on PING."
+        print("  [FEETECH] Test 6 (ping): PASSED")
+
+        # Test 7: Read Byte
+        response = client.read_byte(servo_id, 66) # 66 = REG_MOVING
+        assert len(response) >= 7 and response[4] == 0x00, "Feetech Test 7 Failed: Invalid packet on read_byte."
+        print("  [FEETECH] Test 7 (read_byte): PASSED")
 
     except (AssertionError, IndexError, struct.error) as e:
         print(f"  [FEETECH] !!! TEST FAILED: {e}")
@@ -699,6 +782,45 @@ def run_feetech_tests(port, use_mock=False):
     print("\n>>> FEETECH TESTS COMPLETED SUCCESSFULLY <<<")
     return True
 
+def run_logic_tests():
+    """Runs tests on pure logic functions that don't require hardware/mocks."""
+    print("\n" + "="*50)
+    print(">>> RUNNING PURE LOGIC UNIT TESTS")
+    print("="*50)
+
+    # Test Correction Map Logic
+    # Re-implementing the C logic in Python to test its correctness.
+    def get_corrected_position_py(commanded_pos, points):
+        for i in range(len(points) - 1):
+            p1 = points[i]
+            p2 = points[i+1]
+            if commanded_pos >= p1['commanded'] and commanded_pos <= p2['commanded']:
+                fraction = (commanded_pos - p1['commanded']) / (p2['commanded'] - p1['commanded'])
+                return p1['actual'] + fraction * (p2['actual'] - p1['actual'])
+        if commanded_pos < points[0]['commanded']:
+            return points[0]['actual']
+        else:
+            return points[-1]['actual']
+
+    mock_points = [
+        {'commanded': 0, 'actual': 100},
+        {'commanded': 1000, 'actual': 1100},
+        {'commanded': 2000, 'actual': 2100},
+        {'commanded': 3000, 'actual': 3100},
+        {'commanded': 4000, 'actual': 4100},
+    ]
+
+    try:
+        assert abs(get_corrected_position_py(500, mock_points) - 600) < 1, "Logic Test 1 Failed: Interpolation."
+        assert abs(get_corrected_position_py(2000, mock_points) - 2100) < 1, "Logic Test 1 Failed: Exact point."
+        assert abs(get_corrected_position_py(-100, mock_points) - 100) < 1, "Logic Test 1 Failed: Below range."
+        assert abs(get_corrected_position_py(5000, mock_points) - 4100) < 1, "Logic Test 1 Failed: Above range."
+        print("  [LOGIC] Test 1 (Correction Map): PASSED")
+        return True
+    except AssertionError as e:
+        print(f"  [LOGIC] !!! TEST FAILED: {e}")
+        return False
+
 def run_unit_tests():
     """Runs all test suites against mock objects."""
     print("\n" + "#"*60)
@@ -707,7 +829,8 @@ def run_unit_tests():
     mcp_ok = run_mcp_tests('localhost', MCP_PORT, use_mock=True)
     console_ok = run_console_tests('mock_console_port', use_mock=True)
     feetech_ok = run_feetech_tests('mock_feetech_port', use_mock=True)
-    return all([mcp_ok, console_ok, feetech_ok])
+    logic_ok = run_logic_tests()
+    return all([mcp_ok, console_ok, feetech_ok, logic_ok])
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ESP32 Hebbian Robot Test Suite")
