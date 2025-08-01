@@ -146,6 +146,12 @@ class MockSerial:
             self._in_buffer += b"--- BEGIN STATE EXPORT ---\n--- END STATE EXPORT ---\nrobot>"
         elif b"import-states '{\"centroids\":[]}'" in data:
             self._in_buffer += b"Successfully imported 0 state tokens.\nrobot>"
+        elif b"set-mode 2" in data:
+            self._in_buffer += b"Operating mode set to: 2\nrobot>"
+        elif b"rw-set-params 50 100" in data:
+            self._in_buffer += b"Random walk parameters updated\nrobot>"
+        elif b"export-states 1" in data:
+            self._in_buffer += b"--- BEGIN STATE EXPORT ---\n0.1,0.2,0.3\n--- END STATE EXPORT ---\nrobot>"
         elif b"this_is_not_a_command" in data:
             self._in_buffer += b"Unknown command\nrobot>"
 
@@ -673,6 +679,21 @@ def run_console_tests(port, use_mock=False):
         output = client.send_command("import-states '{\"centroids\":[]}'")
         assert "Successfully imported 0 state tokens" in output, "Console Test 8 Failed: 'import-states' with empty list output incorrect."
         print("  [CONSOLE] Test 8 (import-states): PASSED")
+
+        # Test 9: Set Mode
+        output = client.send_command("set-mode 2")
+        assert "Operating mode set to: 2" in output, "Console Test 9 Failed: 'set-mode' output incorrect."
+        print("  [CONSOLE] Test 9 (set-mode): PASSED")
+
+        # Test 10: Set Random Walk Params
+        output = client.send_command("rw-set-params 50 100")
+        assert "Random walk parameters updated" in output, "Console Test 10 Failed: 'rw-set-params' output incorrect."
+        print("  [CONSOLE] Test 10 (rw-set-params): PASSED")
+
+        # Test 11: Export States
+        output = client.send_command("export-states 1")
+        assert "--- BEGIN STATE EXPORT ---" in output and "--- END STATE EXPORT ---" in output, "Console Test 11 Failed: 'export-states' output markers missing."
+        print("  [CONSOLE] Test 11 (export-states): PASSED")
 
         # Test 9: State Learning Loop Moves Servos
         if not use_mock: # This test requires real hardware interaction

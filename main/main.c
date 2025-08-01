@@ -765,8 +765,15 @@ int cmd_set_mode(int argc, char **argv) {
 }
 
 int cmd_export_states(int argc, char **argv) {
-    int num_samples = 2000; // Default
-    // TODO: Add argument parsing for num_samples
+    int nerrors = arg_parse(argc, argv, (void **)&export_states_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, export_states_args.end, argv[0]);
+        return 1;
+    }
+    int num_samples = export_states_args.num_samples->ival[0];
+    if (num_samples <= 0) {
+        num_samples = 2000;
+    }
     printf("--- BEGIN STATE EXPORT ---\n");
     float sensor_data[PRED_NEURONS]; // Use PRED_NEURONS as it's the size of the state vector
 

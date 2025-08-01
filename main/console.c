@@ -258,6 +258,16 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&set_mode_cmd));
 
+    set_mode_args.mode = arg_int1(NULL, NULL, "<mode>", "Operating mode (0:Passthrough, 1:Correction, 2:Smoothing, 3:Hybrid)");
+    set_mode_args.end = arg_end(1);
+    const esp_console_cmd_t set_mode_cmd = {
+        .command = "set_mode",
+        .help = "Set the operating mode",
+        .func = &cmd_set_mode,
+        .argtable = &set_mode_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_mode_cmd));
+
     get_servo_acceleration_args.id = arg_int1(NULL, NULL, "<id>", "Servo ID (1-6)");
     get_servo_acceleration_args.end = arg_end(1);
     const esp_console_cmd_t get_sa_cmd = {
@@ -292,7 +302,19 @@ void initialize_console(void) {
     const esp_console_cmd_t stats_cmd = { .command = "get_stats", .help = "Get task runtime stats", .func = &cmd_get_stats };
     ESP_ERROR_CHECK(esp_console_cmd_register(&stats_cmd));
 
-    const esp_console_cmd_t export_states_cmd = { .command = "export-states", .help = "Export sensor states to the console", .func = &cmd_export_states };
+    static struct {
+        struct arg_int *num_samples;
+        struct arg_end *end;
+    } export_states_args;
+
+    export_states_args.num_samples = arg_int0(NULL, NULL, "<n>", "Number of samples to export (default: 2000)");
+    export_states_args.end = arg_end(1);
+    const esp_console_cmd_t export_states_cmd = {
+        .command = "export-states",
+        .help = "Export sensor states to the console",
+        .func = &cmd_export_states,
+        .argtable = &export_states_args
+    };
     ESP_ERROR_CHECK(esp_console_cmd_register(&export_states_cmd));
 
     static struct {
