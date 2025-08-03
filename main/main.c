@@ -743,11 +743,6 @@ void learning_states_loop_task(void *pvParameters) {
 
 // --- CONSOLE COMMANDS & SETUP ---
 
-static struct {
-    struct arg_int *mode;
-    struct arg_end *end;
-} set_mode_args;
-
 int cmd_set_mode(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&set_mode_args);
     if (nerrors != 0) {
@@ -852,14 +847,6 @@ int cmd_import_states(int argc, char **argv) {
 
     return 0;
 }
-
-
-
-static struct {
-    struct arg_int *delta_pos;
-    struct arg_int *interval_ms;
-    struct arg_end *end;
-} rw_set_params_args;
 
 int cmd_rw_set_params(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&rw_set_params_args);

@@ -21,6 +21,17 @@ extern struct {
     struct arg_end *end;
 } import_states_args;
 
+extern struct {
+    struct arg_int *mode;
+    struct arg_end *end;
+} set_mode_args;
+
+extern struct {
+    struct arg_int *delta_pos;
+    struct arg_int *interval_ms;
+    struct arg_end *end;
+} rw_set_params_args;
+
 void initialize_console(void);
 void console_task(void *pvParameters);
 
