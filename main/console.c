@@ -28,6 +28,27 @@ static int cmd_set_learning(int argc, char **argv);
 
 
 // --- argtable3 structs for console commands ---
+struct {
+    struct arg_int *num_samples;
+    struct arg_end *end;
+} export_states_args;
+
+struct {
+    struct arg_str *json;
+    struct arg_end *end;
+} import_states_args;
+
+struct {
+    struct arg_int *delta_pos;
+    struct arg_int *interval_ms;
+    struct arg_end *end;
+} rw_set_params_args;
+
+struct {
+    struct arg_int *mode;
+    struct arg_end *end;
+} set_mode_args;
+
 static struct {
     struct arg_int *id;
     struct arg_int *arm_id;

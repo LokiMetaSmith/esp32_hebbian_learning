@@ -21,8 +21,6 @@
 #include "commands.h"
 
 // --- Wi-Fi & Server Configuration ---
-#define WIFI_SSID      "OKLATHON_25"      // <-- IMPORTANT: SET YOUR WIFI SSID
-#define WIFI_PASS      "oklathon2025"  // <-- IMPORTANT: SET YOUR WIFI PASSWORD
 #define MCP_TCP_PORT   8888
 #define MAX_CLIENTS    1
 #define WIFI_CONNECT_TIMEOUT_MS 60000 // 1 minute
