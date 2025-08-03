@@ -11,6 +11,7 @@
 #include "main.h"
 #include "common.h"
 #include "console.h"
+#include "config.h"
 #include "esp_dsp.h"
 #include "driver/usb_serial_jtag.h" // For native USB CDC
 #include "tinyusb.h"

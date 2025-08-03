@@ -21,4 +21,15 @@
 #define MAX_EXPECTED_SERVO_CURRENT_A 2.0f   // Used for normalizing current sensor readings
 #define DEFAULT_SERVO_ACCELERATION 50       // Default acceleration value (0-254, 0=instant)
 
+// --- WiFi Configuration ---
+// Create a file named "wifi_config.h" in the same directory
+// to override these default credentials.
+#if __has_include("wifi_config.h")
+#include "wifi_config.h"
+#else
+#warning "wifi_config.h not found, using default WiFi credentials."
+#define WIFI_SSID "default_ssid"
+#define WIFI_PASS "default_password"
+#endif
+
 #endif // CONFIG_H

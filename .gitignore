@@ -30,3 +30,6 @@ nbproject/
 # Operating System files
 .DS_Store
 Thumbs.db
+
+# Local configuration files
+main/wifi_config.h
