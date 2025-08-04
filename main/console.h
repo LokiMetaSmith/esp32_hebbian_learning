@@ -11,26 +11,30 @@
 
 #include "argtable3/argtable3.h"
 
-extern struct {
+struct export_states_args_t {
     struct arg_int *num_samples;
     struct arg_end *end;
-} export_states_args;
+};
+extern struct export_states_args_t export_states_args;
 
-extern struct {
+struct import_states_args_t {
     struct arg_str *json;
     struct arg_end *end;
-} import_states_args;
+};
+extern struct import_states_args_t import_states_args;
 
-extern struct {
+struct set_mode_args_t {
     struct arg_int *mode;
     struct arg_end *end;
-} set_mode_args;
+};
+extern struct set_mode_args_t set_mode_args;
 
-extern struct {
+struct rw_set_params_args_t {
     struct arg_int *delta_pos;
     struct arg_int *interval_ms;
     struct arg_end *end;
-} rw_set_params_args;
+};
+extern struct rw_set_params_args_t rw_set_params_args;
 
 void initialize_console(void);
 void console_task(void *pvParameters);
