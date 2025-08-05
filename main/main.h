@@ -138,6 +138,8 @@ extern float g_best_fitness_achieved;
 void initialize_network(HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl);
 void random_walk_task_fn(void *pvParameters);
 void start_calibration_task(uint8_t servo_id);
+void planner_init(void);
+void planner_set_goal(const float* target_pose);
 
 
 #endif // MAIN_H
