@@ -10,6 +10,7 @@
 #include "console.h"
 #include "main.h"
 #include "common.h"
+#include "planner.h"
 #include "esp_console.h"
 #include "esp_vfs.h"
 #include "esp_vfs_dev.h"
@@ -107,6 +108,16 @@ static struct {
      struct arg_end *end;
 
 } set_traj_step_args;
+
+static struct {
+    struct arg_int *p1;
+    struct arg_int *p2;
+    struct arg_int *p3;
+    struct arg_int *p4;
+    struct arg_int *p5;
+    struct arg_int *p6;
+    struct arg_end *end;
+} plan_move_args;
 
 void initialize_console(void) {
     fflush(stdout);
@@ -305,6 +316,21 @@ void initialize_console(void) {
         .argtable = &import_states_args
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&import_states_cmd));
+
+    plan_move_args.p1 = arg_int1(NULL, NULL, "<p1>", "Servo 1 Position");
+    plan_move_args.p2 = arg_int1(NULL, NULL, "<p2>", "Servo 2 Position");
+    plan_move_args.p3 = arg_int1(NULL, NULL, "<p3>", "Servo 3 Position");
+    plan_move_args.p4 = arg_int1(NULL, NULL, "<p4>", "Servo 4 Position");
+    plan_move_args.p5 = arg_int1(NULL, NULL, "<p5>", "Servo 5 Position");
+    plan_move_args.p6 = arg_int1(NULL, NULL, "<p6>", "Servo 6 Position");
+    plan_move_args.end = arg_end(6);
+    const esp_console_cmd_t plan_move_cmd = {
+        .command = "plan-move",
+        .help = "Plan and execute a move to a target pose",
+        .func = &cmd_plan_move,
+        .argtable = &plan_move_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&plan_move_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
@@ -972,5 +998,25 @@ int cmd_set_max_accel(int argc, char **argv) {
 
 int cmd_get_stats(int argc, char **argv) {
     printf("Task stats not implemented.\n");
+    return 0;
+}
+
+int cmd_plan_move(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&plan_move_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, plan_move_args.end, argv[0]);
+        return 1;
+    }
+
+    float target_pose[NUM_SERVOS];
+    target_pose[0] = (float)plan_move_args.p1->ival[0] / SERVO_POS_MAX;
+    target_pose[1] = (float)plan_move_args.p2->ival[0] / SERVO_POS_MAX;
+    target_pose[2] = (float)plan_move_args.p3->ival[0] / SERVO_POS_MAX;
+    target_pose[3] = (float)plan_move_args.p4->ival[0] / SERVO_POS_MAX;
+    target_pose[4] = (float)plan_move_args.p5->ival[0] / SERVO_POS_MAX;
+    target_pose[5] = (float)plan_move_args.p6->ival[0] / SERVO_POS_MAX;
+
+    planner_set_goal(target_pose);
+
     return 0;
 }
