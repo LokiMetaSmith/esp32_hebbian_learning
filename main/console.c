@@ -26,6 +26,7 @@ static const char *TAG = "CONSOLE";
 
 // --- Forward declarations for command functions ---
 static int cmd_set_learning(int argc, char **argv);
+static int cmd_plan_move(int argc, char **argv);
 
 
 // --- argtable3 structs for console commands ---
