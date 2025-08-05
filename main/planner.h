@@ -2,6 +2,7 @@
 #define PLANNER_H
 
 #include "common.h"
+#include "main.h"
 
 // --- Gesture Token Definition ---
 

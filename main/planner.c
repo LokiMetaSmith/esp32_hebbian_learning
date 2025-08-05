@@ -1,6 +1,5 @@
 #include "planner.h"
 #include "esp_log.h"
-#include "main.h" // For execute_on_robot_arm and other globals
 
 static const char *TAG = "PLANNER";
 
