@@ -1262,3 +1262,36 @@ void start_calibration_task(uint8_t servo_id) {
     params->servo_id = servo_id;
     xTaskCreate(calibration_task, "calibration_task", 4096, params, 5, NULL);
 }
+
+void data_acquisition_task(void *pvParameters) {
+    ESP_LOGI(TAG, "Starting data acquisition task...");
+    const int num_trajectories = 10;
+    const int trajectory_length = 50;
+
+    printf("--- BEGIN TRAJECTORY DATA ---\n");
+
+    for (int i = 0; i < num_trajectories; i++) {
+        // Start a new trajectory
+        printf("TRAJ_START\n");
+
+        // Perform a random walk for a fixed number of steps
+        for (int j = 0; j < trajectory_length; j++) {
+            perform_random_walk(NULL, 0);
+            vTaskDelay(pdMS_TO_TICKS(100)); // Wait for move to settle
+
+            // Read and print sensor state
+            float sensor_data[PRED_NEURONS];
+            read_sensor_state(sensor_data, 0);
+            for (int k = 0; k < PRED_NEURONS; k++) {
+                printf("%f,", sensor_data[k]);
+            }
+            printf("\n");
+        }
+
+        printf("TRAJ_END\n");
+    }
+
+    printf("--- END TRAJECTORY DATA ---\n");
+    ESP_LOGI(TAG, "Data acquisition task finished.");
+    vTaskDelete(NULL);
+}

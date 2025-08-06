@@ -27,6 +27,7 @@ static const char *TAG = "CONSOLE";
 // --- Forward declarations for command functions ---
 static int cmd_set_learning(int argc, char **argv);
 static int cmd_plan_move(int argc, char **argv);
+static int cmd_start_data_acq(int argc, char **argv);
 
 
 // --- argtable3 structs for console commands ---
@@ -332,6 +333,13 @@ void initialize_console(void) {
         .argtable = &plan_move_args
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&plan_move_cmd));
+
+    const esp_console_cmd_t start_data_acq_cmd = {
+        .command = "start-data-acq",
+        .help = "Start motor babbling and stream trajectory data",
+        .func = &cmd_start_data_acq,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&start_data_acq_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
@@ -884,6 +892,13 @@ int cmd_set_learning(int argc, char **argv) {
         return 1;
     }
 
+    return 0;
+}
+
+extern void data_acquisition_task(void *pvParameters);
+
+int cmd_start_data_acq(int argc, char **argv) {
+    xTaskCreate(data_acquisition_task, "data_acq_task", 4096, NULL, 5, NULL);
     return 0;
 }
 
