@@ -122,6 +122,7 @@ class MockSerial:
         self.simulate_no_response = False
         self.simulate_corrupt_response = False
         self.simulate_feetech_error_bit = False
+        self.send_bad_checksum = False
 
         # Pre-populate with a prompt for the console client
         self.write(b"robot>")
