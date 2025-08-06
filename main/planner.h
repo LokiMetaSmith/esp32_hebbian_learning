@@ -37,6 +37,7 @@ typedef struct {
 void planner_task(void *pvParameters);
 void planner_init(void);
 void planner_set_goal(const float* target_pose);
+void execute_on_robot_arm(const float* action_vector, int arm_id);
 
 
 #endif // PLANNER_H
