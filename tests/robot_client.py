@@ -68,6 +68,8 @@ class MockMCPServer(threading.Thread):
                             elif tool_name == "move_towards_goal_embedding":
                                 self.last_action_vector = request.get("arguments", {}).get("goal_embedding")
                                 response["result"] = "OK"
+                            elif tool_name == "set_goal_embedding":
+                                response = {"status": "OK"}
 
                         conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
                 except (socket.timeout, ConnectionResetError, json.JSONDecodeError):
