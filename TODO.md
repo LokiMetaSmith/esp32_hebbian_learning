@@ -21,19 +21,14 @@ Here are several potential directions for the project, ranging from improving co
     *   **Real-time Obstacle Avoidance:** Integrate sensor data (like an IR or ultrasonic sensor) to allow the planner to dynamically modify or select different gestures to avoid obstacles. (Future enhancement)
 *   **Goal:** To make the robot more autonomous and adaptable to its environment.
 
-### 3. Add a Higher-Level Behavior System
+### 3. Implement External Control via Goal Embedding Sequences
 
-*   **Status:** Not Started
-*   **Description:** Build a simple state machine or behavior tree on top of the planner to sequence complex tasks.
-*   **Example:**
-    ```
-    BEHAVIOR_FETCH_OBJECT:
-    1. PLAN to "ready" position.
-    2. PLAN to "reach for object" position.
-    3. EXECUTE "grasp" gesture.
-    4. PLAN to "transport" position.
-    ```
-*   **Goal:** To move from single-goal planning to multi-step, purposeful action.
+*   **Status:** **DONE**
+*   **Description:** The system now supports external control by accepting a sequence of goal embeddings. This allows for dynamic, multi-step behaviors to be orchestrated by a higher-level system (e.g., an LLM).
+*   **Tasks:**
+    *   An `execute_behavior` MCP tool has been added to accept a queue of goal embeddings.
+    *   The on-device behavior system processes this queue, feeding individual goals to the planner.
+*   **Goal:** To enable flexible, high-level control of the robot's behavior from an external source.
 
 ### 4. Improve Energy Efficiency Feedback
 

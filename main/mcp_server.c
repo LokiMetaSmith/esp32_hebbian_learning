@@ -19,6 +19,7 @@
 #include "nvs_storage.h"
 #include "commands.h"
 #include "planner.h"
+#include "behavior.h"
 
 // --- Wi-Fi & Server Configuration ---
 #define MCP_TCP_PORT   8888
@@ -73,6 +74,30 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
             }
         } else {
             cJSON_AddStringToObject(response, "status", "Invalid goal embedding");
+        }
+    } else if (strcmp(tool_name, "execute_behavior") == 0) {
+        cJSON *embeddings_json = cJSON_GetObjectItem(arguments_json, "embeddings");
+        if (cJSON_IsArray(embeddings_json)) {
+            int num_embeddings = cJSON_GetArraySize(embeddings_json);
+            for (int i = 0; i < num_embeddings; i++) {
+                cJSON *embedding_json = cJSON_GetArrayItem(embeddings_json, i);
+                if (cJSON_IsArray(embedding_json)) {
+                    int num_dims = cJSON_GetArraySize(embedding_json);
+                    if (num_dims == HIDDEN_NEURONS) {
+                        float goal_embedding[HIDDEN_NEURONS];
+                        for (int j = 0; j < num_dims; j++) {
+                            cJSON *dim_json = cJSON_GetArrayItem(embedding_json, j);
+                            if (cJSON_IsNumber(dim_json)) {
+                                goal_embedding[j] = (float)dim_json->valuedouble;
+                            }
+                        }
+                        behavior_queue_embedding(goal_embedding);
+                    }
+                }
+            }
+            cJSON_AddStringToObject(response, "status", "OK");
+        } else {
+            cJSON_AddStringToObject(response, "status", "Invalid embeddings");
         }
     } else {
         cJSON_AddStringToObject(response, "status", "Tool not found");
@@ -411,6 +436,12 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(set_goal_embedding_tool, "name", "set_goal_embedding");
     cJSON_AddStringToObject(set_goal_embedding_tool, "description", "Sets the goal embedding for the planner.");
     cJSON_AddItemToArray(tools, set_goal_embedding_tool);
+
+    // Tool: execute_behavior
+    cJSON *execute_behavior_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(execute_behavior_tool, "name", "execute_behavior");
+    cJSON_AddStringToObject(execute_behavior_tool, "description", "Executes a sequence of goal embeddings.");
+    cJSON_AddItemToArray(tools, execute_behavior_tool);
 
     return root;
 }
