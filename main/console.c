@@ -11,6 +11,7 @@
 #include "main.h"
 #include "common.h"
 #include "planner.h"
+#include "behavior.h"
 #include "esp_console.h"
 #include "esp_vfs.h"
 #include "esp_vfs_dev.h"
@@ -29,6 +30,7 @@ static int cmd_set_learning(int argc, char **argv);
 static int cmd_plan_move(int argc, char **argv);
 static int cmd_start_data_acq(int argc, char **argv);
 static int cmd_get_energy_stats(int argc, char **argv);
+static int cmd_set_behavior(int argc, char **argv);
 
 
 // --- argtable3 structs for console commands ---
@@ -121,6 +123,11 @@ static struct {
     struct arg_int *p6;
     struct arg_end *end;
 } plan_move_args;
+
+static struct {
+    struct arg_str *behavior;
+    struct arg_end *end;
+} set_behavior_args;
 
 void initialize_console(void) {
     fflush(stdout);
@@ -348,6 +355,16 @@ void initialize_console(void) {
         .func = &cmd_get_energy_stats,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_energy_stats_cmd));
+
+    set_behavior_args.behavior = arg_str1(NULL, NULL, "<behavior>", "Behavior to set (idle, wave, nod)");
+    set_behavior_args.end = arg_end(1);
+    const esp_console_cmd_t set_behavior_cmd = {
+        .command = "set-behavior",
+        .help = "Set the current behavior of the robot",
+        .func = &cmd_set_behavior,
+        .argtable = &set_behavior_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_behavior_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
@@ -916,6 +933,31 @@ int cmd_get_energy_stats(int argc, char **argv) {
     printf("Average Current (A): %.3f\n", g_energy_stats.average_current_A);
     printf("Total Samples: %ld\n", g_energy_stats.num_samples);
     printf("-------------------------------------\n");
+    return 0;
+}
+
+int cmd_set_behavior(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&set_behavior_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, set_behavior_args.end, argv[0]);
+        return 1;
+    }
+
+    const char *behavior_str = set_behavior_args.behavior->sval[0];
+    BehaviorType behavior_type;
+
+    if (strcmp(behavior_str, "idle") == 0) {
+        behavior_type = BEHAVIOR_IDLE;
+    } else if (strcmp(behavior_str, "wave") == 0) {
+        behavior_type = BEHAVIOR_WAVE;
+    } else if (strcmp(behavior_str, "nod") == 0) {
+        behavior_type = BEHAVIOR_NOD;
+    } else {
+        printf("Error: Unknown behavior '%s'\n", behavior_str);
+        return 1;
+    }
+
+    behavior_set(behavior_type);
     return 0;
 }
 

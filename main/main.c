@@ -13,6 +13,7 @@
 #include "console.h"
 #include "config.h"
 #include "planner.h"
+#include "behavior.h"
 #include "esp_dsp.h"
 #include "driver/usb_serial_jtag.h" // For native USB CDC
 #include "tinyusb.h"
@@ -975,6 +976,7 @@ void app_main(void) {
     
     initialize_console();
     planner_init();
+    behavior_init();
 
     if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
         ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
