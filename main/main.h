@@ -141,5 +141,15 @@ void start_calibration_task(uint8_t servo_id);
 void planner_init(void);
 void planner_set_goal(const float* target_pose);
 
+// --- Energy Statistics ---
+typedef struct {
+    float peak_current_A;
+    float total_current_A_sum;
+    long num_samples;
+    float average_current_A;
+} EnergyStats;
+
+extern EnergyStats g_energy_stats;
+
 
 #endif // MAIN_H

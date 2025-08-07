@@ -57,6 +57,9 @@ bool g_learning_loop_active = false;
 bool g_state_learning_active = false;
 // --- Global flag for standalone random walk ---
 bool g_random_walk_active = false;
+
+// --- Energy Statistics ---
+EnergyStats g_energy_stats = {0};
 // CORRECTED: Slower and smaller random walk parameters
 uint16_t g_random_walk_max_delta_pos = 15; // Smaller position change per step
 int g_random_walk_interval_ms = 500;      // Longer interval between steps
@@ -340,6 +343,14 @@ void read_sensor_state(float* sensor_data, int arm_id) {
             xSemaphoreGive(g_console_mutex);
         }
     }
+
+    // --- Update Energy Statistics ---
+    if (total_current_A_cycle > g_energy_stats.peak_current_A) {
+        g_energy_stats.peak_current_A = total_current_A_cycle;
+    }
+    g_energy_stats.total_current_A_sum += total_current_A_cycle;
+    g_energy_stats.num_samples++;
+    g_energy_stats.average_current_A = g_energy_stats.total_current_A_sum / g_energy_stats.num_samples;
 }
 
 void initialize_robot_arm(int arm_id) {
@@ -464,24 +475,36 @@ void forward_pass(const float* input, HiddenLayer* hl, OutputLayer* ol, Predicti
     }
 }
 
-void update_weights_hebbian(const float* input, float correctness, HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl) {
+void update_weights_hebbian(const float* input, float correctness, float current_draw, HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl) {
+
+    // Normalize current draw to a 0-1 range, where 1 is the max expected current.
+    // This represents the "energy cost" of the last action.
+    float energy_cost = fminf(1.0f, current_draw / (NUM_SERVOS * MAX_EXPECTED_SERVO_CURRENT_A));
+
+    // The energy efficiency term is a value from 0 to 1, where 1 is most efficient (0 cost).
+    float energy_efficiency = 1.0f - energy_cost;
+
+    // The final correctness signal is a blend of prediction accuracy and energy efficiency.
+    // We can weigh them. For now, we'll do a simple multiplication.
+    float final_correctness = correctness * energy_efficiency;
+
     for (int i = 0; i < HIDDEN_NEURONS; i++) {
         for (int j = 0; j < INPUT_NEURONS; j++) {
-            float delta = LEARNING_RATE * correctness * hl->hidden_activations[i] * input[j];
+            float delta = LEARNING_RATE * final_correctness * hl->hidden_activations[i] * input[j];
             hl->weights[i][j] += delta;
             hl->weights[i][j] *= (1.0f - WEIGHT_DECAY);
         }
     }
     for (int i = 0; i < OUTPUT_NEURONS; i++) {
         for (int j = 0; j < HIDDEN_NEURONS; j++) {
-            float delta = LEARNING_RATE * correctness * ol->output_activations[i] * hl->hidden_activations[j];
+            float delta = LEARNING_RATE * final_correctness * ol->output_activations[i] * hl->hidden_activations[j];
             ol->weights[i][j] += delta;
             ol->weights[i][j] *= (1.0f - WEIGHT_DECAY);
         }
     }
     for (int i = 0; i < PRED_NEURONS; i++) {
         for (int j = 0; j < HIDDEN_NEURONS; j++) {
-            float delta = LEARNING_RATE * correctness * pl->pred_activations[i] * hl->hidden_activations[j];
+            float delta = LEARNING_RATE * final_correctness * pl->pred_activations[i] * hl->hidden_activations[j];
             pl->weights[i][j] += delta;
             pl->weights[i][j] *= (1.0f - WEIGHT_DECAY);
         }
@@ -643,8 +666,14 @@ void learning_loop_task(void *pvParameters) {
             float prediction_accuracy = fmaxf(0, 1.0f - (total_error / PRED_NEURONS));
             // Correctness boosted by how much the state changed, encouraging more dynamic actions
             float correctness = prediction_accuracy * (1.0f + state_change_magnitude);
+
+            // Get the current draw for the last cycle
+            float current_draw = 0;
+            for(int i = 0; i < NUM_SERVOS; i++) {
+                current_draw += state_t_plus_1[NUM_ACCEL_GYRO_PARAMS + (i * NUM_SERVO_FEEDBACK_PARAMS) + 2];
+            }
             
-            update_weights_hebbian(combined_input, correctness, g_hl, g_ol, g_pl);
+            update_weights_hebbian(combined_input, correctness, current_draw, g_hl, g_ol, g_pl);
             led_indicator_set_color_from_fitness(correctness);
 
             if (g_network_weights_updated) {
@@ -733,8 +762,14 @@ void learning_states_loop_task(void *pvParameters) {
             // Correctness is positive if we got closer to the goal, negative otherwise
             float correctness = dist_before - dist_after;
 
+            // Get the current draw for the last cycle
+            float current_draw = 0;
+            for(int i = 0; i < NUM_SERVOS; i++) {
+                current_draw += next_state[NUM_ACCEL_GYRO_PARAMS + (i * NUM_SERVO_FEEDBACK_PARAMS) + 2];
+            }
+
             // Update weights based on this "progress" signal
-            update_weights_hebbian(nn_input, correctness, g_hl, g_ol, g_pl);
+            update_weights_hebbian(nn_input, correctness, current_draw, g_hl, g_ol, g_pl);
 
             // ... (logging, auto-saving, etc.)
         } else {

@@ -28,6 +28,7 @@ static const char *TAG = "CONSOLE";
 static int cmd_set_learning(int argc, char **argv);
 static int cmd_plan_move(int argc, char **argv);
 static int cmd_start_data_acq(int argc, char **argv);
+static int cmd_get_energy_stats(int argc, char **argv);
 
 
 // --- argtable3 structs for console commands ---
@@ -340,6 +341,13 @@ void initialize_console(void) {
         .func = &cmd_start_data_acq,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&start_data_acq_cmd));
+
+    const esp_console_cmd_t get_energy_stats_cmd = {
+        .command = "get-energy-stats",
+        .help = "Get real-time and historical energy consumption statistics",
+        .func = &cmd_get_energy_stats,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_energy_stats_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
@@ -899,6 +907,15 @@ extern void data_acquisition_task(void *pvParameters);
 
 int cmd_start_data_acq(int argc, char **argv) {
     xTaskCreate(data_acquisition_task, "data_acq_task", 4096, NULL, 5, NULL);
+    return 0;
+}
+
+int cmd_get_energy_stats(int argc, char **argv) {
+    printf("--- Energy Consumption Statistics ---\n");
+    printf("Peak Current (A): %.3f\n", g_energy_stats.peak_current_A);
+    printf("Average Current (A): %.3f\n", g_energy_stats.average_current_A);
+    printf("Total Samples: %ld\n", g_energy_stats.num_samples);
+    printf("-------------------------------------\n");
     return 0;
 }
 
