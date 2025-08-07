@@ -1,10 +1,10 @@
 #include "planner.h"
 #include "esp_log.h"
+#include "generated_gestures.h"
 
 static const char *TAG = "PLANNER";
 
 // --- Global Planner State ---
-static GestureGraph g_gesture_graph;
 static TaskHandle_t g_planner_task_handle = NULL;
 static float g_goal_pose[NUM_SERVOS];
 static bool g_new_goal_set = false;
@@ -172,45 +172,7 @@ void planner_task(void *pvParameters) {
 }
 
 void planner_init(void) {
-    ESP_LOGI(TAG, "Initializing planner...");
-
-    // --- Create a hard-coded test gesture library and graph ---
-    g_gesture_graph.num_tokens = 2;
-
-    // Token 0: A simple "move to center" gesture
-    g_gesture_graph.gesture_library[0].id = 0;
-    g_gesture_graph.gesture_library[0].num_waypoints = 2;
-    g_gesture_graph.gesture_library[0].energy_cost = 10.0;
-    for(int i=0; i<HIDDEN_NEURONS; i++) g_gesture_graph.gesture_library[0].embedding[i] = 0.1 * i;
-    // Waypoint 0 (start)
-    for(int i=0; i<NUM_SERVOS; i++) g_gesture_graph.gesture_library[0].waypoints[0].positions[i] = 0.0;
-    // Waypoint 1 (end)
-    for(int i=0; i<NUM_SERVOS; i++) g_gesture_graph.gesture_library[0].waypoints[1].positions[i] = 0.5;
-
-    // Token 1: A "wave" gesture
-    g_gesture_graph.gesture_library[1].id = 1;
-    g_gesture_graph.gesture_library[1].num_waypoints = 3;
-    g_gesture_graph.gesture_library[1].energy_cost = 25.0;
-    for(int i=0; i<HIDDEN_NEURONS; i++) g_gesture_graph.gesture_library[1].embedding[i] = 0.2 * i;
-    // Waypoint 0 (start)
-    for(int i=0; i<NUM_SERVOS; i++) g_gesture_graph.gesture_library[1].waypoints[0].positions[i] = 0.5;
-    // Waypoint 1 (mid-wave)
-    g_gesture_graph.gesture_library[1].waypoints[1].positions[0] = 0.8;
-    g_gesture_graph.gesture_library[1].waypoints[1].positions[1] = -0.8;
-    // Waypoint 2 (end-wave)
-    for(int i=0; i<NUM_SERVOS; i++) g_gesture_graph.gesture_library[1].waypoints[2].positions[i] = 0.5;
-
-
-    // Initialize transition costs
-    for (int i = 0; i < MAX_GESTURE_TOKENS; i++) {
-        for (int j = 0; j < MAX_GESTURE_TOKENS; j++) {
-            g_gesture_graph.transition_costs[i][j] = (i == j) ? 0 : INFINITY;
-        }
-    }
-    // Define a valid transition
-    g_gesture_graph.transition_costs[0][1] = 5.0; // Cost to go from "center" to "wave"
-
-
+    ESP_LOGI(TAG, "Initializing planner with generated gestures...");
     xTaskCreate(planner_task, "planner_task", 4096, NULL, 5, &g_planner_task_handle);
     ESP_LOGI(TAG, "Planner initialized and task created.");
 }

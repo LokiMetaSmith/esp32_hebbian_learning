@@ -33,3 +33,4 @@ Thumbs.db
 
 # Local configuration files
 main/wifi_config.h
+main/generated_gestures.h
