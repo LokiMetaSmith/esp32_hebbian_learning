@@ -16,7 +16,7 @@
 #include <lwip/netdb.h>
 #include "mbedtls/base64.h"
 #include "feetech_protocol.h"
-#include "nvs_storage.hh"
+#include "nvs_storage.h"
 #include "commands.h"
 #include "planner.h"
 
