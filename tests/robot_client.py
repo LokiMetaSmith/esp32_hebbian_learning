@@ -167,6 +167,8 @@ class MockSerial:
             self._in_buffer += b"Random walk parameters updated\nrobot>"
         elif b"export-states 1" in data:
             self._in_buffer += b"--- BEGIN STATE EXPORT ---\n0.1,0.2,0.3\n--- END STATE EXPORT ---\nrobot>"
+        elif b"get-energy-stats" in data:
+            self._in_buffer += b"--- Energy Consumption Statistics ---\nPeak Current (A): 1.234\nAverage Current (A): 0.567\nTotal Samples: 100\n-------------------------------------\nrobot>"
         elif b"this_is_not_a_command" in data:
             self._in_buffer += b"Unknown command\nrobot>"
 

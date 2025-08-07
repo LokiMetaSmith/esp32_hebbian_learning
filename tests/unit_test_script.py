@@ -214,6 +214,14 @@ def run_console_tests(port, use_mock=False):
         assert "--- BEGIN STATE EXPORT ---" in output and "--- END STATE EXPORT ---" in output, "Console Test 11 Failed: 'export-states' output markers missing."
         print("  [CONSOLE] Test 11 (export-states): PASSED")
 
+        # Test 12: Get Energy Stats
+        output = client.send_command("get-energy-stats")
+        assert "Energy Consumption Statistics" in output, "Console Test 12 Failed: 'get-energy-stats' output incorrect."
+        assert "Peak Current (A)" in output, "Console Test 12 Failed: 'get-energy-stats' output incorrect."
+        assert "Average Current (A)" in output, "Console Test 12 Failed: 'get-energy-stats' output incorrect."
+        assert "Total Samples" in output, "Console Test 12 Failed: 'get-energy-stats' output incorrect."
+        print("  [CONSOLE] Test 12 (get-energy-stats): PASSED")
+
         # Test 9: State Learning Loop Moves Servos
         if not use_mock: # This test requires real hardware interaction
             output = client.send_command("get_pos 1")

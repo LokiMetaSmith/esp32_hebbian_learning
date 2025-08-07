@@ -1,6 +1,8 @@
 import argparse
 import sys
 import os
+import json
+import matplotlib.pyplot as plt
 
 # Add the parent directory of 'tests' to the Python path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -11,6 +13,7 @@ def main():
     parser = argparse.ArgumentParser(description="Offline Training Pipeline for Hebbian Robot")
     parser.add_argument("--ip_address", required=True, help="IP address of the ESP32 device.")
     parser.add_argument("--console_port", required=True, help="Serial port for the Console CLI.")
+    parser.add_argument("--plot-energy", action="store_true", help="Plot the average energy consumption per trajectory.")
     args = parser.parse_args()
 
     print("--- Starting Offline Training Pipeline ---")
@@ -78,6 +81,25 @@ def main():
     with open(output_filename, "w") as f:
         json.dump(trajectories, f, indent=2)
     print(f"\n--- Saved {len(trajectories)} trajectories to {output_filename} ---")
+
+    # --- Plot Energy Consumption ---
+    if args.plot_energy:
+        avg_currents = []
+        for traj in trajectories:
+            total_current = 0
+            num_waypoints = 0
+            for waypoint in traj:
+                # The current is the last value in the sensor data
+                total_current += waypoint[-1]
+                num_waypoints += 1
+            avg_currents.append(total_current / num_waypoints)
+
+        plt.figure()
+        plt.plot(avg_currents)
+        plt.xlabel("Trajectory")
+        plt.ylabel("Average Current (A)")
+        plt.title("Average Current per Trajectory")
+        plt.show()
 
 
     # --- Disconnect ---
