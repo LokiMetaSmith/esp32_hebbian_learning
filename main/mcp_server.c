@@ -16,9 +16,9 @@
 #include <lwip/netdb.h>
 #include "mbedtls/base64.h"
 #include "feetech_protocol.h"
-#include "nvs_storage.h"
+#include "nvs_storage.hh"
 #include "commands.h"
-#include "commands.h"
+#include "planner.h"
 
 // --- Wi-Fi & Server Configuration ---
 #define MCP_TCP_PORT   8888
@@ -44,7 +44,40 @@ static void mcp_server_task(void *pvParameters);
 static cJSON* handle_list_tools(void);
 static cJSON* handle_call_tool(const cJSON *request_json) {
     cJSON *response = cJSON_CreateObject();
-    cJSON_AddStringToObject(response, "status", "Tool not found");
+    cJSON *tool_name_json = cJSON_GetObjectItem(request_json, "tool_name");
+    cJSON *arguments_json = cJSON_GetObjectItem(request_json, "arguments");
+
+    if (!cJSON_IsString(tool_name_json)) {
+        cJSON_AddStringToObject(response, "status", "Invalid tool name");
+        return response;
+    }
+
+    char* tool_name = tool_name_json->valuestring;
+
+    if (strcmp(tool_name, "set_goal_embedding") == 0) {
+        cJSON *embedding_json = cJSON_GetObjectItem(arguments_json, "goal_embedding");
+        if (cJSON_IsArray(embedding_json)) {
+            int num_dims = cJSON_GetArraySize(embedding_json);
+            if (num_dims == HIDDEN_NEURONS) {
+                float goal_embedding[HIDDEN_NEURONS];
+                for (int i = 0; i < num_dims; i++) {
+                    cJSON *dim_json = cJSON_GetArrayItem(embedding_json, i);
+                    if (cJSON_IsNumber(dim_json)) {
+                        goal_embedding[i] = (float)dim_json->valuedouble;
+                    }
+                }
+                planner_set_goal(goal_embedding);
+                cJSON_AddStringToObject(response, "status", "OK");
+            } else {
+                cJSON_AddStringToObject(response, "status", "Invalid embedding dimension");
+            }
+        } else {
+            cJSON_AddStringToObject(response, "status", "Invalid goal embedding");
+        }
+    } else {
+        cJSON_AddStringToObject(response, "status", "Tool not found");
+    }
+
     return response;
 }
 static void send_json_response(int sock, const cJSON *response_json);
@@ -372,6 +405,12 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(calibrate_servo_tool, "name", "calibrate_servo");
     cJSON_AddStringToObject(calibrate_servo_tool, "description", "Starts an interactive calibration for a servo.");
     cJSON_AddItemToArray(tools, calibrate_servo_tool);
+
+    // Tool: set_goal_embedding
+    cJSON *set_goal_embedding_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(set_goal_embedding_tool, "name", "set_goal_embedding");
+    cJSON_AddStringToObject(set_goal_embedding_tool, "description", "Sets the goal embedding for the planner.");
+    cJSON_AddItemToArray(tools, set_goal_embedding_tool);
 
     return root;
 }

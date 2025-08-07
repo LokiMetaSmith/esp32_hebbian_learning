@@ -24,7 +24,7 @@ class MockMCPServer(threading.Thread):
             {"name": "export_data"}, {"name": "export_nn"},
             {"name": "import_nn"}, {"name": "import_nn_json"},
             {"name": "calibrate_servo"}, {"name": "set_pos"}, {"name": "get_pos"},
-            {"name": "move_towards_goal_embedding"}
+            {"name": "move_towards_goal_embedding"}, {"name": "set_goal_embedding"}
         ]
 
     def handle_client(self, conn, addr):

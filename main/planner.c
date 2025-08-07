@@ -62,6 +62,15 @@ static float heuristic_cost(int token_id, const float* goal_pose) {
     return sqrtf(dist);
 }
 
+static float embedding_distance(const float* emb1, const float* emb2) {
+    float dist = 0;
+    for (int i = 0; i < HIDDEN_NEURONS; i++) {
+        float diff = emb1[i] - emb2[i];
+        dist += diff * diff;
+    }
+    return sqrtf(dist);
+}
+
 static void reconstruct_and_execute_path(int came_from[], int current_token_id) {
     ESP_LOGI(TAG, "A* search successful! Reconstructing and executing path.");
     int path[MAX_GESTURE_TOKENS];
@@ -137,14 +146,26 @@ void planner_task(void *pvParameters) {
     for (;;) {
         if (g_new_goal_set) {
             g_new_goal_set = false;
-            ESP_LOGI(TAG, "New goal received. Starting A* search.");
+            ESP_LOGI(TAG, "New goal embedding received. Finding closest gesture token.");
 
-            // For now, we'll use hard-coded start/goal tokens.
-            // A real implementation would find the best tokens based on current and goal poses.
-            int start_token = 0;
-            int goal_token = 1;
+            int best_token_id = -1;
+            float min_dist = INFINITY;
 
-            run_astar_search(start_token, goal_token);
+            for (int i = 0; i < g_gesture_graph.num_tokens; i++) {
+                float dist = embedding_distance(g_goal_pose, g_gesture_graph.gesture_library[i].embedding);
+                if (dist < min_dist) {
+                    min_dist = dist;
+                    best_token_id = i;
+                }
+            }
+
+            if (best_token_id != -1) {
+                ESP_LOGI(TAG, "Closest gesture token found: %d. Starting A* search.", best_token_id);
+                // For now, we'll assume the start token is always 0.
+                run_astar_search(0, best_token_id);
+            } else {
+                ESP_LOGE(TAG, "Could not find a suitable gesture token for the given embedding.");
+            }
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -160,6 +181,7 @@ void planner_init(void) {
     g_gesture_graph.gesture_library[0].id = 0;
     g_gesture_graph.gesture_library[0].num_waypoints = 2;
     g_gesture_graph.gesture_library[0].energy_cost = 10.0;
+    for(int i=0; i<HIDDEN_NEURONS; i++) g_gesture_graph.gesture_library[0].embedding[i] = 0.1 * i;
     // Waypoint 0 (start)
     for(int i=0; i<NUM_SERVOS; i++) g_gesture_graph.gesture_library[0].waypoints[0].positions[i] = 0.0;
     // Waypoint 1 (end)
@@ -169,6 +191,7 @@ void planner_init(void) {
     g_gesture_graph.gesture_library[1].id = 1;
     g_gesture_graph.gesture_library[1].num_waypoints = 3;
     g_gesture_graph.gesture_library[1].energy_cost = 25.0;
+    for(int i=0; i<HIDDEN_NEURONS; i++) g_gesture_graph.gesture_library[1].embedding[i] = 0.2 * i;
     // Waypoint 0 (start)
     for(int i=0; i<NUM_SERVOS; i++) g_gesture_graph.gesture_library[1].waypoints[0].positions[i] = 0.5;
     // Waypoint 1 (mid-wave)

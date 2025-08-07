@@ -124,6 +124,12 @@ def run_mcp_tests(host, port, use_mock=False):
         assert mock_server.last_action_vector == goal_embedding, "MCP Test 8 Failed: Mock server did not receive goal embedding."
         print("  [MCP] Test 8 (Move Towards Goal Embedding): PASSED")
 
+        # Test 9: Set Goal Embedding
+        goal_embedding = [0.2] * 16
+        response = client.call_tool("set_goal_embedding", {"goal_embedding": goal_embedding})
+        assert response and response.get("status") == "OK", "MCP Test 9 Failed: set_goal_embedding."
+        print("  [MCP] Test 9 (Set Goal Embedding): PASSED")
+
     except AssertionError as e:
         print(f"  [MCP] !!! TEST FAILED: {e}")
         return False

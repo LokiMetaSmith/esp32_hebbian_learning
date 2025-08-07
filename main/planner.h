@@ -18,6 +18,7 @@ typedef struct {
     GestureWaypoint waypoints[MAX_GESTURE_WAYPOINTS];
     int num_waypoints;
     float energy_cost; // Pre-calculated from offline training
+    float embedding[HIDDEN_NEURONS];
 } GestureToken;
 
 
