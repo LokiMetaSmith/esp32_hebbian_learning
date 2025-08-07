@@ -4,6 +4,7 @@ Here are several potential directions for the project, ranging from improving co
 
 ### 1. Implement the Offline Training Pipeline
 
+*   **Status:** **IN PROGRESS**
 *   **Description:** The current gesture planner relies on hard-coded test data. The next logical step is to build the offline Python-based training pipeline.
 *   **Tasks:**
     *   **Data Acquisition:** Write a script to collect trajectory data (positions, velocities, currents) from the robot, either through manual "kinesthetic teaching" or automated "motor babbling".
@@ -13,14 +14,16 @@ Here are several potential directions for the project, ranging from improving co
 
 ### 2. Enhance the On-Device Planner
 
-*   **Description:** The current on-device A* planner uses a simple start and end token selection. We could make this more sophisticated.
+*   **Status:** **DONE**
+*   **Description:** The on-device planner has been enhanced to accept goal embeddings from other devices.
 *   **Tasks:**
-    *   **Dynamic Start/End Token Selection:** Instead of using hard-coded start and end tokens, the planner could analyze the robot's current pose and the goal pose to find the *best* matching start and end gestures from the library.
-    *   **Real-time Obstacle Avoidance:** Integrate sensor data (like an IR or ultrasonic sensor) to allow the planner to dynamically modify or select different gestures to avoid obstacles.
+    *   **Dynamic Start/End Token Selection:** The planner can now find the best matching start and end gestures from the library based on a goal embedding.
+    *   **Real-time Obstacle Avoidance:** Integrate sensor data (like an IR or ultrasonic sensor) to allow the planner to dynamically modify or select different gestures to avoid obstacles. (Future enhancement)
 *   **Goal:** To make the robot more autonomous and adaptable to its environment.
 
 ### 3. Add a Higher-Level Behavior System
 
+*   **Status:** Not Started
 *   **Description:** Build a simple state machine or behavior tree on top of the planner to sequence complex tasks.
 *   **Example:**
     ```
@@ -34,12 +37,13 @@ Here are several potential directions for the project, ranging from improving co
 
 ### 4. Improve Energy Efficiency Feedback
 
-*   **Description:** The current system uses motor current as a proxy for energy, but this is only captured during the learning phase.
+*   **Status:** **DONE**
+*   **Description:** The system now includes energy-aware learning and monitoring.
 *   **Tasks:**
-    *   **Live Energy Monitoring:** Create a console command or a telemetry stream that shows the real-time energy consumption of the robot.
-    *   **Energy-Aware Learning:** Modify the Hebbian learning rule in the main loop to not just reward prediction accuracy, but to also reward actions that result in lower energy consumption.
+    *   **Live Energy Monitoring:** A `get-energy-stats` command has been added to show real-time and historical energy consumption.
+    *   **Energy-Aware Learning:** The Hebbian learning rule has been modified to reward actions that result in lower energy consumption.
 *   **Goal:** To create a direct feedback loop that encourages the robot to discover and prefer smoother, more efficient movements.
 
 ### Recommended Next Step
 
-The highest priority should be **Option 1: Implementing the Offline Training Pipeline**, as it is the most fundamental next step and will unlock the full potential of the gesture planning system.
+The highest priority is to complete **Option 1: Implementing the Offline Training Pipeline**, as it is the most fundamental next step and will unlock the full potential of the gesture planning system.
