@@ -12,11 +12,16 @@
 
 #include "common.h"
 #include "config.h" // Include the new configuration file
+#include "robot_config.h"
 
 // --- Application Configuration ---
+#ifdef ROBOT_TYPE_ARM
 #define NUM_ARMS 3
 #define NUM_SERVOS 6
 #define SERVOS_PER_ARM (NUM_SERVOS / NUM_ARMS) // Define servos per arm
+#else // ROBOT_TYPE_OMNI_BASE
+#define NUM_MOTORS 4 // Example for a 4-wheeled base
+#endif
 
 // --- Bus Manager Data Structures ---
 

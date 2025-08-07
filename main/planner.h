@@ -8,10 +8,16 @@
 
 #define MAX_GESTURE_WAYPOINTS 20
 
+#ifdef ROBOT_TYPE_ARM
 typedef struct {
     float positions[NUM_SERVOS];
     float velocities[NUM_SERVOS];
 } GestureWaypoint;
+#else // ROBOT_TYPE_OMNI_BASE
+typedef struct {
+    float velocities[NUM_MOTORS]; // vx, vy, v_theta, etc.
+} GestureWaypoint;
+#endif
 
 typedef struct {
     int id;
