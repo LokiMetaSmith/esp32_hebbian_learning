@@ -24,7 +24,8 @@ class MockMCPServer(threading.Thread):
             {"name": "export_data"}, {"name": "export_nn"},
             {"name": "import_nn"}, {"name": "import_nn_json"},
             {"name": "calibrate_servo"}, {"name": "set_pos"}, {"name": "get_pos"},
-            {"name": "move_towards_goal_embedding"}, {"name": "set_goal_embedding"}
+            {"name": "move_towards_goal_embedding"}, {"name": "set_goal_embedding"},
+            {"name": "execute_behavior"}
         ]
 
     def handle_client(self, conn, addr):
@@ -69,6 +70,8 @@ class MockMCPServer(threading.Thread):
                                 self.last_action_vector = request.get("arguments", {}).get("goal_embedding")
                                 response["result"] = "OK"
                             elif tool_name == "set_goal_embedding":
+                                response = {"status": "OK"}
+                            elif tool_name == "execute_behavior":
                                 response = {"status": "OK"}
 
                         conn.sendall((json.dumps(response) + '\n').encode('utf-8'))

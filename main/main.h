@@ -3,8 +3,9 @@
  * @brief Main header file for the Hebbian Robot project.
  *
  * This file contains the primary data structures, global variable declarations,
- * and function prototypes used throughout the application. It defines the core
- * configurations for the neural network, sensors, servos, and operating modes.
+ * and function prototypes used throughout the application. It uses preprocessor
+ * directives based on the `robot_config.h` file to adapt the configuration
+ * for different robot types (e.g., a robotic arm or a wheeled base).
  */
 
 #ifndef MAIN_H

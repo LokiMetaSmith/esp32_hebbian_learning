@@ -130,6 +130,17 @@ def run_mcp_tests(host, port, use_mock=False):
         assert response and response.get("status") == "OK", "MCP Test 9 Failed: set_goal_embedding."
         print("  [MCP] Test 9 (Set Goal Embedding): PASSED")
 
+        # Test 10: Execute Behavior
+        behavior_sequence = {
+            "embeddings": [
+                [0.1] * 16,
+                [0.2] * 16
+            ]
+        }
+        response = client.call_tool("execute_behavior", behavior_sequence)
+        assert response and response.get("status") == "OK", "MCP Test 10 Failed: execute_behavior."
+        print("  [MCP] Test 10 (Execute Behavior): PASSED")
+
     except AssertionError as e:
         print(f"  [MCP] !!! TEST FAILED: {e}")
         return False

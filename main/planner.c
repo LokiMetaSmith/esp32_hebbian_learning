@@ -4,10 +4,14 @@
 
 static const char *TAG = "PLANNER";
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 // --- Global Planner State ---
 static TaskHandle_t g_planner_task_handle = NULL;
 static float g_goal_pose[NUM_SERVOS];
 static bool g_new_goal_set = false;
+static SemaphoreHandle_t g_planner_idle_semaphore = NULL;
 
 // --- A* Search Implementation ---
 
@@ -145,6 +149,7 @@ void run_astar_search(int start_token_id, int goal_token_id) {
 void planner_task(void *pvParameters) {
     for (;;) {
         if (g_new_goal_set) {
+            planner_wait_for_idle(); // Wait until the semaphore is available
             g_new_goal_set = false;
             ESP_LOGI(TAG, "New goal embedding received. Finding closest gesture token.");
 
@@ -166,6 +171,7 @@ void planner_task(void *pvParameters) {
             } else {
                 ESP_LOGE(TAG, "Could not find a suitable gesture token for the given embedding.");
             }
+            planner_signal_idle(); // Signal that the plan is complete
         }
         vTaskDelay(pdMS_TO_TICKS(100));
     }
@@ -173,6 +179,7 @@ void planner_task(void *pvParameters) {
 
 void planner_init(void) {
     ESP_LOGI(TAG, "Initializing planner with generated gestures...");
+    planner_init_sync();
     xTaskCreate(planner_task, "planner_task", 4096, NULL, 5, &g_planner_task_handle);
     ESP_LOGI(TAG, "Planner initialized and task created.");
 }
@@ -181,4 +188,17 @@ void planner_set_goal(const float* target_pose) {
     memcpy(g_goal_pose, target_pose, sizeof(float) * NUM_SERVOS);
     g_new_goal_set = true;
     ESP_LOGI(TAG, "Goal set.");
+}
+
+void planner_init_sync(void) {
+    g_planner_idle_semaphore = xSemaphoreCreateBinary();
+    xSemaphoreGive(g_planner_idle_semaphore); // Initially idle
+}
+
+void planner_signal_idle(void) {
+    xSemaphoreGive(g_planner_idle_semaphore);
+}
+
+void planner_wait_for_idle(void) {
+    xSemaphoreTake(g_planner_idle_semaphore, portMAX_DELAY);
 }

@@ -19,9 +19,8 @@ void behavior_task(void *pvParameters) {
         if (xQueueReceive(g_embedding_queue, &goal_embedding, portMAX_DELAY) == pdTRUE) {
             ESP_LOGI(TAG, "Received new goal embedding from queue. Executing...");
             planner_set_goal(goal_embedding);
-            // Here, a more advanced system might wait for a signal from the planner
-            // that the goal has been reached before processing the next item in the queue.
-            // For now, we'll just process them as they come in.
+            planner_wait_for_idle(); // Wait for the planner to finish the move
+            ESP_LOGI(TAG, "Planner finished move. Ready for next goal.");
         }
     }
 }

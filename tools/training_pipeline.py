@@ -139,14 +139,20 @@ def main():
         "num_tokens": len(gesture_library),
         "transition_costs": np.full((len(gesture_library), len(gesture_library)), -1.0).tolist()
     }
-    # For now, we'll assume all transitions are possible with a default cost.
-    # A real implementation would calculate this based on end/start pose differences.
-    for i in range(len(gesture_library)):
-        for j in range(len(gesture_library)):
-            if i != j:
-                gesture_graph["transition_costs"][i][j] = 10.0 # Default cost
+    # Calculate transition costs based on the Euclidean distance between
+    # the end pose of one gesture and the start pose of the next.
+    for i, gesture_i in enumerate(gesture_library):
+        for j, gesture_j in enumerate(gesture_library):
+            if i == j:
+                gesture_graph["transition_costs"][i][j] = 0.0
+            else:
+                end_pose_i = np.array(gesture_i["waypoints"][-1])
+                start_pose_j = np.array(gesture_j["waypoints"][0])
+                # We only care about the position part of the waypoint for this calculation
+                dist = np.linalg.norm(end_pose_i[:6] - start_pose_j[:6])
+                gesture_graph["transition_costs"][i][j] = dist
 
-    print("--- Gesture graph generated. ---")
+    print("--- Gesture graph generated with calculated transition costs. ---")
 
     # --- Export to C Header ---
     output_header_filename = "main/generated_gestures.h"
