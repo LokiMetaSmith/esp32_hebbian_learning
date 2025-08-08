@@ -1,11 +1,10 @@
 /**
  * @file synsense_driver.h
- * @brief Placeholder driver for a Synsense DVS camera.
+ * @brief Driver for Synsense neuromorphic cameras (e.g., Speck) via SPI.
  *
  * This file defines the data structures and function prototypes for interfacing
- * with a Synsense neuromorphic camera. The actual implementation in
- * synsense_driver.c is a placeholder until low-level hardware documentation
- * is available.
+ * with a Synsense camera. It handles SPI communication for configuration and
+ * GPIO reading for classification output.
  */
 #ifndef SYNSENSE_DRIVER_H
 #define SYNSENSE_DRIVER_H

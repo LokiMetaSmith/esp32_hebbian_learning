@@ -64,7 +64,7 @@ This phase focuses on extending the architecture to support a coordinated omni-d
     *   **Status:** All necessary documentation has been provided. The driver can now be fully implemented.
     *   **Next Steps:**
         *   **[DONE]** Create a Python tool (`tools/config_to_c_array.py`) to convert the binary SNN model into a C header file.
-        *   **[DONE]** Implement I2C communication in `synsense_driver.c` to handle register reads/writes.
-        *   **[TODO]** Implement the `synsense_load_configuration()` function with correct memory mapping to upload the model to the chip.
+        *   **[DONE]** Implement SPI communication in `synsense_driver.c`.
+        *   **[DONE]** Implement the `synsense_load_configuration()` function to upload the model to the chip via SPI.
         *   **[DONE]** Implement the `synsense_get_classification()` function to read the output pins.
         *   **[DONE]** Integrate the final driver into the main application.
