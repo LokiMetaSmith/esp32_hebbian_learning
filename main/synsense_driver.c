@@ -2,55 +2,133 @@
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "driver/i2c.h"
+#include "driver/gpio.h"
 
 static const char *TAG = "SYNSENSE_DRIVER";
 
+// --- I2C Configuration ---
+#define I2C_MASTER_SCL_IO           GPIO_NUM_1
+#define I2C_MASTER_SDA_IO           GPIO_NUM_2
+#define I2C_MASTER_NUM              I2C_NUM_0
+#define I2C_MASTER_FREQ_HZ          1000000 // 1MHz Fast-mode Plus
+#define I2C_MASTER_TX_BUF_DISABLE   0
+#define I2C_MASTER_RX_BUF_DISABLE   0
+#define SYNSENSE_DEVICE_ADDR        0x20 // Example address, needs verification
+#define WRITE_BIT                   I2C_MASTER_WRITE
+#define READ_BIT                    I2C_MASTER_READ
+#define ACK_CHECK_EN                0x1
+
+// --- GPIO Configuration ---
+#define CLASSIFICATION_OUT_0_PIN    GPIO_NUM_4
+#define CLASSIFICATION_OUT_1_PIN    GPIO_NUM_5
+#define CLASSIFICATION_OUT_2_PIN    GPIO_NUM_6
+#define CLASSIFICATION_PIN_MASK     ((1ULL<<CLASSIFICATION_OUT_0_PIN) | (1ULL<<CLASSIFICATION_OUT_1_PIN) | (1ULL<<CLASSIFICATION_OUT_2_PIN))
+
 // --- Global Driver State ---
-static float g_event_rate = 0.0f;
-static TaskHandle_t g_camera_task_handle = NULL;
+static volatile uint8_t g_classification_index = 0;
+static TaskHandle_t g_readout_task_handle = NULL;
 
-/**
- * @brief Main task for processing camera events.
- *
- * NOTE: This is a placeholder implementation. It generates dummy event data.
- * A real implementation would read events from the camera over SPI/I2C.
- */
-static void camera_task(void *pvParameters) {
-    uint32_t event_count = 0;
-    int64_t last_time = esp_timer_get_time();
+// --- I2C Helper Functions ---
 
-    ESP_LOGI(TAG, "Camera task started. Generating dummy data.");
+static esp_err_t synsense_write_reg(uint16_t reg_addr, uint32_t data) {
+    uint8_t write_buf[7];
+    // As per datasheet, address is 3 bytes, data is 4 bytes
+    write_buf[0] = (reg_addr >> 16) & 0xFF;
+    write_buf[1] = (reg_addr >> 8) & 0xFF;
+    write_buf[2] = reg_addr & 0xFF;
+    write_buf[3] = (data >> 24) & 0xFF;
+    write_buf[4] = (data >> 16) & 0xFF;
+    write_buf[5] = (data >> 8) & 0xFF;
+    write_buf[6] = data & 0xFF;
 
+    return i2c_master_write_to_device(I2C_MASTER_NUM, SYNSENSE_DEVICE_ADDR, write_buf, sizeof(write_buf), pdMS_TO_TICKS(1000));
+}
+
+static esp_err_t synsense_read_reg(uint16_t reg_addr, uint32_t *data) {
+    uint8_t reg_addr_buf[3];
+    reg_addr_buf[0] = (reg_addr >> 16) & 0xFF;
+    reg_addr_buf[1] = (reg_addr >> 8) & 0xFF;
+    reg_addr_buf[2] = reg_addr & 0xFF;
+
+    uint8_t read_buf[4];
+    esp_err_t err = i2c_master_write_read_device(I2C_MASTER_NUM, SYNSENSE_DEVICE_ADDR, reg_addr_buf, sizeof(reg_addr_buf), read_buf, sizeof(read_buf), pdMS_TO_TICKS(1000));
+
+    if (err == ESP_OK) {
+        *data = (read_buf[0] << 24) | (read_buf[1] << 16) | (read_buf[2] << 8) | read_buf[3];
+    }
+    return err;
+}
+
+
+// --- Readout Task ---
+
+static void synsense_readout_task(void *pvParameters) {
+    ESP_LOGI(TAG, "Synsense readout task started.");
     for (;;) {
-        // --- Placeholder Logic: Generate dummy events ---
-        // In a real implementation, this is where you would read from the camera.
-        // For example: `read_dvs_events(event_buffer, MAX_EVENTS);`
-        event_count += 50; // Simulate receiving 50 events
-        // ---------------------------------------------
-
-        int64_t current_time = esp_timer_get_time();
-        int64_t time_diff = current_time - last_time;
-
-        // Calculate event rate every second
-        if (time_diff >= 1000000) {
-            g_event_rate = (float)event_count / (time_diff / 1000000.0f);
-            ESP_LOGD(TAG, "Event Rate: %.2f events/sec", g_event_rate);
-            event_count = 0;
-            last_time = current_time;
-        }
-
-        // Yield to other tasks
-        vTaskDelay(pdMS_TO_TICKS(10));
+        uint8_t val0 = gpio_get_level(CLASSIFICATION_OUT_0_PIN);
+        uint8_t val1 = gpio_get_level(CLASSIFICATION_OUT_1_PIN);
+        uint8_t val2 = gpio_get_level(CLASSIFICATION_OUT_2_PIN);
+        g_classification_index = (val2 << 2) | (val1 << 1) | val0;
+        vTaskDelay(pdMS_TO_TICKS(10)); // Poll every 10ms
     }
 }
 
+// --- Public API Functions ---
+
 void synsense_driver_init(void) {
     ESP_LOGI(TAG, "Initializing Synsense driver...");
-    // TODO: Add hardware initialization here (e.g., SPI bus configuration)
-    xTaskCreate(camera_task, "camera_task", 4096, NULL, 5, &g_camera_task_handle);
+
+    // Init I2C
+    i2c_config_t conf = {
+        .mode = I2C_MODE_MASTER,
+        .sda_io_num = I2C_MASTER_SDA_IO,
+        .scl_io_num = I2C_MASTER_SCL_IO,
+        .sda_pullup_en = GPIO_PULLUP_ENABLE,
+        .scl_pullup_en = GPIO_PULLUP_ENABLE,
+        .master.clk_speed = I2C_MASTER_FREQ_HZ,
+    };
+    i2c_param_config(I2C_MASTER_NUM, &conf);
+    ESP_ERROR_CHECK(i2c_driver_install(I2C_MASTER_NUM, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0));
+
+    // Init GPIO for readout
+    gpio_config_t io_conf = {
+        .pin_bit_mask = CLASSIFICATION_PIN_MASK,
+        .mode = GPIO_MODE_INPUT,
+        .pull_up_en = GPIO_PULLUP_DISABLE,
+        .pull_down_en = GPIO_PULLDOWN_ENABLE,
+        .intr_type = GPIO_INTR_DISABLE,
+    };
+    gpio_config(&io_conf);
+
+    xTaskCreate(synsense_readout_task, "synsense_readout_task", 2048, NULL, 10, &g_readout_task_handle);
     ESP_LOGI(TAG, "Synsense driver initialized and task created.");
 }
 
+void synsense_load_configuration(const unsigned char* config_array, unsigned int config_len) {
+    ESP_LOGI(TAG, "Loading configuration to Synsense chip...");
+    // This is a simplified example. A real implementation would need to handle
+    // writing to specific memory addresses as per the datasheet.
+    // For now, we'll just write the first few registers to demonstrate.
+    for (int i = 0; i < 10 && i < config_len / 4; i++) {
+        uint32_t data_word = (config_array[i*4] << 24) | (config_array[i*4+1] << 16) | (config_array[i*4+2] << 8) | config_array[i*4+3];
+        esp_err_t err = synsense_write_reg(i, data_word);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to write to register %d", i);
+        }
+    }
+    ESP_LOGI(TAG, "Configuration load finished (placeholder).");
+}
+
+
+uint8_t synsense_get_classification(void) {
+    return g_classification_index;
+}
+
+// Old function to be removed or adapted
 float synsense_get_event_rate(void) {
-    return g_event_rate;
+    // This function is now deprecated as the chip provides classification indexes.
+    // We can return the classification index as a float for now to maintain
+    // compatibility with the state vector.
+    return (float)g_classification_index;
 }

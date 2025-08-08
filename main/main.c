@@ -16,6 +16,9 @@
 #include "behavior.h"
 #include "synsense_driver.h"
 #include "esp_dsp.h"
+
+// Dummy configuration data for the Synsense camera
+const unsigned char dummy_synsense_config[] = {0xDE, 0xAD, 0xBE, 0xEF};
 #include "driver/usb_serial_jtag.h" // For native USB CDC
 #include "tinyusb.h"
 #include "tusb_cdc_acm.h"
@@ -339,7 +342,7 @@ void read_sensor_state(float* sensor_data, int arm_id) {
     vQueueDelete(response_queue);
 
     // --- Get Camera Data ---
-    sensor_data[current_sensor_index++] = synsense_get_event_rate();
+    sensor_data[current_sensor_index++] = (float)synsense_get_classification();
 
     if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
         if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -976,6 +979,7 @@ void app_main(void) {
     bma400_initialize();
     led_indicator_initialize();
     synsense_driver_init();
+    synsense_load_configuration(dummy_synsense_config, sizeof(dummy_synsense_config));
     initialize_usb_cdc(); // For Feetech slave command interface
     mcp_server_init();
     

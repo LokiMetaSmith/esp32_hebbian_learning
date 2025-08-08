@@ -58,7 +58,7 @@ typedef struct {
 /** @brief Number of feedback parameters from each servo (Position, Load, Current). */
 #define NUM_SERVO_FEEDBACK_PARAMS 3
 /** @brief Number of parameters from the DVS camera (e.g., event rate). */
-#define NUM_CAMERA_PARAMS 1
+#define NUM_CAMERA_PARAMS 1 // Now represents the classification index
 
 /** @brief Total number of parameters in an action vector (position, acceleration, torque for each servo). */
 #define NUM_ACTION_PARAMS (NUM_SERVOS * 3)

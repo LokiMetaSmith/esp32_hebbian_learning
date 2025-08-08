@@ -59,9 +59,12 @@ This phase focuses on extending the architecture to support a coordinated omni-d
 *   **[TODO] Higher-Level Behavior Tree:** Implement a formal behavior tree on a host PC that can sequence complex, multi-step tasks by sending goal sequences to the robot.
 *   **[TODO] Vision System Integration:** Add a camera and a vision processing pipeline (e.g., on the host PC) to enable object detection and visual servoing.
 
-*   **[IN PROGRESS] Sub-task: Integrate Synsense DVS Camera**
-    *   **Description:** Integrate the Synsense DVS camera with the ESP32.
-    *   **Status:** A placeholder driver and task have been created. The system is ready for the low-level driver implementation.
+*   **[IN PROGRESS] Sub-task: Implement Synsense Camera Driver**
+    *   **Description:** Implement a full I2C driver for the Synsense camera based on the Xylo Audio datasheet.
+    *   **Status:** Placeholder framework is complete. Low-level datasheet has been provided.
     *   **Next Steps:**
-        *   **Obtain Hardware Documentation:** The low-level hardware interface and communication protocol for the Speck camera are needed.
-        *   Implement the real driver in `synsense_driver.c` to replace the dummy data generation.
+        *   **[TODO]** Create a Python tool (`tools/config_to_c_array.py`) to convert the binary SNN model into a C header file.
+        *   **[TODO]** Implement I2C communication in `synsense_driver.c` to handle register reads/writes.
+        *   **[TODO]** Implement the `synsense_load_configuration()` function to upload the model to the chip.
+        *   **[TODO]** Implement the `synsense_get_classification()` function to read the output pins.
+        *   **[TODO]** Integrate the final driver into the main application.
