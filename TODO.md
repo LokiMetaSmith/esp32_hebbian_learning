@@ -60,11 +60,8 @@ This phase focuses on extending the architecture to support a coordinated omni-d
 *   **[TODO] Vision System Integration:** Add a camera and a vision processing pipeline (e.g., on the host PC) to enable object detection and visual servoing.
 
 *   **[IN PROGRESS] Sub-task: Implement Synsense Camera Driver**
-    *   **Description:** Implement a full I2C driver for the Synsense camera based on the Xylo Audio datasheet.
-    *   **Status:** All necessary documentation has been provided. The driver can now be fully implemented.
+    *   **Description:** Implement a full SPI driver for the Synsense camera.
+    *   **Status:** The driver framework is complete. The final low-level SPI protocol for configuration is still needed.
     *   **Next Steps:**
-        *   **[DONE]** Create a Python tool (`tools/config_to_c_array.py`) to convert the binary SNN model into a C header file.
-        *   **[DONE]** Implement SPI communication in `synsense_driver.c`.
-        *   **[DONE]** Implement the `synsense_load_configuration()` function to upload the model to the chip via SPI.
-        *   **[DONE]** Implement the `synsense_get_classification()` function to read the output pins.
-        *   **[DONE]** Integrate the final driver into the main application.
+        *   **[BLOCKED]** Obtain the specific SPI command sequence for initiating a configuration upload on the Speck camera.
+        *   **[TODO]** Update the `synsense_load_configuration()` function with the final protocol logic.

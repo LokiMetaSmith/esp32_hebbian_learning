@@ -1,5 +1,4 @@
 #include "synsense_driver.h"
-#include "synsense_memory_map.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -51,7 +50,7 @@ void synsense_driver_init(void) {
         .sclk_io_num = PIN_NUM_SCLK,
         .quadwp_io_num = -1,
         .quadhd_io_num = -1,
-        .max_transfer_sz = 354 * 1024 // 354KiB
+        .max_transfer_sz = 4096 // Default size
     };
     spi_device_interface_config_t devcfg = {
         .clock_speed_hz = 10 * 1000 * 1000, // 10 MHz
@@ -80,6 +79,16 @@ void synsense_driver_init(void) {
 
 void synsense_load_configuration(const unsigned char* config_array, unsigned int config_len) {
     ESP_LOGI(TAG, "Loading configuration to Synsense chip via SPI (%d bytes)...", config_len);
+
+    if (config_array == NULL || config_len == 0) {
+        ESP_LOGE(TAG, "Configuration data is empty.");
+        return;
+    }
+
+    // TODO: The exact SPI protocol is unknown. The following is a generic
+    // implementation. It may be necessary to send specific command bytes
+    // before the data, or to structure the data into multiple transactions.
+    // This requires the low-level hardware datasheet.
 
     spi_transaction_t t;
     memset(&t, 0, sizeof(t));
