@@ -57,6 +57,8 @@ typedef struct {
 #define NUM_ACCEL_GYRO_PARAMS 3 //6 current accelerometer only does xyz
 /** @brief Number of feedback parameters from each servo (Position, Load, Current). */
 #define NUM_SERVO_FEEDBACK_PARAMS 3
+/** @brief Number of parameters from the DVS camera (e.g., event rate). */
+#define NUM_CAMERA_PARAMS 1
 
 /** @brief Total number of parameters in an action vector (position, acceleration, torque for each servo). */
 #define NUM_ACTION_PARAMS (NUM_SERVOS * 3)
@@ -72,7 +74,7 @@ typedef struct {
 /** @brief Number of neurons in the hidden layer, defining the latent space dimensionality. */
 #define HIDDEN_NEURONS 16             // Must match the Python script
 /** @brief Number of neurons in the prediction layer, which must match the dimension of the state vector. */
-#define PRED_NEURONS (NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS))
+#define PRED_NEURONS (NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS) + NUM_CAMERA_PARAMS)
 
 // Global array to hold the learned state centroids
 extern float g_state_token_centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM];

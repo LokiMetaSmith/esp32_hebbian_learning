@@ -14,6 +14,7 @@
 #include "config.h"
 #include "planner.h"
 #include "behavior.h"
+#include "synsense_driver.h"
 #include "esp_dsp.h"
 #include "driver/usb_serial_jtag.h" // For native USB CDC
 #include "tinyusb.h"
@@ -336,6 +337,9 @@ void read_sensor_state(float* sensor_data, int arm_id) {
 
     // --- NEW: Clean up the response queue ---
     vQueueDelete(response_queue);
+
+    // --- Get Camera Data ---
+    sensor_data[current_sensor_index++] = synsense_get_event_rate();
 
     if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
         if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -971,6 +975,7 @@ void app_main(void) {
     feetech_initialize(); 
     bma400_initialize();
     led_indicator_initialize();
+    synsense_driver_init();
     initialize_usb_cdc(); // For Feetech slave command interface
     mcp_server_init();
     
