@@ -30,5 +30,18 @@ void synsense_driver_init(void);
  */
 float synsense_get_event_rate(void);
 
+/**
+ * @brief Loads a configuration onto the Synsense chip.
+ * @param config_array Pointer to the byte array containing the configuration.
+ * @param config_len The length of the configuration array.
+ */
+void synsense_load_configuration(const unsigned char* config_array, unsigned int config_len);
+
+/**
+ * @brief Gets the last classification result read from the GPIO pins.
+ * @return The classification index (0-7).
+ */
+uint8_t synsense_get_classification(void);
+
 
 #endif // SYNSENSE_DRIVER_H

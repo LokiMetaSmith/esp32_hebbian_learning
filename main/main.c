@@ -1028,7 +1028,9 @@ void app_main(void) {
         xTaskCreate(bus_manager_task, task_name, 4096, (void*)i, 10, NULL);
     }
     xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
+#ifdef ROBOT_TYPE_ARM
     xTaskCreate(learning_states_loop_task, "learning_states_loop", 4096, NULL, 5, NULL);
+#endif
     xTaskCreate(feetech_slave_task, "feetech_slave_task", 4096, NULL, 5, NULL);
     xTaskCreate(console_task, "console_task", 4096, NULL, 1, NULL);
 }
