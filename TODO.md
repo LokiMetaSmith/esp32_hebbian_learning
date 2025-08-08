@@ -59,9 +59,6 @@ This phase focuses on extending the architecture to support a coordinated omni-d
 *   **[TODO] Higher-Level Behavior Tree:** Implement a formal behavior tree on a host PC that can sequence complex, multi-step tasks by sending goal sequences to the robot.
 *   **[TODO] Vision System Integration:** Add a camera and a vision processing pipeline (e.g., on the host PC) to enable object detection and visual servoing.
 
-*   **[IN PROGRESS] Sub-task: Implement Synsense Camera Driver**
-    *   **Description:** Implement a full SPI driver for the Synsense camera.
-    *   **Status:** The driver framework is complete. The final low-level SPI protocol for configuration is still needed.
-    *   **Next Steps:**
-        *   **[BLOCKED]** Obtain the specific SPI command sequence for initiating a configuration upload on the Speck camera.
-        *   **[TODO]** Update the `synsense_load_configuration()` function with the final protocol logic.
+*   **[DONE] Sub-task: Implement Python-based Vision Processing**
+    *   **Description:** Implement a Python script to configure the Synsense Speck camera for a specific task (e.g., edge detection) and read the output. This approach leverages the high-level `samna` and `sinabs` libraries, removing the need for a low-level C driver.
+    *   **Status:** An `edge_detector.py` script has been created, which defines an SNN model, configures the chip, and includes a loop for real-time inference.
