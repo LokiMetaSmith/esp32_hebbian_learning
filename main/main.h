@@ -22,7 +22,33 @@
 #define SERVOS_PER_ARM (NUM_SERVOS / NUM_ARMS) // Define servos per arm
 #else // ROBOT_TYPE_OMNI_BASE
 #define NUM_MOTORS 4 // Example for a 4-wheeled base
+#define NUM_SERVOS 0 // No servos on the base
+#define NUM_ARMS 0 // No arms on the base
 #endif
+
+// --- Neural Network Config ---
+/** @brief Number of parameters from the accelerometer and gyroscope (3-axis each). */
+#define NUM_ACCEL_GYRO_PARAMS 3 //6 current accelerometer only does xyz
+/** @brief Number of feedback parameters from each servo (Position, Load, Current). */
+#define NUM_SERVO_FEEDBACK_PARAMS 3
+/** @brief Number of parameters from the DVS camera (e.g., event rate). */
+#define NUM_CAMERA_PARAMS 1 // Now represents the classification index
+
+/** @brief Total number of parameters in an action vector (position, acceleration, torque for each servo). */
+#define NUM_ACTION_PARAMS (NUM_SERVOS * 3)
+
+/** @brief Number of neurons in the output layer, matching the number of action parameters. */
+#define OUTPUT_NEURONS NUM_ACTION_PARAMS
+/** @brief The dimension of the state vector, composed of all predictable sensor values. */
+#define STATE_VECTOR_DIM PRED_NEURONS
+/** @brief The number of discrete state tokens used for clustering and goal-setting. Must match the value in the Python training scripts. */
+#define NUM_STATE_TOKENS 16
+/** @brief Total number of input neurons. Defined as twice the state vector dimension for current and goal states. */
+#define INPUT_NEURONS (STATE_VECTOR_DIM * 2)
+/** @brief Number of neurons in the hidden layer, defining the latent space dimensionality. */
+#define HIDDEN_NEURONS 16             // Must match the Python script
+/** @brief Number of neurons in the prediction layer, which must match the dimension of the state vector. */
+#define PRED_NEURONS (NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS) + NUM_CAMERA_PARAMS)
 
 // --- Bus Manager Data Structures ---
 

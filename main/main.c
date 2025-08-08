@@ -384,6 +384,7 @@ void initialize_robot_arm(int arm_id) {
     ESP_LOGI(TAG, "Servos on arm %d initialized with acceleration %d and torque enabled.", arm_id, g_servo_acceleration);
 }
 
+#ifdef ROBOT_TYPE_ARM
 void execute_on_robot_arm(const float* action_vector, int arm_id) {
     BusRequest_t request;
     request.response_queue = NULL; // No response needed for writes
@@ -431,6 +432,7 @@ void execute_on_robot_arm(const float* action_vector, int arm_id) {
     request.servo_id = 0; // Not used by bus manager for ACTION, but set to 0 for clarity.
     xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
 }
+#endif
 
 // --- NEURAL NETWORK FUNCTIONS ---
 float activation_tanh(float x) { return tanhf(x); }
@@ -547,38 +549,40 @@ void perform_random_walk(float* action_output_vector, int arm_id) {
  * This is the primary interface for external (e.g., Python) control.
  * @param goal_embedding The target point in the latent space (size: HIDDEN_NEURONS).
  */
+#ifdef ROBOT_TYPE_ARM
 void move_towards_goal_embedding(const float* goal_embedding) {
-    float current_state[STATE_VECTOR_DIM];
-    float temp_input_for_encoder[INPUT_NEURONS] = {0};
+    // float current_state[STATE_VECTOR_DIM];
+    // float temp_input_for_encoder[INPUT_NEURONS] = {0};
 
-    // --- 1. ENCODE current state to get current_embedding ---
-    read_sensor_state(current_state, 0);
-    memcpy(temp_input_for_encoder, current_state, sizeof(float) * STATE_VECTOR_DIM);
-    forward_pass(temp_input_for_encoder, g_hl, g_ol, g_pl);
-    float* current_embedding = g_hl->hidden_activations;
+    // // --- 1. ENCODE current state to get current_embedding ---
+    // read_sensor_state(current_state, 0);
+    // memcpy(temp_input_for_encoder, current_state, sizeof(float) * STATE_VECTOR_DIM);
+    // forward_pass(temp_input_for_encoder, g_hl, g_ol, g_pl);
+    // float* current_embedding = g_hl->hidden_activations;
 
-    // --- 2. PLAN trajectory in latent space ---
-    float next_step_embedding[HIDDEN_NEURONS];
-    const float alpha = 0.1f; // Step size (learning rate for movement)
+    // // --- 2. PLAN trajectory in latent space ---
+    // float next_step_embedding[HIDDEN_NEURONS];
+    // const float alpha = 0.1f; // Step size (learning rate for movement)
 
-    for (int i = 0; i < HIDDEN_NEURONS; i++) {
-        float direction_vector = goal_embedding[i] - current_embedding[i];
-        next_step_embedding[i] = current_embedding[i] + (alpha * direction_vector);
-    }
+    // for (int i = 0; i < HIDDEN_NEURONS; i++) {
+    //     float direction_vector = goal_embedding[i] - current_embedding[i];
+    //     next_step_embedding[i] = current_embedding[i] + (alpha * direction_vector);
+    // }
 
-    // --- 3. DECODE the next step's embedding into an action ---
-    float action_vector[OUTPUT_NEURONS];
-    for (int i = 0; i < OUTPUT_NEURONS; i++) {
-        float sum = 0;
-        // Manually run the decoder part of the network
-        dsps_dotprod_f32_ae32(g_ol->weights[i], next_step_embedding, &sum, HIDDEN_NEURONS);
-        sum += g_ol->output_bias[i];
-        action_vector[i] = tanhf(sum);
-    }
+    // // --- 3. DECODE the next step's embedding into an action ---
+    // float action_vector[OUTPUT_NEURONS];
+    // for (int i = 0; i < OUTPUT_NEURONS; i++) {
+    //     float sum = 0;
+    //     // Manually run the decoder part of the network
+    //     dsps_dotprod_f32_ae32(g_ol->weights[i], next_step_embedding, &sum, HIDDEN_NEURONS);
+    //     sum += g_ol->output_bias[i];
+    //     action_vector[i] = tanhf(sum);
+    // }
 
-    // --- 4. EXECUTE the generated action ---
-    execute_on_robot_arm(action_vector, 0);
+    // // --- 4. EXECUTE the generated action ---
+    // execute_on_robot_arm(action_vector, 0);
 }
+#endif
 
 // Task for standalone random walk
 void random_walk_task_fn(void *pvParameters) {
@@ -715,6 +719,7 @@ void learning_loop_task(void *pvParameters) {
 
 }
 
+#ifdef ROBOT_TYPE_ARM
 void learning_states_loop_task(void *pvParameters) {
     int arm_id = 0; // Hardcoded to arm 0 for now
     float* current_state = malloc(sizeof(float) * STATE_VECTOR_DIM);
@@ -785,6 +790,7 @@ void learning_states_loop_task(void *pvParameters) {
         }
     }
 }
+#endif
 
 // --- CONSOLE COMMANDS & SETUP ---
 
@@ -815,19 +821,19 @@ int cmd_export_states(int argc, char **argv) {
         num_samples = 2000;
     }
     printf("--- BEGIN STATE EXPORT ---\n");
-    float sensor_data[PRED_NEURONS]; // Use PRED_NEURONS as it's the size of the state vector
+    // float sensor_data[PRED_NEURONS]; // Use PRED_NEURONS as it's the size of the state vector
 
-    for (int i = 0; i < num_samples; i++) {
-        perform_random_walk(NULL, 0); // Perform a random walk step
-        vTaskDelay(pdMS_TO_TICKS(100)); // Wait a moment for the move to settle
-        read_sensor_state(sensor_data, 0);
+    // for (int i = 0; i < num_samples; i++) {
+    //     perform_random_walk(NULL, 0); // Perform a random walk step
+    //     vTaskDelay(pdMS_TO_TICKS(100)); // Wait a moment for the move to settle
+    //     read_sensor_state(sensor_data, 0);
 
-        for (int j = 0; j < PRED_NEURONS; j++) {
-            printf("%f,", sensor_data[j]);
-        }
-        printf("\n");
-        vTaskDelay(pdMS_TO_TICKS(10)); // Yield
-    }
+    //     for (int j = 0; j < PRED_NEURONS; j++) {
+    //         printf("%f,", sensor_data[j]);
+    //     }
+    //     printf("\n");
+    //     vTaskDelay(pdMS_TO_TICKS(10)); // Yield
+    // }
     printf("--- END STATE EXPORT ---\n");
     return 0;
 }
@@ -1322,15 +1328,15 @@ void data_acquisition_task(void *pvParameters) {
 
         // Perform a random walk for a fixed number of steps
         for (int j = 0; j < trajectory_length; j++) {
-            perform_random_walk(NULL, 0);
+            // perform_random_walk(NULL, 0);
             vTaskDelay(pdMS_TO_TICKS(100)); // Wait for move to settle
 
             // Read and print sensor state
-            float sensor_data[PRED_NEURONS];
-            read_sensor_state(sensor_data, 0);
-            for (int k = 0; k < PRED_NEURONS; k++) {
-                printf("%f,", sensor_data[k]);
-            }
+            // float sensor_data[PRED_NEURONS];
+            // read_sensor_state(sensor_data, 0);
+            // for (int k = 0; k < PRED_NEURONS; k++) {
+            //     printf("%f,", sensor_data[k]);
+            // }
             printf("\n");
         }
 
