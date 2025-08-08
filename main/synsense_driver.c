@@ -1,4 +1,5 @@
 #include "synsense_driver.h"
+#include "synsense_memory_map.h"
 #include "esp_log.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -105,19 +106,54 @@ void synsense_driver_init(void) {
     ESP_LOGI(TAG, "Synsense driver initialized and task created.");
 }
 
+/**
+ * @brief Loads the SNN configuration to the Synsense chip.
+ * This function assumes the config_array is a flat binary blob containing
+ * all the necessary memory blocks concatenated in the correct order.
+ * The parsing and address calculation will need to be based on the SNN
+ * architecture (number of layers, kernel sizes, etc.), which is defined
+ * at compile time when the model is generated.
+ */
 void synsense_load_configuration(const unsigned char* config_array, unsigned int config_len) {
-    ESP_LOGI(TAG, "Loading configuration to Synsense chip...");
-    // This is a simplified example. A real implementation would need to handle
-    // writing to specific memory addresses as per the datasheet.
-    // For now, we'll just write the first few registers to demonstrate.
-    for (int i = 0; i < 10 && i < config_len / 4; i++) {
-        uint32_t data_word = (config_array[i*4] << 24) | (config_array[i*4+1] << 16) | (config_array[i*4+2] << 8) | config_array[i*4+3];
-        esp_err_t err = synsense_write_reg(i, data_word);
-        if (err != ESP_OK) {
-            ESP_LOGE(TAG, "Failed to write to register %d", i);
+    ESP_LOGI(TAG, "Loading configuration to Synsense chip (%d bytes)...", config_len);
+
+    // This is a simplified implementation. A real implementation would need
+    // a detailed understanding of how the `samna` toolchain packs the binary file.
+    // We assume here that the binary file is just a flat concatenation of all
+    // the RAMs that need to be written.
+
+    // For now, we will just write the configuration data to the start of the
+    // first RAM block (IWTRAM) as a demonstration.
+
+    uint32_t current_addr = IWTRAM_START_ADDR;
+    uint32_t data_word = 0;
+    int byte_count = 0;
+
+    for (int i = 0; i < config_len; i++) {
+        data_word = (data_word << 8) | config_array[i];
+        byte_count++;
+        if (byte_count == 4) {
+            esp_err_t err = synsense_write_reg(current_addr, data_word);
+            if (err != ESP_OK) {
+                ESP_LOGE(TAG, "Failed to write to address 0x%05lX", current_addr);
+                // Optionally, stop the configuration process on error
+            }
+            current_addr++;
+            data_word = 0;
+            byte_count = 0;
         }
     }
-    ESP_LOGI(TAG, "Configuration load finished (placeholder).");
+
+    // Handle any remaining bytes if config_len is not a multiple of 4
+    if (byte_count > 0) {
+        data_word <<= (8 * (4 - byte_count)); // Left-align remaining bytes
+        esp_err_t err = synsense_write_reg(current_addr, data_word);
+        if (err != ESP_OK) {
+            ESP_LOGE(TAG, "Failed to write final word to address 0x%05lX", current_addr);
+        }
+    }
+
+    ESP_LOGI(TAG, "Configuration load process finished.");
 }
 
 

@@ -2,7 +2,15 @@ import argparse
 import os
 
 def convert_bin_to_c_array(input_file, output_file, array_name="synsense_config_array"):
-    """Converts a binary file to a C-style byte array header file."""
+    """
+    Converts a binary file to a C-style byte array header file.
+
+    The input binary file is expected to be a flat concatenation of all the
+    memory blocks (IWTRAM, NSCRAM, etc.) that need to be written to the
+    Synsense chip. The `synsense_load_configuration` function in the C driver
+    will parse this flat array based on the SNN architecture defined at compile
+    time.
+    """
     try:
         with open(input_file, "rb") as f:
             binary_data = f.read()
