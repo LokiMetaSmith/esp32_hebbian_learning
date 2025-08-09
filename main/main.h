@@ -174,6 +174,9 @@ void random_walk_task_fn(void *pvParameters);
 void start_calibration_task(uint8_t servo_id);
 void planner_init(void);
 void planner_set_goal(const float* target_pose);
+void synsense_driver_init(void);
+void synsense_load_configuration(const unsigned char* config_array, unsigned int config_len);
+uint8_t synsense_get_classification(void);
 
 // --- Energy Statistics ---
 typedef struct {

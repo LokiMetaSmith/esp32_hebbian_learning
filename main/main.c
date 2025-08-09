@@ -39,7 +39,9 @@ const unsigned char dummy_synsense_config[] = {0xDE, 0xAD, 0xBE, 0xEF};
 // Definitions are now in config.h
 
 const char *TAG = "HEBBIAN_ROBOT";
+#ifdef ROBOT_TYPE_ARM
 uint8_t servo_ids[NUM_SERVOS] = {1, 2, 3, 4, 5, 6};
+#endif
 
 // --- Global Network Pointers ---
 HiddenLayer* g_hl;
@@ -109,6 +111,7 @@ void feetech_slave_task(void *pvParameters);
 // --- Application-Level Hardware Functions ---
 
 
+#ifdef ROBOT_TYPE_ARM
 // Helper function to apply the correction map
 static uint16_t get_corrected_position(uint8_t servo_id, uint16_t commanded_pos) {
     int map_index = servo_id - 1;
@@ -138,6 +141,7 @@ static uint16_t get_corrected_position(uint8_t servo_id, uint16_t commanded_pos)
         return map->points[CORRECTION_MAP_POINTS - 1].actual_pos;
     }
 }
+#endif
 
 // Helper function to move a servo along a smooth trajectory
 void move_servo_smoothly(uint8_t servo_id, uint16_t goal_position, int arm_id) {
