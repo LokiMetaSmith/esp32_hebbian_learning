@@ -1,0 +1,11 @@
+# This file lists the Python dependencies for the training and tools scripts.
+
+# For PyTorch, we use the CPU-only version to save space.
+--index-url https://download.pytorch.org/whl/cpu
+torch
+snntorch
+numpy
+matplotlib
+dtaidistance
+scikit-learn
+pyserial
