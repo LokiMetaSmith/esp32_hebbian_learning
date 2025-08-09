@@ -1,0 +1,5 @@
+numpy
+matplotlib
+dtaidistance
+scikit-learn
+pyserial
