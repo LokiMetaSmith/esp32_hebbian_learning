@@ -1,6 +1,24 @@
 #include "planner.h"
 #include "esp_log.h"
+
+#if __has_include("generated_gestures.h")
 #include "generated_gestures.h"
+#else
+#warning "generated_gestures.h not found. Using default placeholder gestures."
+// Define a default gesture graph if the generated one doesn't exist
+static GestureToken g_gesture_library[] = {
+    { // Gesture 0: Center
+        .id = 0, .num_waypoints = 1, .energy_cost = 0.0f,
+        .embedding = {0.0f},
+        .waypoints = { {{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, {0.0f}} }
+    },
+};
+static GestureGraph g_gesture_graph = {
+    .num_tokens = 1,
+    .transition_costs = {{0.0f}},
+    .gesture_library = g_gesture_library
+};
+#endif
 
 static const char *TAG = "PLANNER";
 
