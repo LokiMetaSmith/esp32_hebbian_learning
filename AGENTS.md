@@ -70,6 +70,12 @@ This project requires the ESP-IDF toolchain. If the `idf.py` command is not avai
     ```
     After this, the `idf.py` command will be available in your `PATH`.
 
+5.  **Install Python Dependencies:**
+    The training and testing scripts require several Python libraries. Install them using the provided `requirements.txt` file. It is recommended to do this after activating the ESP-IDF environment to ensure they are installed into the correct Python virtual environment.
+    ```bash
+    pip install -r requirements.txt
+    ```
+
 ## Running Tests
 
 This project includes a set of Python-based unit tests that can be run without any hardware. These tests use mock objects to simulate the ESP32 device.

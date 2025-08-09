@@ -67,10 +67,17 @@ Properly wiring the components is critical. Follow this guide carefully.
 
 ## Software & Dependencies
 
+### ESP-IDF Components
 This project is built using the **ESP-IDF v5.4**. It relies on the following managed components, which are listed in `main/idf_component.yml`:
 * **`espressif/led_strip`**: The official driver for the addressable RGB LED.
 * **`espressif/esp-dsp`**: The ESP Digital Signal Processing library.
 * **`espressif/esp_tinyusb`**: The component providing the native USB driver for the slave interface.
+
+### Python Dependencies
+The Python scripts in the `training/` and `tools/` directories require several libraries. A `requirements.txt` file is provided in the root directory. Install the dependencies using pip:
+```bash
+pip install -r requirements.txt
+```
 
 ## Project Structure
 
