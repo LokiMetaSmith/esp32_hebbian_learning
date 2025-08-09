@@ -1,0 +1,29 @@
+menu "Project Configuration"
+
+    config PROJECT_ENABLE_BLUETOOTH
+        bool "Enable Bluetooth"
+        default y
+        help
+            Enable or disable Bluetooth support. Disabling this will save a significant amount of flash space.
+
+    config PROJECT_ENABLE_ETHERNET
+        bool "Enable Ethernet"
+        default y
+        help
+            Enable or disable Ethernet support.
+
+    choice PROJECT_FLASH_SIZE
+        prompt "Flash Size"
+        default PROJECT_FLASH_SIZE_2MB
+        help
+            Select the flash size of your ESP32 module.
+
+        config PROJECT_FLASH_SIZE_2MB
+            bool "2MB"
+        config PROJECT_FLASH_SIZE_4MB
+            bool "4MB"
+        config PROJECT_FLASH_SIZE_8MB
+            bool "8MB"
+    endchoice
+
+endmenu
