@@ -38,6 +38,58 @@ For more detailed information, please refer to the [Technical Report](https://gi
 *   `training/`: Contains MCP servers and other training-related files.
 *   `examples/`: Contains client example code.
 
+## Environment Setup
+
+This project requires the ESP-IDF toolchain. If the `idf.py` command is not available, you must install it first. The following steps will set up the environment in a new session:
+
+1.  **Install System Dependencies:**
+    This project requires `libusb` for the `openocd` tool. You can install it with:
+    ```bash
+    sudo apt-get update && sudo apt-get install -y libusb-1.0-0
+    ```
+
+2.  **Download ESP-IDF:**
+    The ESP-IDF repository is not included in the sandbox. Clone it into your home directory:
+    ```bash
+    mkdir -p ~/esp
+    cd ~/esp
+    git clone -b v5.5 --recursive https://github.com/espressif/esp-idf.git
+    ```
+
+3.  **Install ESP-IDF Tools:**
+    Run the installation script to download and set up the toolchains:
+    ```bash
+    cd ~/esp/esp-idf
+    ./install.sh all
+    ```
+
+4.  **Activate the Environment:**
+    Before building or testing, you must activate the ESP-IDF environment in your shell session by sourcing the `export.sh` script:
+    ```bash
+    source ~/esp/esp-idf/export.sh
+    ```
+    After this, the `idf.py` command will be available in your `PATH`.
+
+## Running Tests
+
+This project includes a set of Python-based unit tests that can be run without any hardware. These tests use mock objects to simulate the ESP32 device.
+
+To run the tests:
+
+1.  **Activate the ESP-IDF Environment:**
+    Make sure you have activated the environment as described in the "Environment Setup" section.
+
+2.  **Navigate to the tests directory:**
+    ```bash
+    cd tests
+    ```
+
+3.  **Run the unit test script:**
+    ```bash
+    python unit_test_script.py --mode unit
+    ```
+    A successful run will show "Overall Result: PASSED".
+
 ## Building and Flashing
 
 This project uses the ESP-IDF build system. To build and flash the project, run the following commands:
