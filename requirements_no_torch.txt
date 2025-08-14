@@ -1,0 +1,7 @@
+torch
+snntorch
+numpy
+matplotlib
+dtaidistance
+scikit-learn
+pyserial
