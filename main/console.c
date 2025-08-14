@@ -22,6 +22,7 @@
 #include "commands.h"
 #include "bma400_driver.h"
 #include "esp_log.h"
+#include "freertos/task.h"
 
 static const char *TAG = "CONSOLE";
 
@@ -1031,7 +1032,16 @@ int cmd_set_max_accel(int argc, char **argv) {
 }
 
 int cmd_get_stats(int argc, char **argv) {
-    printf("Task stats not implemented.\n");
+    char *buffer = malloc(2048);
+    if (buffer == NULL) {
+        printf("Error: Failed to allocate buffer for task list.\n");
+        return 1;
+    }
+    printf("Task Name\tStatus\tPrio\tHWM\tTask#\n");
+    printf("------------------------------------------------\n");
+    vTaskList(buffer);
+    printf("%s\n", buffer);
+    free(buffer);
     return 0;
 }
 
