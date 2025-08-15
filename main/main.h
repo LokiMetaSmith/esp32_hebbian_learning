@@ -164,6 +164,7 @@ extern ServoCorrectionMap g_correction_maps[NUM_SERVOS];
 extern bool g_learning_loop_active;
 extern bool g_state_learning_active;
 extern bool g_random_walk_active;
+extern bool g_manual_scan_in_progress;
 extern TaskHandle_t g_random_walk_task_handle;
 extern uint8_t g_servo_acceleration;
 extern uint8_t servo_ids[NUM_SERVOS];

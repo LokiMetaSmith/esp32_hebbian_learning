@@ -29,6 +29,9 @@
 // --- Tag for logging ---
 static const char *TAG = "MCP_WIFI_SERVER";
 
+// --- Global flag to control manual Wi-Fi scanning ---
+bool g_manual_scan_in_progress = false;
+
 // --- FreeRTOS event group to signal when we are connected ---
 static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
@@ -116,8 +119,12 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        ESP_LOGI(TAG, "Disconnected from Wi-Fi. Retrying...");
-        esp_wifi_connect();
+        if (!g_manual_scan_in_progress) {
+            ESP_LOGI(TAG, "Disconnected from Wi-Fi. Retrying...");
+            esp_wifi_connect();
+        } else {
+            ESP_LOGI(TAG, "Disconnected from Wi-Fi for manual scan.");
+        }
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
