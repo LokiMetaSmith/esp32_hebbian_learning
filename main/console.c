@@ -931,10 +931,23 @@ static int cmd_get_wifi_config(int argc, char **argv) {
 }
 
 static int cmd_scan_wifi(int argc, char **argv) {
-    printf("Disconnecting Wi-Fi to start scan...\n");
-    ESP_ERROR_CHECK(esp_wifi_disconnect());
+    printf("Preparing Wi-Fi for scanning...\n");
 
-    // Wait a moment for the disconnect to finalize
+    // Ensure Wi-Fi is started. If it's already started, this will return ESP_OK.
+    esp_err_t err = esp_wifi_start();
+    if (err != ESP_OK) {
+        printf("Error: Failed to start Wi-Fi for scanning: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+
+    // Disconnect if already connected or connecting.
+    err = esp_wifi_disconnect();
+    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_CONNECT) {
+        printf("Error: Failed to disconnect Wi-Fi: %s\n", esp_err_to_name(err));
+        return 1;
+    }
+
+    // Wait a moment for the state to settle.
     vTaskDelay(pdMS_TO_TICKS(100));
 
     uint16_t number = 20;
@@ -943,30 +956,29 @@ static int cmd_scan_wifi(int argc, char **argv) {
     memset(ap_info, 0, sizeof(ap_info));
 
     printf("Scanning for Wi-Fi networks...\n");
-    esp_err_t err = esp_wifi_scan_start(NULL, true);
+    err = esp_wifi_scan_start(NULL, true);
     if (err != ESP_OK) {
         printf("Error: Wi-Fi scan failed: %s\n", esp_err_to_name(err));
-        // Attempt to reconnect even if scan fails
-        printf("Reconnecting Wi-Fi...\n");
-        ESP_ERROR_CHECK(esp_wifi_connect());
-        return 1;
+    } else {
+        ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_info));
+        ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
+
+        printf("Found %d access points:\n", ap_count);
+        printf("\n");
+        printf("               SSID              | RSSI | CHAN | AUTHMODE\n");
+        printf("----------------------------------------------------------------\n");
+        for (int i = 0; (i < 20) && (i < ap_count); i++) {
+            printf("%32s | %4d | %4d | %12s\n", (char *)ap_info[i].ssid, ap_info[i].rssi, ap_info[i].primary, ap_info[i].authmode == WIFI_AUTH_OPEN ? "open" : "wpa/wpa2");
+        }
+        printf("----------------------------------------------------------------\n");
     }
 
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_info));
-    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
-
-    printf("Found %d access points:\n", ap_count);
-    printf("\n");
-    printf("               SSID              | RSSI | CHAN | AUTHMODE\n");
-    printf("----------------------------------------------------------------\n");
-    for (int i = 0; (i < 20) && (i < ap_count); i++) {
-        printf("%32s | %4d | %4d | %12s\n", (char *)ap_info[i].ssid, ap_info[i].rssi, ap_info[i].primary, ap_info[i].authmode == WIFI_AUTH_OPEN ? "open" : "wpa/wpa2");
+    // Re-initiate connection to the configured AP
+    printf("Restoring Wi-Fi connection attempt...\n");
+    err = esp_wifi_connect();
+    if (err != ESP_OK) {
+        printf("Error: Failed to start reconnecting to Wi-Fi: %s\n", esp_err_to_name(err));
     }
-    printf("----------------------------------------------------------------\n");
-
-    // Reconnect to the configured AP
-    printf("Reconnecting to the configured Wi-Fi...\n");
-    ESP_ERROR_CHECK(esp_wifi_connect());
 
     return 0;
 }
