@@ -776,7 +776,10 @@ int cmd_set_pos(int argc, char **argv) {
     request.reg_address = REG_GOAL_POSITION;
     request.value = (uint16_t)pos;
     request.response_queue = NULL;
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+    if (xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100)) != pdPASS) {
+        printf("Error: Failed to send request to bus manager. Queue might be full.\n");
+        return 1;
+    }
     return 0;
 }
 
