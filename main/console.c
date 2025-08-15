@@ -664,7 +664,7 @@ int cmd_get_servo_acceleration(int argc, char **argv) {
 
     BusRequest_t request;
     request.arm_id = arm_id;
-    request.command = CMD_READ_WORD;
+    request.command = CMD_READ_BYTE; // Corrected from CMD_READ_WORD
     request.servo_id = (uint8_t)id;
     request.reg_address = REG_ACCELERATION;
     request.response_queue = response_queue;
@@ -673,8 +673,8 @@ int cmd_get_servo_acceleration(int argc, char **argv) {
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
         if (response.status == ESP_OK) {
-            uint8_t accel_value = (uint8_t)(response.value & 0xFF); // Acceleration is the LSB
-            printf("Servo %d on arm %d current acceleration: %u\n", id, arm_id, accel_value);
+            // The value is now a single byte, so no masking is needed.
+            printf("Servo %d on arm %d current acceleration: %u\n", id, arm_id, response.value);
         } else {
             printf("Error: Failed to read acceleration for servo %d on arm %d (err: %s).\n", id, arm_id, esp_err_to_name(response.status));
         }
