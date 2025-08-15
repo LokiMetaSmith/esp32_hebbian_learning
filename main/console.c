@@ -933,12 +933,8 @@ static int cmd_get_wifi_config(int argc, char **argv) {
 static int cmd_scan_wifi(int argc, char **argv) {
     printf("Starting Wi-Fi for scanning...\n");
     esp_err_t err = esp_wifi_start();
-    if (err == ESP_ERR_WIFI_STARTED) {
-        // This is not an error in our case, it just means Wi-Fi was already started.
-        // We can ignore this and proceed with the scan.
-        err = ESP_OK;
-    } else if (err != ESP_OK) {
-        printf("Error: Failed to start Wi-Fi: %s\n", esp_err_to_name(err));
+    if (err != ESP_OK) {
+        printf("Error: Failed to start Wi-Fi for scanning: %s\n", esp_err_to_name(err));
         return 1;
     }
 
