@@ -23,10 +23,13 @@
 #include "bma400_driver.h"
 #include "esp_log.h"
 #include "freertos/task.h"
+#include "esp_wifi.h"
 
 static const char *TAG = "CONSOLE";
 
 // --- Forward declarations for command functions ---
+static int cmd_get_wifi_config(int argc, char **argv);
+static int cmd_scan_wifi(int argc, char **argv);
 static int cmd_set_learning(int argc, char **argv);
 static int cmd_plan_move(int argc, char **argv);
 static int cmd_start_data_acq(int argc, char **argv);
@@ -350,6 +353,20 @@ void initialize_console(void) {
         .func = &cmd_get_energy_stats,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_energy_stats_cmd));
+
+    const esp_console_cmd_t get_wifi_config_cmd = {
+        .command = "get_wifi_config",
+        .help = "Get the currently configured Wi-Fi SSID",
+        .func = &cmd_get_wifi_config,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_wifi_config_cmd));
+
+    const esp_console_cmd_t scan_wifi_cmd = {
+        .command = "scan_wifi",
+        .help = "Scan for available Wi-Fi networks",
+        .func = &cmd_scan_wifi,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&scan_wifi_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
@@ -904,6 +921,33 @@ int cmd_set_learning(int argc, char **argv) {
         printf("Error: mode must be 'motors' or 'states'\n");
         return 1;
     }
+
+    return 0;
+}
+
+static int cmd_get_wifi_config(int argc, char **argv) {
+    printf("Attempting to connect to SSID: %s\n", WIFI_SSID);
+    return 0;
+}
+
+static int cmd_scan_wifi(int argc, char **argv) {
+    uint16_t number = 20;
+    wifi_ap_record_t ap_info[20];
+    uint16_t ap_count = 0;
+    memset(ap_info, 0, sizeof(ap_info));
+
+    printf("Scanning for Wi-Fi networks...\n");
+    ESP_ERROR_CHECK(esp_wifi_scan_start(NULL, true));
+    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_info));
+    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
+    printf("Found %d access points:\n", ap_count);
+    printf("\n");
+    printf("               SSID              | RSSI | CHAN | AUTHMODE\n");
+    printf("----------------------------------------------------------------\n");
+    for (int i = 0; (i < 20) && (i < ap_count); i++) {
+        printf("%32s | %4d | %4d | %12s\n", (char *)ap_info[i].ssid, ap_info[i].rssi, ap_info[i].primary, ap_info[i].authmode == WIFI_AUTH_OPEN ? "open" : "wpa/wpa2");
+    }
+    printf("----------------------------------------------------------------\n");
 
     return 0;
 }
