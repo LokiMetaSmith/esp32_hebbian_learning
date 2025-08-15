@@ -931,12 +931,11 @@ static int cmd_get_wifi_config(int argc, char **argv) {
 }
 
 static int cmd_scan_wifi(int argc, char **argv) {
-    printf("Starting Wi-Fi for scanning...\n");
-    esp_err_t err = esp_wifi_start();
-    if (err != ESP_OK) {
-        printf("Error: Failed to start Wi-Fi for scanning: %s\n", esp_err_to_name(err));
-        return 1;
-    }
+    printf("Disconnecting Wi-Fi to start scan...\n");
+    ESP_ERROR_CHECK(esp_wifi_disconnect());
+
+    // Wait a moment for the disconnect to finalize
+    vTaskDelay(pdMS_TO_TICKS(100));
 
     uint16_t number = 20;
     wifi_ap_record_t ap_info[20];
@@ -944,27 +943,17 @@ static int cmd_scan_wifi(int argc, char **argv) {
     memset(ap_info, 0, sizeof(ap_info));
 
     printf("Scanning for Wi-Fi networks...\n");
-    // The `true` argument makes this a blocking call.
-    err = esp_wifi_scan_start(NULL, true);
+    esp_err_t err = esp_wifi_scan_start(NULL, true);
     if (err != ESP_OK) {
         printf("Error: Wi-Fi scan failed: %s\n", esp_err_to_name(err));
-        esp_wifi_stop(); // Stop wifi before returning
+        // Attempt to reconnect even if scan fails
+        printf("Reconnecting Wi-Fi...\n");
+        ESP_ERROR_CHECK(esp_wifi_connect());
         return 1;
     }
 
-    err = esp_wifi_scan_get_ap_records(&number, ap_info);
-    if (err != ESP_OK) {
-        printf("Error: Failed to get AP records: %s\n", esp_err_to_name(err));
-        esp_wifi_stop();
-        return 1;
-    }
-
-    err = esp_wifi_scan_get_ap_num(&ap_count);
-    if (err != ESP_OK) {
-        printf("Error: Failed to get AP count: %s\n", esp_err_to_name(err));
-        esp_wifi_stop();
-        return 1;
-    }
+    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_info));
+    ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
 
     printf("Found %d access points:\n", ap_count);
     printf("\n");
@@ -975,9 +964,9 @@ static int cmd_scan_wifi(int argc, char **argv) {
     }
     printf("----------------------------------------------------------------\n");
 
-    // Stop WiFi
-    printf("Stopping Wi-Fi...\n");
-    ESP_ERROR_CHECK(esp_wifi_stop());
+    // Reconnect to the configured AP
+    printf("Reconnecting to the configured Wi-Fi...\n");
+    ESP_ERROR_CHECK(esp_wifi_connect());
 
     return 0;
 }
