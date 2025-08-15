@@ -931,24 +931,18 @@ static int cmd_get_wifi_config(int argc, char **argv) {
 }
 
 static int cmd_scan_wifi(int argc, char **argv) {
-    printf("Preparing Wi-Fi for scanning...\n");
+    g_manual_scan_in_progress = true;
 
-    // Ensure Wi-Fi is started. If it's already started, this will return ESP_OK.
-    esp_err_t err = esp_wifi_start();
-    if (err != ESP_OK) {
-        printf("Error: Failed to start Wi-Fi for scanning: %s\n", esp_err_to_name(err));
-        return 1;
-    }
-
-    // Disconnect if already connected or connecting.
-    err = esp_wifi_disconnect();
+    printf("Disconnecting Wi-Fi to start scan...\n");
+    esp_err_t err = esp_wifi_disconnect();
     if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_CONNECT) {
         printf("Error: Failed to disconnect Wi-Fi: %s\n", esp_err_to_name(err));
+        g_manual_scan_in_progress = false; // Reset flag on error
         return 1;
     }
 
-    // Wait a moment for the state to settle.
-    vTaskDelay(pdMS_TO_TICKS(100));
+    // Wait a moment for the disconnect event to be processed.
+    vTaskDelay(pdMS_TO_TICKS(200));
 
     uint16_t number = 20;
     wifi_ap_record_t ap_info[20];
@@ -973,7 +967,8 @@ static int cmd_scan_wifi(int argc, char **argv) {
         printf("----------------------------------------------------------------\n");
     }
 
-    // Re-initiate connection to the configured AP
+    // Clean up and restore normal operation
+    g_manual_scan_in_progress = false;
     printf("Restoring Wi-Fi connection attempt...\n");
     err = esp_wifi_connect();
     if (err != ESP_OK) {
