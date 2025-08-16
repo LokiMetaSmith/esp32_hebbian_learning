@@ -303,7 +303,7 @@ def run_feetech_tests(port, use_mock=False):
         print(f"  [FEETECH] Test 2 (read_word): PASSED (Read back {read_val})")
 
         # Test 3: REG_WRITE and ACTION
-        test_pos_3 = 3000
+        test_pos_3 = 2045
         client.reg_write_word(servo_id, 42, test_pos_3) # No response expected for REG_WRITE
         time.sleep(0.1)
         client.action() # No response for broadcast ACTION
