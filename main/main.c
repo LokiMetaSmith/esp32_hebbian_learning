@@ -999,7 +999,6 @@ void app_main(void) {
     initialize_usb_cdc(); // For Feetech slave command interface
     mcp_server_init();
     
-    initialize_console();
     planner_init();
     behavior_init();
 
