@@ -255,16 +255,12 @@ void bus_manager_task(void *pvParameters) {
                     break;
 
                 case CMD_WRITE_WORD:
-                    ESP_LOGI(TAG, "Bus Manager (Arm %d): Writing word to servo %d", arm_id, request.servo_id);
                     feetech_write_word(request.servo_id, request.reg_address, request.value);
-                    ESP_LOGI(TAG, "Bus Manager (Arm %d): Write word complete for servo %d", arm_id, request.servo_id);
                     response.status = ESP_OK;
                     break;
 
                 case CMD_WRITE_BYTE:
-                    ESP_LOGI(TAG, "Bus Manager (Arm %d): Writing byte to servo %d", arm_id, request.servo_id);
                     feetech_write_byte(request.servo_id, request.reg_address, (uint8_t)request.value);
-                    ESP_LOGI(TAG, "Bus Manager (Arm %d): Write byte complete for servo %d", arm_id, request.servo_id);
                     response.status = ESP_OK;
                     break;
                 case CMD_REG_WRITE_BYTE:
@@ -1029,18 +1025,19 @@ void app_main(void) {
     } else {
         ESP_LOGI(TAG, "State tokens loaded successfully from NVS.");
     }
-    for (int i = 0; i < NUM_ARMS; i++) {
-        initialize_robot_arm(i);
-    }
-    // Initialize smoothed goal positions to the current actual positions
-    // This part is not yet refactored to use the bus manager, so it is temporarily disabled.
-    ESP_LOGI(TAG, "Initial smoothed goals set from current positions.");
 
     for (int i = 0; i < NUM_ARMS; i++) {
         char task_name[32];
         snprintf(task_name, sizeof(task_name), "bus_manager_task_%d", i);
         xTaskCreate(bus_manager_task, task_name, 4096, (void*)i, 10, NULL);
     }
+
+    for (int i = 0; i < NUM_ARMS; i++) {
+        initialize_robot_arm(i);
+    }
+    // Initialize smoothed goal positions to the current actual positions
+    // This part is not yet refactored to use the bus manager, so it is temporarily disabled.
+    ESP_LOGI(TAG, "Initial smoothed goals set from current positions.");
     xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
 #ifdef ROBOT_TYPE_ARM
     xTaskCreate(learning_states_loop_task, "learning_states_loop", 4096, NULL, 5, NULL);
