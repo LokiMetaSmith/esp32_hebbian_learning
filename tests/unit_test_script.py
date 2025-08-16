@@ -24,6 +24,11 @@ def run_mcp_tests(host, port, use_mock=False):
         return False
 
     try:
+        # Set a safe, low acceleration for all tests
+        print("  [MCP] Setting safe acceleration for tests...")
+        response = client.call_tool("set_acceleration", {"accel": 100})
+        assert response and response.get("result") == "OK", "MCP Pre-Test Failed: Could not set safe acceleration."
+
         # Test 1: List tools
         response = client.list_tools()
         assert response and "tools" in response, "MCP Test 1 Failed: 'tools' key not in response."
@@ -167,6 +172,11 @@ def run_console_tests(port, use_mock=False):
         return False
 
     try:
+        # Set a safe, low acceleration for all tests
+        print("  [CONSOLE] Setting safe acceleration for tests...")
+        output = client.send_command("set_accel 100")
+        assert "acceleration set" in output, "Console Pre-Test Failed: Could not set safe acceleration."
+
         # Test 1: Get Position
         output = client.send_command("get_pos 1")
         assert "current position" in output, "Console Test 1 Failed: 'get_pos' output incorrect."
