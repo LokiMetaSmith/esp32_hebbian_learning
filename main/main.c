@@ -1178,6 +1178,23 @@ void process_feetech_packet(const PacketParser *parser) {
             tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, 0); // Flush after sending all responses
             break;
         }
+        case SCS_INST_REG_WRITE: {
+            ESP_LOGI(TAG, "Slave: Received REG_WRITE for ID %d", parser->id);
+            uint8_t reg_addr = parser->params[0];
+            uint8_t* data = &parser->params[1];
+            uint8_t data_len = parser->length - 3; // -2 for inst and checksum, -1 for reg_addr
+            feetech_reg_write(parser->id, reg_addr, data, data_len);
+            // REG_WRITE does not send a status packet
+            break;
+        }
+
+        case SCS_INST_ACTION: {
+            ESP_LOGI(TAG, "Slave: Received ACTION command");
+            feetech_action();
+            // ACTION does not send a status packet
+            break;
+        }
+
         case SCS_INST_READ: {
             uint8_t reg_addr = parser->params[0];
             uint8_t read_len = parser->params[1];
