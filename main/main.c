@@ -246,6 +246,13 @@ void bus_manager_task(void *pvParameters) {
                 case CMD_READ_WORD:
                     response.status = feetech_read_word(request.servo_id, request.reg_address, &response.value, 100);
                     break;
+                case CMD_READ_BYTE:
+                    {
+                        uint8_t byte_val = 0;
+                        response.status = feetech_read_byte(request.servo_id, request.reg_address, &byte_val, 100);
+                        response.value = byte_val; // Assign to the 16-bit value field for simplicity
+                    }
+                    break;
 
                 case CMD_WRITE_WORD:
                     // Write functions are "fire and forget", so we don't get a status back.
