@@ -126,7 +126,7 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
                 request.value = (uint16_t)pos;
                 request.response_queue = NULL;
                 xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100));
-                cJSON_AddStringToObject(response, "status", "OK");
+                cJSON_AddStringToObject(response, "result", "OK");
             }
         } else {
             cJSON_AddStringToObject(response, "status", "Invalid arguments");
