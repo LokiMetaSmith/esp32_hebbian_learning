@@ -1195,6 +1195,39 @@ void process_feetech_packet(const PacketParser *parser) {
             break;
         }
 
+        case SCS_INST_SYNC_WRITE: {
+            if (parser->length < 5) { // Reg + Len + at least one ID/Data pair
+                break;
+            }
+            uint8_t reg_addr = parser->params[0];
+            uint8_t data_len_per_servo = parser->params[1];
+            uint8_t num_servos = (parser->length - 4) / (data_len_per_servo + 1);
+
+            ESP_LOGI(TAG, "Slave: Received SYNC_WRITE for %d servos, Reg 0x%02X, Len %d", num_servos, reg_addr, data_len_per_servo);
+
+            uint8_t* servo_ids = malloc(num_servos);
+            uint8_t* all_servo_data = malloc(num_servos * data_len_per_servo);
+
+            if (!servo_ids || !all_servo_data) {
+                if(servo_ids) free(servo_ids);
+                if(all_servo_data) free(all_servo_data);
+                break;
+            }
+
+            int param_idx = 2;
+            for(int i = 0; i < num_servos; i++) {
+                servo_ids[i] = parser->params[param_idx++];
+                memcpy(&all_servo_data[i * data_len_per_servo], &parser->params[param_idx], data_len_per_servo);
+                param_idx += data_len_per_servo;
+            }
+
+            feetech_sync_write(reg_addr, data_len_per_servo, num_servos, servo_ids, all_servo_data);
+
+            free(servo_ids);
+            free(all_servo_data);
+            break;
+        }
+
         case SCS_INST_READ: {
             uint8_t reg_addr = parser->params[0];
             uint8_t read_len = parser->params[1];
