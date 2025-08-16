@@ -102,6 +102,51 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
         } else {
             cJSON_AddStringToObject(response, "status", "Invalid embeddings");
         }
+    } else if (strcmp(tool_name, "get_pos") == 0) {
+        cJSON *id_json = cJSON_GetObjectItem(arguments_json, "id");
+        cJSON *arm_id_json = cJSON_GetObjectItem(arguments_json, "arm_id");
+
+        if (cJSON_IsNumber(id_json)) {
+            int arm_id = 0;
+            if (cJSON_IsNumber(arm_id_json)) {
+                arm_id = arm_id_json->valueint;
+            }
+            int id = id_json->valueint;
+
+            if (id < 1 || id > NUM_SERVOS) {
+                cJSON_AddStringToObject(response, "status", "Invalid arguments");
+            } else {
+                QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
+                if (response_queue == NULL) {
+                    cJSON_AddStringToObject(response, "status", "Failed to create response queue");
+                } else {
+                    BusRequest_t request;
+                    request.arm_id = arm_id;
+                    request.command = CMD_READ_WORD;
+                    request.servo_id = (uint8_t)id;
+                    request.reg_address = REG_PRESENT_POSITION;
+                    request.response_queue = response_queue;
+
+                    if (xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100)) != pdPASS) {
+                        cJSON_AddStringToObject(response, "status", "Failed to send request to bus manager");
+                    } else {
+                        BusResponse_t bus_response;
+                        if (xQueueReceive(response_queue, &bus_response, pdMS_TO_TICKS(150)) == pdTRUE) {
+                            if (bus_response.status == ESP_OK) {
+                                cJSON_AddNumberToObject(response, "result", bus_response.value);
+                            } else {
+                                cJSON_AddStringToObject(response, "status", "Failed to read position");
+                            }
+                        } else {
+                            cJSON_AddStringToObject(response, "status", "Timeout waiting for position response");
+                        }
+                    }
+                    vQueueDelete(response_queue);
+                }
+            }
+        } else {
+            cJSON_AddStringToObject(response, "status", "Invalid arguments");
+        }
     } else if (strcmp(tool_name, "set_pos") == 0) {
         cJSON *id_json = cJSON_GetObjectItem(arguments_json, "id");
         cJSON *pos_json = cJSON_GetObjectItem(arguments_json, "pos");
