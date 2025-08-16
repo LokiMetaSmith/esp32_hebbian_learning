@@ -255,13 +255,16 @@ void bus_manager_task(void *pvParameters) {
                     break;
 
                 case CMD_WRITE_WORD:
-                    // Write functions are "fire and forget", so we don't get a status back.
+                    ESP_LOGI(TAG, "Bus Manager (Arm %d): Writing word to servo %d", arm_id, request.servo_id);
                     feetech_write_word(request.servo_id, request.reg_address, request.value);
+                    ESP_LOGI(TAG, "Bus Manager (Arm %d): Write word complete for servo %d", arm_id, request.servo_id);
                     response.status = ESP_OK;
                     break;
 
                 case CMD_WRITE_BYTE:
+                    ESP_LOGI(TAG, "Bus Manager (Arm %d): Writing byte to servo %d", arm_id, request.servo_id);
                     feetech_write_byte(request.servo_id, request.reg_address, (uint8_t)request.value);
+                    ESP_LOGI(TAG, "Bus Manager (Arm %d): Write byte complete for servo %d", arm_id, request.servo_id);
                     response.status = ESP_OK;
                     break;
                 case CMD_REG_WRITE_BYTE:

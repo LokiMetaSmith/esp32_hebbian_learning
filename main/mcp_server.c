@@ -102,6 +102,35 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
         } else {
             cJSON_AddStringToObject(response, "status", "Invalid embeddings");
         }
+    } else if (strcmp(tool_name, "set_pos") == 0) {
+        cJSON *id_json = cJSON_GetObjectItem(arguments_json, "id");
+        cJSON *pos_json = cJSON_GetObjectItem(arguments_json, "pos");
+        cJSON *arm_id_json = cJSON_GetObjectItem(arguments_json, "arm_id");
+
+        if (cJSON_IsNumber(id_json) && cJSON_IsNumber(pos_json)) {
+            int arm_id = 0;
+            if (cJSON_IsNumber(arm_id_json)) {
+                arm_id = arm_id_json->valueint;
+            }
+            int id = id_json->valueint;
+            int pos = pos_json->valueint;
+
+            if (id < 1 || id > NUM_SERVOS || pos < SERVO_POS_MIN || pos > SERVO_POS_MAX) {
+                cJSON_AddStringToObject(response, "status", "Invalid arguments");
+            } else {
+                BusRequest_t request;
+                request.arm_id = arm_id;
+                request.command = CMD_WRITE_WORD;
+                request.servo_id = (uint8_t)id;
+                request.reg_address = REG_GOAL_POSITION;
+                request.value = (uint16_t)pos;
+                request.response_queue = NULL;
+                xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100));
+                cJSON_AddStringToObject(response, "status", "OK");
+            }
+        } else {
+            cJSON_AddStringToObject(response, "status", "Invalid arguments");
+        }
     } else {
         cJSON_AddStringToObject(response, "status", "Tool not found");
     }

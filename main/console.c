@@ -581,7 +581,11 @@ int cmd_set_torque_limit(int argc, char **argv) {
 
     request.command = CMD_READ_WORD;
     request.response_queue = response_queue;
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+    if (xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100)) != pdPASS) {
+        printf("Error: Failed to send request to bus manager. Queue might be full.\n");
+        vQueueDelete(response_queue);
+        return 1;
+    }
 
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
@@ -829,7 +833,11 @@ int cmd_get_pos(int argc, char **argv) {
     request.servo_id = (uint8_t)id;
     request.reg_address = REG_PRESENT_POSITION;
     request.response_queue = response_queue;
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+    if (xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100)) != pdPASS) {
+        printf("Error: Failed to send request to bus manager. Queue might be full.\n");
+        vQueueDelete(response_queue);
+        return 1;
+    }
 
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
