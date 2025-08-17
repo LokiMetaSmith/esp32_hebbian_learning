@@ -186,6 +186,8 @@ class MockSerial:
             self._in_buffer += b"Goal set.\nrobot>"
         elif b"save" in data:
             self._in_buffer += b"Saving network to NVS...\nrobot>"
+        elif b"export-states" in data:
+            self._in_buffer += b"--- BEGIN STATE EXPORT ---\n--- END STATE EXPORT ---\nrobot>"
         elif b"export" in data:
             self._in_buffer += b"{\"hidden_layer\":{...}}\nrobot>"
         elif b"reset_nn" in data:
