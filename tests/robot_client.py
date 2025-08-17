@@ -188,6 +188,8 @@ class MockSerial:
             self._in_buffer += b"Forcing network re-initialization\nrobot>"
         elif b"start-data-acq" in data:
             self._in_buffer += b"Starting data acquisition\nrobot>"
+        elif b"set_accel 100" in data:
+            self._in_buffer += b"Servo acceleration set to 100 for all servos.\nrobot>"
         elif b"get_accel_raw" in data:
             self._in_buffer += b"Raw Accelerometer: X=0.0, Y=0.0, Z=1.0 (G)\nrobot>"
         elif b"start_map_cal 1" in data:
