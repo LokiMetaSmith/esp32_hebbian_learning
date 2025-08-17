@@ -5,6 +5,23 @@ import struct
 
 from robot_client import MCPClient, ConsoleClient, FeetechClient, MockMCPServer, MockSerial
 
+def go_to_home_position(client):
+    """Commands the robot to a safe, upright home position."""
+    print("  [MCP] Moving to home position...")
+    home_positions = {
+        1: 2045,  # Base
+        2: 1500,  # Shoulder
+        3: 1500,  # Elbow
+        4: 2045,  # Wrist
+        5: 2045,  # Wrist rotation
+        6: 1000,  # Gripper
+    }
+    for servo_id, pos in home_positions.items():
+        client.call_tool("set_pos", {"id": servo_id, "pos": pos})
+        time.sleep(0.1)
+    time.sleep(1) # Wait for moves to complete
+    print("  [MCP] Arrived at home position.")
+
 def run_mcp_tests(host, port, use_mock=False):
     """Runs a suite of tests against the MCP server."""
     mock_server = None
@@ -28,6 +45,9 @@ def run_mcp_tests(host, port, use_mock=False):
         print("  [MCP] Setting safe acceleration for tests...")
         response = client.call_tool("set_acceleration", {"accel": 100})
         assert response and response.get("result") == "OK", "MCP Pre-Test Failed: Could not set safe acceleration."
+
+        if not use_mock:
+            go_to_home_position(client)
 
         # Test 1: List tools
         response = client.list_tools()
@@ -158,6 +178,22 @@ def run_mcp_tests(host, port, use_mock=False):
     print("\n>>> MCP TESTS COMPLETED SUCCESSFULLY <<<")
     return True
 
+def go_to_home_position_console(client):
+    """Commands the robot to a safe, upright home position using the console."""
+    print("  [CONSOLE] Moving to home position...")
+    home_positions = {
+        1: 2045,  # Base
+        2: 1500,  # Shoulder
+        3: 1500,  # Elbow
+        4: 2045,  # Wrist
+        5: 2045,  # Wrist rotation
+        6: 1000,  # Gripper
+    }
+    for servo_id, pos in home_positions.items():
+        client.send_command(f"set_pos {servo_id} {pos}")
+    time.sleep(1) # Wait for moves to complete
+    print("  [CONSOLE] Arrived at home position.")
+
 def run_console_tests(port, use_mock=False):
     """Runs a suite of tests against the console CLI."""
     print("\n" + "="*50)
@@ -176,6 +212,9 @@ def run_console_tests(port, use_mock=False):
         print("  [CONSOLE] Setting safe acceleration for tests...")
         output = client.send_command("set_accel 100")
         assert "acceleration set" in output, "Console Pre-Test Failed: Could not set safe acceleration."
+
+        if not use_mock:
+            go_to_home_position_console(client)
 
         # Test 1: Get Position
         output = client.send_command("get_pos 1")
