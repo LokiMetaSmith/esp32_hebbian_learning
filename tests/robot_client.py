@@ -160,6 +160,10 @@ class MockSerial:
             self._in_buffer += b"State learning loop set to off\nrobot>"
         elif b"set-mode 2" in data:
             self._in_buffer += b"Operating mode set to: 2\nrobot>"
+        elif b"set_pos 99 2048" in data:
+            self._in_buffer += b"Error: Servo ID must be between 1 and 6\nrobot>"
+        elif b"set_pos 1 9999" in data:
+            self._in_buffer += b"Error: Position must be between 0 and 4095\nrobot>"
         elif b"set_pos 1 2048" in data:
             self._in_buffer += b"Set servo 1 on arm 0 to position 2048\nrobot>"
         elif b"get_current 1" in data:
