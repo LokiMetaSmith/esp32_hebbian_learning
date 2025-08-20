@@ -20,19 +20,18 @@
 
 // --- cJSON for parsing and creating JSON ---
 #include "cJSON.h"
-#include "mbedtls/base64.h"
+#include "esp_event.h"
+#include <stdint.h> // For int32_t
 
 // --- Project-specific includes ---
-//#include "main.h" // For NUM_SERVOS etc.
+#include "main.h" // For NUM_SERVOS etc.
 #include "feetech_protocol.h" // For servo communication functions
-#include "nvs_storage.h"
 
 // --- Wi-Fi & Server Configuration ---
-#define WIFI_SSID      "OKLATHON_25"      // <-- IMPORTANT: SET YOUR WIFI SSID
-#define WIFI_PASS      "oklathon2025"  // <-- IMPORTANT: SET YOUR WIFI PASSWORD
+#define WIFI_SSID      "YOUR_WIFI_SSID"      // <-- IMPORTANT: SET YOUR WIFI SSID
+#define WIFI_PASS      "YOUR_WIFI_PASSWORD"  // <-- IMPORTANT: SET YOUR WIFI PASSWORD
 #define MCP_TCP_PORT   8888
 #define MAX_CLIENTS    1
-#define WIFI_CONNECT_TIMEOUT_MS 60000 // 1 minute
 
 // --- Tag for logging ---
 static const char *TAG = "MCP_WIFI_SERVER";
@@ -113,25 +112,12 @@ static void wifi_init_sta(void) {
 
     ESP_LOGI(TAG, "Wi-Fi initialization finished. Waiting for connection...");
 
-    // Wait until the connection is established or we time out
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-                                           WIFI_CONNECTED_BIT,
-                                           pdFALSE,
-                                           pdFALSE,
-                                           pdMS_TO_TICKS(WIFI_CONNECT_TIMEOUT_MS));
-
-    if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG, "Successfully connected to Wi-Fi.");
-    } else {
-        ESP_LOGE(TAG, "Failed to connect to Wi-Fi within %d ms. Server not started.", WIFI_CONNECT_TIMEOUT_MS);
-        // Optional: Stop Wi-Fi to save power if not connected
-        esp_wifi_stop();
-        // We must not proceed to start the server task if Wi-Fi is not connected.
-        // The logic in mcp_server_init will need to handle this.
-        // For now, we just return, but a more robust solution might involve
-        // returning an error code.
-        return;
-    }
+    // Wait until the connection is established
+    xEventGroupWaitBits(s_wifi_event_group,
+                        WIFI_CONNECTED_BIT,
+                        pdFALSE,
+                        pdFALSE,
+                        portMAX_DELAY);
 }
 
 /**
@@ -215,7 +201,7 @@ static void mcp_server_task(void *pvParameters) {
                                 }
                                 cJSON_Delete(root);
                             }
-
+                            
                             if (response) {
                                 send_json_response(sock, response);
                                 cJSON_Delete(response);
@@ -244,33 +230,12 @@ CLEAN_UP:
  * @brief Sends a JSON object to the client over the given TCP socket.
  */
 static void send_json_response(int sock, const cJSON *response_json) {
-    // Check if the response contains binary data
-    cJSON *result = cJSON_GetObjectItem(response_json, "result");
-    if (result != NULL && result->type == cJSON_String && result->valuestring != NULL &&
-        strncmp(result->valuestring, "BINARY:", 7) == 0) {
-
-        // Extract the binary data from the string
-        char *binary_data = result->valuestring + 7;
-        int data_len = strlen(binary_data);
-
-        // Send the binary data
-        send(sock, binary_data, data_len, 0);
-    } else if (cJSON_GetObjectItem(response_json, "prompt")) {
-        // This is a prompt, so we don't add a newline
-        char *response_str = cJSON_PrintUnformatted(response_json);
-        if (response_str) {
-            ESP_LOGD(TAG, "Sending prompt: %s", response_str);
-            send(sock, response_str, strlen(response_str), 0);
-            free(response_str);
-        }
-    } else {
-        char *response_str = cJSON_PrintUnformatted(response_json);
-        if (response_str) {
-            ESP_LOGD(TAG, "Sending response: %s", response_str);
-            send(sock, response_str, strlen(response_str), 0);
-            send(sock, "\n", 1, 0); // Add newline terminator
-            free(response_str);
-        }
+    char *response_str = cJSON_PrintUnformatted(response_json);
+    if (response_str) {
+        ESP_LOGD(TAG, "Sending response: %s", response_str);
+        send(sock, response_str, strlen(response_str), 0);
+        send(sock, "\n", 1, 0); // Add newline terminator
+        free(response_str);
     }
 }
 
@@ -300,85 +265,13 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(babble_start_tool, "name", "babble_start");
     cJSON_AddStringToObject(babble_start_tool, "description", "Starts the Hebbian learning loop (motor babble).");
     cJSON_AddItemToArray(tools, babble_start_tool);
-
+    
     // Tool: babble_stop
     cJSON *babble_stop_tool = cJSON_CreateObject();
     cJSON_AddStringToObject(babble_stop_tool, "name", "babble_stop");
     cJSON_AddStringToObject(babble_stop_tool, "description", "Stops the Hebbian learning loop.");
     cJSON_AddItemToArray(tools, babble_stop_tool);
-
-    // Tool: set_torque
-    cJSON *set_torque_tool = cJSON_CreateObject();
-    cJSON_AddStringToObject(set_torque_tool, "name", "set_torque");
-    cJSON_AddStringToObject(set_torque_tool, "description", "Enables or disables torque for a single servo.");
-    cJSON_AddItemToArray(tools, set_torque_tool);
-
-    // Tool: set_acceleration
-    cJSON *set_acceleration_tool = cJSON_CreateObject();
-    cJSON_AddStringToObject(set_acceleration_tool, "name", "set_acceleration");
-    cJSON_AddStringToObject(set_acceleration_tool, "description", "Sets the acceleration of a single servo.");
-    cJSON_AddItemToArray(tools, set_acceleration_tool);
-
-    // Tool: get_status
-    cJSON *get_status_tool = cJSON_CreateObject();
-    cJSON_AddStringToObject(get_status_tool, "name", "get_status");
-    cJSON_AddStringToObject(get_status_tool, "description", "Gets the status of a single servo.");
-    cJSON_AddItemToArray(tools, get_status_tool);
-
-    // Tool: get_current
-    cJSON *get_current_tool = cJSON_CreateObject();
-    cJSON_AddStringToObject(get_current_tool, "name", "get_current");
-    cJSON_AddStringToObject(get_current_tool, "description", "Gets the current being used by a single servo.");
-    cJSON_AddItemToArray(tools, get_current_tool);
-
-    // Tool: get_power
-    cJSON *get_power_tool = cJSON_CreateObject();
-    cJSON_AddStringToObject(get_power_tool, "name", "get_power");
-    cJSON_AddStringToObject(get_power_tool, "description", "Gets the power being consumed by a single servo.");
-    cJSON_AddItemToArray(tools, get_power_tool);
-
-    // Tool: get_torque
-    cJSON *get_torque_tool = cJSON_CreateObject();
-    cJSON_AddStringToObject(get_torque_tool, "name", "get_torque");
-    cJSON_AddStringToObject(get_torque_tool, "description", "Gets the current torque of a single servo.");
-    cJSON_AddItemToArray(tools, get_torque_tool);
-
-    // Tool: calibrate
-    cJSON *calibrate_tool = cJSON_CreateObject();
-    cJSON_AddStringToObject(calibrate_tool, "name", "calibrate");
-    cJSON_AddStringToObject(calibrate_tool, "description", "Calibrates a single servo.");
-    cJSON_AddItemToArray(tools, calibrate_tool);
-
-    // Tool: export_data
-    cJSON *export_data_tool = cJSON_CreateObject();
-    cJSON_AddStringToObject(export_data_tool, "name", "export_data");
-    cJSON_AddStringToObject(export_data_tool, "description", "Exports data from the device.");
-    cJSON_AddItemToArray(tools, export_data_tool);
-
-    // Tool: import_nn
-    cJSON *import_nn_tool = cJSON_CreateObject();
-    cJSON_AddStringToObject(import_nn_tool, "name", "import_nn");
-    cJSON_AddStringToObject(import_nn_tool, "description", "Imports a neural network from a base64 encoded string.");
-    cJSON_AddItemToArray(tools, import_nn_tool);
-
-    // Tool: export_nn
-    cJSON *export_nn_tool = cJSON_CreateObject();
-    cJSON_AddStringToObject(export_nn_tool, "name", "export_nn");
-    cJSON_AddStringToObject(export_nn_tool, "description", "Exports the neural network as a base64 encoded string.");
-    cJSON_AddItemToArray(tools, export_nn_tool);
-
-    // Tool: import_nn_json
-    cJSON *import_nn_json_tool = cJSON_CreateObject();
-    cJSON_AddStringToObject(import_nn_json_tool, "name", "import_nn_json");
-    cJSON_AddStringToObject(import_nn_json_tool, "description", "Imports a neural network from a JSON object.");
-    cJSON_AddItemToArray(tools, import_nn_json_tool);
-
-    // Tool: calibrate_servo
-    cJSON *calibrate_servo_tool = cJSON_CreateObject();
-    cJSON_AddStringToObject(calibrate_servo_tool, "name", "calibrate_servo");
-    cJSON_AddStringToObject(calibrate_servo_tool, "description", "Starts an interactive calibration for a servo.");
-    cJSON_AddItemToArray(tools, calibrate_servo_tool);
-
+    
     return root;
 }
 
@@ -428,134 +321,8 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
     } else if (strcmp(tool_name, "babble_stop") == 0) {
         g_learning_loop_active = false;
         result_json = cJSON_CreateString("Learning loop stopped.");
-    } else if (strcmp(tool_name, "set_torque") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        const cJSON *torque_json = cJSON_GetObjectItem(args_json, "torque");
-        if (cJSON_IsNumber(id_json) && cJSON_IsBool(torque_json)) {
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                feetech_write_byte((uint8_t)id_json->valueint, REG_TORQUE_ENABLE, cJSON_IsTrue(torque_json) ? 1 : 0);
-                xSemaphoreGive(g_uart1_mutex);
-            }
-            result_json = cJSON_CreateString("OK");
-        }
-    } else if (strcmp(tool_name, "set_acceleration") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        const cJSON *accel_json = cJSON_GetObjectItem(args_json, "accel");
-        if (cJSON_IsNumber(id_json) && cJSON_IsNumber(accel_json)) {
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                feetech_write_byte((uint8_t)id_json->valueint, REG_ACCELERATION, (uint8_t)accel_json->valueint);
-                xSemaphoreGive(g_uart1_mutex);
-            }
-            result_json = cJSON_CreateString("OK");
-        }
-    } else if (strcmp(tool_name, "get_status") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        if (cJSON_IsNumber(id_json)) {
-            uint8_t moving = 0;
-            uint16_t pos = 0, load = 0, current = 0, voltage = 0;
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                feetech_read_byte((uint8_t)id_json->valueint, REG_MOVING, &moving, 100);
-                feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_POSITION, &pos, 100);
-                feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_LOAD, &load, 100);
-                feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100);
-                feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_VOLTAGE, &voltage, 100);
-                xSemaphoreGive(g_uart1_mutex);
-
-                cJSON *status_obj = cJSON_CreateObject();
-                cJSON_AddBoolToObject(status_obj, "moving", moving);
-                cJSON_AddNumberToObject(status_obj, "pos", pos);
-                cJSON_AddNumberToObject(status_obj, "load", load);
-                cJSON_AddNumberToObject(status_obj, "current", current);
-                cJSON_AddNumberToObject(status_obj, "voltage", voltage);
-                result_json = status_obj;
-            }
-        }
-    } else if (strcmp(tool_name, "get_current") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        if (cJSON_IsNumber(id_json)) {
-            uint16_t current = 0;
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100) == ESP_OK) {
-                    result_json = cJSON_CreateNumber(current);
-                }
-                xSemaphoreGive(g_uart1_mutex);
-            }
-        }
-    } else if (strcmp(tool_name, "get_power") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        if (cJSON_IsNumber(id_json)) {
-            uint16_t current = 0;
-            uint16_t voltage = 0;
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_CURRENT, &current, 100) == ESP_OK &&
-                   feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_VOLTAGE, &voltage, 100) == ESP_OK) {
-                    // Power (mW) = Voltage (mV) * Current (mA) / 1000
-                    // The servo returns voltage in mV and current in mA.
-                    result_json = cJSON_CreateNumber((float)(current * voltage) / 1000.0);
-                }
-                xSemaphoreGive(g_uart1_mutex);
-            }
-        }
-    } else if (strcmp(tool_name, "get_torque") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        if (cJSON_IsNumber(id_json)) {
-            uint16_t torque = 0;
-            if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
-                if(feetech_read_word((uint8_t)id_json->valueint, REG_PRESENT_LOAD, &torque, 100) == ESP_OK) {
-                    result_json = cJSON_CreateNumber(torque);
-                }
-                xSemaphoreGive(g_uart1_mutex);
-            }
-        }
-    } else if (strcmp(tool_name, "calibrate") == 0) {
-        // Calibration logic would go here. This is highly dependent on the specific
-        // calibration routine required. For now, we'll just return "OK".
-        result_json = cJSON_CreateString("OK");
-    } else if (strcmp(tool_name, "export_data") == 0) {
-        // This is a placeholder for the data to be exported.
-        // In a real application, this would be populated with actual data.
-        const char *data = "BINARY:This is the data to be exported.";
-        result_json = cJSON_CreateString(data);
-    } else if (strcmp(tool_name, "import_nn") == 0) {
-        const cJSON *data_json = cJSON_GetObjectItem(args_json, "data");
-        if (cJSON_IsString(data_json) && data_json->valuestring) {
-            size_t output_len;
-            unsigned char *decoded_data = malloc(strlen(data_json->valuestring));
-            if (mbedtls_base64_decode(decoded_data, strlen(data_json->valuestring), &output_len, (const unsigned char*)data_json->valuestring, strlen(data_json->valuestring)) == 0) {
-                if (set_raw_network_blob(decoded_data, output_len) == ESP_OK) {
-                    result_json = cJSON_CreateString("OK");
-                }
-            }
-            free(decoded_data);
-        }
-    } else if (strcmp(tool_name, "export_nn") == 0) {
-        uint8_t *nn_blob;
-        size_t nn_size;
-        if (get_raw_network_blob(&nn_blob, &nn_size) == ESP_OK) {
-            size_t output_len;
-            unsigned char *encoded_data = malloc(nn_size * 4 / 3 + 4);
-            if (mbedtls_base64_encode(encoded_data, nn_size * 4 / 3 + 4, &output_len, nn_blob, nn_size) == 0) {
-                result_json = cJSON_CreateString((const char*)encoded_data);
-            }
-            free(encoded_data);
-            free(nn_blob);
-        }
-    } else if (strcmp(tool_name, "import_nn_json") == 0) {
-        const cJSON *nn_json = cJSON_GetObjectItem(args_json, "nn_data");
-        if (nn_json) {
-            if (save_network_from_json(nn_json) == ESP_OK) {
-                result_json = cJSON_CreateString("OK");
-            }
-        }
-    } else if (strcmp(tool_name, "calibrate_servo") == 0) {
-        const cJSON *id_json = cJSON_GetObjectItem(args_json, "id");
-        if (cJSON_IsNumber(id_json)) {
-            start_calibration_task((uint8_t)id_json->valueint);
-            // The response will be sent by the calibration task
-            return NULL;
-        }
     }
-
+    
     // --- Finalize Response ---
     if (result_json) {
         cJSON_AddItemToObject(response_json, "result", result_json);

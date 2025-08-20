@@ -47,6 +47,8 @@ PredictionLayer* g_pl;
 // --- Global Correction Maps ---
 ServoCorrectionMap g_correction_maps[NUM_SERVOS];
 
+// --- Global variable for serial servo commands
+QueueHandle_t g_bus_request_queue; // The single queue for all servo command requests
 
 // --- Global variables for smart network saving ---
 static bool g_network_weights_updated = false;
@@ -191,6 +193,49 @@ static struct {
 
 // --- Application-Level Hardware Functions ---
 
+/**
+ * @brief Centralized task to manage all communication on the Feetech servo bus.
+ * This serializes all reads and writes to prevent collisions.
+ */
+void bus_manager_task(void *pvParameters) {
+    BusRequest_t request;
+    BusResponse_t response;
+
+    ESP_LOGI(TAG, "Bus Manager Task started.");
+
+    for (;;) {
+        // Wait indefinitely for a request to arrive
+        if (xQueueReceive(g_bus_request_queue, &request, portMAX_DELAY) == pdTRUE) {
+            
+            // Default response values
+            response.status = ESP_FAIL;
+            response.value = 0;
+
+            // Process the request based on its command type
+            switch (request.command) {
+                case CMD_READ_WORD:
+                    response.status = feetech_read_word(request.servo_id, request.reg_address, &response.value, 100);
+                    break;
+
+                case CMD_WRITE_WORD:
+                    // Write functions are "fire and forget", so we don't get a status back.
+                    feetech_write_word(request.servo_id, request.reg_address, request.value);
+                    response.status = ESP_OK; 
+                    break;
+                
+                case CMD_WRITE_BYTE:
+                    feetech_write_byte(request.servo_id, request.reg_address, (uint8_t)request.value);
+                    response.status = ESP_OK;
+                    break;
+            }
+
+            // If the requesting task provided a response queue, send the result back.
+            if (request.response_queue != NULL) {
+                xQueueSend(request.response_queue, &response, pdMS_TO_TICKS(10));
+            }
+        }
+    }
+}
 
 // Helper function to apply the correction map
 static uint16_t get_corrected_position(uint8_t servo_id, uint16_t commanded_pos) {
@@ -266,6 +311,7 @@ void read_sensor_state(float* sensor_data) {
 
     int current_sensor_index = NUM_ACCEL_GYRO_PARAMS;
     float total_current_A_cycle = 0.0f;
+    /*
     if (xSemaphoreTake(g_uart1_mutex, portMAX_DELAY) == pdTRUE) {
         for (int i = 0; i < NUM_SERVOS; i++) {
             uint16_t servo_pos = 0, servo_load = 0, servo_raw_current = 0;
@@ -290,6 +336,57 @@ void read_sensor_state(float* sensor_data) {
     } else {
         ESP_LOGE(TAG, "Failed to get UART1 mutex in read_sensor_state");
     }
+*/
+
+    // --- NEW: Create a temporary queue to receive responses for this function call ---
+    QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
+    if (response_queue == NULL) {
+        ESP_LOGE(TAG, "Failed to create response queue for sensor read!");
+        return;
+    }
+
+    BusRequest_t request;
+    BusResponse_t response;
+    request.response_queue = response_queue; // All requests will send responses here
+
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        uint16_t servo_pos = 0, servo_load = 0, servo_raw_current = 0;
+
+        // 1. Request Position
+        request.command = CMD_READ_WORD;
+        request.servo_id = servo_ids[i];
+        request.reg_address = REG_PRESENT_POSITION;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
+            servo_pos = response.value;
+        }
+
+        // 2. Request Load
+        request.reg_address = REG_PRESENT_LOAD;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
+            servo_load = response.value;
+        }
+
+        sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
+        sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
+        
+        // 3. Request Current
+        request.reg_address = REG_PRESENT_CURRENT;
+        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
+        if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
+            servo_raw_current = response.value;
+            float current_A = (float)servo_raw_current * 0.0065f;
+            total_current_A_cycle += current_A;
+            sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
+        } else {
+            sensor_data[current_sensor_index++] = 0.0f;
+        }
+    }
+    
+    // --- NEW: Clean up the response queue ---
+    vQueueDelete(response_queue);
+    
 
     if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
         if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -1477,7 +1574,10 @@ void app_main(void) {
     if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory!"); return; }
 
     g_console_mutex = xSemaphoreCreateMutex();
-    g_uart1_mutex = xSemaphoreCreateMutex();
+   // g_uart1_mutex = xSemaphoreCreateMutex();
+    // --- NEW: Create the global request queue ---
+    // A queue length of 10 can buffer up to 10 servo commands.
+    g_bus_request_queue = xQueueCreate(10, sizeof(BusRequest_t));
 
     nvs_storage_initialize();
     feetech_initialize(); 
