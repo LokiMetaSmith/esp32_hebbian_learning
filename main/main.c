@@ -33,6 +33,8 @@ const unsigned char dummy_synsense_config[] = {0xDE, 0xAD, 0xBE, 0xEF};
 #include "mcp_server.h"
 #include "argtable3/argtable3.h"
 #include "commands.h"
+#include "message_bus.h"
+#include "servo_controller.h"
 
 // --- Application Configuration ---
 
@@ -100,8 +102,6 @@ TaskHandle_t g_random_walk_task_handle = NULL;
 
 // --- Mutex for protecting console output ---
 SemaphoreHandle_t g_console_mutex;
-// --- Queues for servo bus requests ---
-QueueHandle_t g_bus_request_queues[NUM_ARMS];
 
 // --- Forward Declarations ---
 void learning_loop_task(void *pvParameters);
@@ -222,76 +222,6 @@ void move_servo_smoothly(uint8_t servo_id, uint16_t goal_position, int arm_id) {
     */
 }
 
-/**
- * @brief Centralized task to manage all communication on the Feetech servo bus.
- * This serializes all reads and writes to prevent collisions.
- */
-void bus_manager_task(void *pvParameters) {
-    int arm_id = (int)pvParameters;
-    BusRequest_t request;
-    BusResponse_t response;
-
-    ESP_LOGI(TAG, "Bus Manager Task for arm %d started.", arm_id);
-
-    for (;;) {
-        // Wait indefinitely for a request to arrive
-        if (xQueueReceive(g_bus_request_queues[arm_id], &request, portMAX_DELAY) == pdTRUE) {
-
-            // Default response values
-            response.status = ESP_FAIL;
-            response.value = 0;
-
-            // Process the request based on its command type
-            switch (request.command) {
-                case CMD_READ_WORD:
-                    response.status = feetech_read_word(request.servo_id, request.reg_address, &response.value, 100);
-                    break;
-                case CMD_READ_BYTE:
-                    {
-                        uint8_t byte_val = 0;
-                        response.status = feetech_read_byte(request.servo_id, request.reg_address, &byte_val, 100);
-                        response.value = byte_val; // Assign to the 16-bit value field for simplicity
-                    }
-                    break;
-
-                case CMD_WRITE_WORD:
-                    feetech_write_word(request.servo_id, request.reg_address, request.value);
-                    response.status = ESP_OK;
-                    break;
-
-                case CMD_WRITE_BYTE:
-                    feetech_write_byte(request.servo_id, request.reg_address, (uint8_t)request.value);
-                    response.status = ESP_OK;
-                    break;
-                case CMD_REG_WRITE_BYTE:
-                    {
-                        uint8_t data[] = { (uint8_t)request.value };
-                        feetech_reg_write(request.servo_id, request.reg_address, data, 1);
-                        response.status = ESP_OK;
-                    }
-                    break;
-                case CMD_REG_WRITE_WORD:
-                    {
-                        uint8_t data[] = { (uint8_t)(request.value & 0xFF), (uint8_t)((request.value >> 8) & 0xFF) };
-                        feetech_reg_write(request.servo_id, request.reg_address, data, 2);
-                        response.status = ESP_OK;
-                    }
-                    break;
-                case CMD_ACTION:
-                    feetech_action();
-                    response.status = ESP_OK;
-                    break;
-            }
-
-            // If the requesting task provided a response queue, send the result back.
-            if (request.response_queue != NULL) {
-                xQueueSend(request.response_queue, &response, pdMS_TO_TICKS(10));
-            }
-        }
-    }
-}
-
-
 void read_sensor_state(float* sensor_data, int arm_id) {
     float ax, ay, az;
     if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
@@ -373,23 +303,31 @@ void read_sensor_state(float* sensor_data, int arm_id) {
 
 void initialize_robot_arm(int arm_id) {
     ESP_LOGI(TAG, "Initializing servos on arm %d: Setting acceleration and enabling torque.", arm_id);
-    BusRequest_t request;
-    request.response_queue = NULL; // No response needed for writes
 
     for (int i = 0; i < NUM_SERVOS; i++) {
         // Set acceleration
-        request.command = CMD_WRITE_BYTE;
-        request.servo_id = servo_ids[i];
-        request.reg_address = REG_ACCELERATION;
-        request.value = g_servo_acceleration;
-        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+        message_t msg_accel;
+        BusRequest_t* payload_accel = malloc(sizeof(BusRequest_t));
+        payload_accel->servo_id = servo_ids[i];
+        payload_accel->reg_address = REG_ACCELERATION;
+        payload_accel->value = g_servo_acceleration;
+        msg_accel.type = MSG_SET_SERVO_ACCEL;
+        msg_accel.target_module_id = MODULE_ID_SERVO_CONTROLLER;
+        msg_accel.payload = payload_accel;
+        msg_accel.response_queue = NULL;
+        xQueueSend(g_message_bus, &msg_accel, portMAX_DELAY);
 
         // Enable torque
-        request.command = CMD_WRITE_BYTE;
-        request.servo_id = servo_ids[i];
-        request.reg_address = REG_TORQUE_ENABLE;
-        request.value = 1;
-        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+        message_t msg_torque;
+        BusRequest_t* payload_torque = malloc(sizeof(BusRequest_t));
+        payload_torque->servo_id = servo_ids[i];
+        payload_torque->reg_address = REG_TORQUE_ENABLE;
+        payload_torque->value = 1;
+        msg_torque.type = MSG_SET_SERVO_TORQUE;
+        msg_torque.target_module_id = MODULE_ID_SERVO_CONTROLLER;
+        msg_torque.payload = payload_torque;
+        msg_torque.response_queue = NULL;
+        xQueueSend(g_message_bus, &msg_torque, portMAX_DELAY);
     }
     ESP_LOGI(TAG, "Servos on arm %d initialized with acceleration %d and torque enabled.", arm_id, g_servo_acceleration);
 }
@@ -986,9 +924,7 @@ void app_main(void) {
     if (!g_hl || !g_ol || !g_pl) { ESP_LOGE(TAG, "Failed to allocate memory!"); return; }
 
     g_console_mutex = xSemaphoreCreateMutex();
-    for (int i = 0; i < NUM_ARMS; i++) {
-        g_bus_request_queues[i] = xQueueCreate(10, sizeof(BusRequest_t));
-    }
+    message_bus_init();
 
     nvs_storage_initialize();
     feetech_initialize(); 
@@ -1025,11 +961,7 @@ void app_main(void) {
         ESP_LOGI(TAG, "State tokens loaded successfully from NVS.");
     }
 
-    for (int i = 0; i < NUM_ARMS; i++) {
-        char task_name[32];
-        snprintf(task_name, sizeof(task_name), "bus_manager_task_%d", i);
-        xTaskCreate(bus_manager_task, task_name, 4096, (void*)i, 10, NULL);
-    }
+    xTaskCreate(servo_controller_task, "servo_controller_task", 4096, NULL, 10, NULL);
 
     for (int i = 0; i < NUM_ARMS; i++) {
         initialize_robot_arm(i);
