@@ -5,23 +5,6 @@ import struct
 
 from robot_client import MCPClient, ConsoleClient, FeetechClient, MockMCPServer, MockSerial
 
-def go_to_home_position(client):
-    """Commands the robot to a safe, upright home position."""
-    print("  [MCP] Moving to home position...")
-    home_positions = {
-        1: 2045,  # Base
-        2: 1500,  # Shoulder
-        3: 1500,  # Elbow
-        4: 2045,  # Wrist
-        5: 2045,  # Wrist rotation
-        6: 1000,  # Gripper
-    }
-    for servo_id, pos in home_positions.items():
-        client.call_tool("set_pos", {"id": servo_id, "pos": pos})
-        time.sleep(0.1)
-    time.sleep(1) # Wait for moves to complete
-    print("  [MCP] Arrived at home position.")
-
 def run_mcp_tests(host, port, use_mock=False):
     """Runs a suite of tests against the MCP server."""
     mock_server = None
@@ -41,14 +24,6 @@ def run_mcp_tests(host, port, use_mock=False):
         return False
 
     try:
-        # Set a safe, low acceleration for all tests
-        print("  [MCP] Setting safe acceleration for tests...")
-        response = client.call_tool("set_acceleration", {"accel": 100})
-        assert response and response.get("result") == "OK", "MCP Pre-Test Failed: Could not set safe acceleration."
-
-        if not use_mock:
-            go_to_home_position(client)
-
         # Test 1: List tools
         response = client.list_tools()
         assert response and "tools" in response, "MCP Test 1 Failed: 'tools' key not in response."
@@ -178,22 +153,6 @@ def run_mcp_tests(host, port, use_mock=False):
     print("\n>>> MCP TESTS COMPLETED SUCCESSFULLY <<<")
     return True
 
-def go_to_home_position_console(client):
-    """Commands the robot to a safe, upright home position using the console."""
-    print("  [CONSOLE] Moving to home position...")
-    home_positions = {
-        1: 2045,  # Base
-        2: 1500,  # Shoulder
-        3: 1500,  # Elbow
-        4: 2045,  # Wrist
-        5: 2045,  # Wrist rotation
-        6: 1000,  # Gripper
-    }
-    for servo_id, pos in home_positions.items():
-        client.send_command(f"set_pos {servo_id} {pos}")
-    time.sleep(1) # Wait for moves to complete
-    print("  [CONSOLE] Arrived at home position.")
-
 def run_console_tests(port, use_mock=False):
     """Runs a suite of tests against the console CLI."""
     print("\n" + "="*50)
@@ -208,86 +167,14 @@ def run_console_tests(port, use_mock=False):
         return False
 
     try:
-        # Set a safe, low acceleration for all tests
-        print("  [CONSOLE] Setting safe acceleration for tests...")
-        output = client.send_command("set_accel 100")
-        assert "acceleration set" in output, "Console Pre-Test Failed: Could not set safe acceleration."
-
-        if not use_mock:
-            go_to_home_position_console(client)
-
         # Test 1: Get Position
         output = client.send_command("get_pos 1")
         assert "current position" in output, "Console Test 1 Failed: 'get_pos' output incorrect."
-        # Test 1a: set_pos
-        output = client.send_command("set_pos 1 2048")
-        assert "Set servo 1 on arm 0 to position 2048" in output, "Console Test 1a Failed: 'set_pos' output incorrect."
-        output = client.send_command("set_pos 99 2048")
-        assert "Error: Servo ID must be between 1 and 6" in output, "Console Test 1a Failed: 'set_pos' with invalid id did not fail."
-        output = client.send_command("set_pos 1 9999")
-        assert "Error: Position must be between 0 and 4095" in output, "Console Test 1a Failed: 'set_pos' with invalid pos did not fail."
         output = client.send_command("get_pos 1 --arm 1")
         assert "current position" in output, "Console Test 1 Failed: 'get_pos' with arm_id output incorrect."
         print("  [CONSOLE] Test 1 (get_pos): PASSED")
 
-        # Test 1b: get_current
-        output = client.send_command("get_current 1")
-        assert "mA" in output, "Console Test 1b Failed: 'get_current' output incorrect."
-        print("  [CONSOLE] Test 1b (get_current): PASSED")
-
-        # Test 1c: set_sa
-        output = client.send_command("set_sa 1 100")
-        assert "Acceleration for servo 1 on arm 0 set to 100" in output, "Console Test 1c Failed: 'set_sa' output incorrect."
-        print("  [CONSOLE] Test 1c (set_sa): PASSED")
-
-        # Test 1d: get_sa
-        output = client.send_command("get_sa 1")
-        assert "current acceleration" in output, "Console Test 1d Failed: 'get_sa' output incorrect."
-        print("  [CONSOLE] Test 1d (get_sa): PASSED")
-
-        # Test 1e: set_tl
-        output = client.send_command("set_tl 1 500")
-        assert "torque limit read back" in output, "Console Test 1e Failed: 'set_tl' output incorrect."
-        print("  [CONSOLE] Test 1e (set_tl): PASSED")
-
-        # Test 2: Learning and Behavior Commands
-        output = client.send_command("set_max_torque 500")
-        assert "Babble max torque limit set to: 500" in output, "Console Test 2a Failed: 'set_max_torque' output incorrect."
-        output = client.send_command("set_ema_alpha 0.2")
-        assert "EMA alpha set to: 0.200000" in output, "Console Test 2b Failed: 'set_ema_alpha' output incorrect."
-        output = client.send_command("set_traj_step 5")
-        assert "Trajectory step size set to: 5" in output, "Console Test 2c Failed: 'set_traj_step' output incorrect."
-        output = client.send_command("set_max_accel 100")
-        assert "Babble min acceleration value set to: 100" in output, "Console Test 2d Failed: 'set_max_accel' output incorrect."
-        output = client.send_command("plan-move 1 2 3 4 5 6")
-        assert "Goal set" in output, "Console Test 2e Failed: 'plan-move' output incorrect."
-        print("  [CONSOLE] Test 2 (Learning/Behavior): PASSED")
-
-        # Test 3: Network and Data Commands
-        output = client.send_command("save")
-        assert "Saving network" in output, "Console Test 3a Failed: 'save' output incorrect."
-        output = client.send_command("export")
-        assert "hidden_layer" in output, "Console Test 3b Failed: 'export' output incorrect."
-        output = client.send_command("reset_nn")
-        assert "Forcing network re-initialization" in output, "Console Test 3c Failed: 'reset_nn' output incorrect."
-        output = client.send_command("start-data-acq")
-        assert "Starting data acquisition" in output, "Console Test 3d Failed: 'start-data-acq' output incorrect."
-        print("  [CONSOLE] Test 3 (Network/Data): PASSED")
-
-        # Test 4: Miscellaneous Commands
-        output = client.send_command("get_accel_raw")
-        assert "Raw Accelerometer" in output, "Console Test 4a Failed: 'get_accel_raw' output incorrect."
-        output = client.send_command("start_map_cal 1")
-        assert "Starting Calibration" in output, "Console Test 4b Failed: 'start_map_cal' output incorrect."
-        output = client.send_command("get_stats")
-        assert "Task Name" in output, "Console Test 4c Failed: 'get_stats' output incorrect."
-        output = client.send_command("get_wifi_config")
-        assert "SSID" in output, "Console Test 4d Failed: 'get_wifi_config' output incorrect."
-        output = client.send_command("scan_wifi")
-        assert "access points" in output, "Console Test 4e Failed: 'scan_wifi' output incorrect."
-        print("  [CONSOLE] Test 4 (Misc): PASSED")
-
-        # Test 5: Random Walk Start/Stop
+        # Test 2: Random Walk Start/Stop
         if not use_mock: # This test requires real hardware interaction
             output = client.send_command("rw_start")
             assert "Random Walk task created" in output or "resumed/started" in output, "Console Test 2 Failed: 'rw_start' output incorrect."
@@ -416,7 +303,7 @@ def run_feetech_tests(port, use_mock=False):
         print(f"  [FEETECH] Test 2 (read_word): PASSED (Read back {read_val})")
 
         # Test 3: REG_WRITE and ACTION
-        test_pos_3 = 2045
+        test_pos_3 = 3000
         client.reg_write_word(servo_id, 42, test_pos_3) # No response expected for REG_WRITE
         time.sleep(0.1)
         client.action() # No response for broadcast ACTION

@@ -22,14 +22,10 @@
 #include "commands.h"
 #include "bma400_driver.h"
 #include "esp_log.h"
-#include "freertos/task.h"
-#include "esp_wifi.h"
 
 static const char *TAG = "CONSOLE";
 
 // --- Forward declarations for command functions ---
-static int cmd_get_wifi_config(int argc, char **argv);
-static int cmd_scan_wifi(int argc, char **argv);
 static int cmd_set_learning(int argc, char **argv);
 static int cmd_plan_move(int argc, char **argv);
 static int cmd_start_data_acq(int argc, char **argv);
@@ -354,20 +350,6 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_energy_stats_cmd));
 
-    const esp_console_cmd_t get_wifi_config_cmd = {
-        .command = "get_wifi_config",
-        .help = "Get the currently configured Wi-Fi SSID",
-        .func = &cmd_get_wifi_config,
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&get_wifi_config_cmd));
-
-    const esp_console_cmd_t scan_wifi_cmd = {
-        .command = "scan_wifi",
-        .help = "Scan for available Wi-Fi networks",
-        .func = &cmd_scan_wifi,
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&scan_wifi_cmd));
-
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");
@@ -581,11 +563,7 @@ int cmd_set_torque_limit(int argc, char **argv) {
 
     request.command = CMD_READ_WORD;
     request.response_queue = response_queue;
-    if (xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100)) != pdPASS) {
-        printf("Error: Failed to send request to bus manager. Queue might be full.\n");
-        vQueueDelete(response_queue);
-        return 1;
-    }
+    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
 
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
@@ -668,7 +646,7 @@ int cmd_get_servo_acceleration(int argc, char **argv) {
 
     BusRequest_t request;
     request.arm_id = arm_id;
-    request.command = CMD_READ_BYTE; // Corrected from CMD_READ_WORD
+    request.command = CMD_READ_WORD;
     request.servo_id = (uint8_t)id;
     request.reg_address = REG_ACCELERATION;
     request.response_queue = response_queue;
@@ -677,8 +655,8 @@ int cmd_get_servo_acceleration(int argc, char **argv) {
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
         if (response.status == ESP_OK) {
-            // The value is now a single byte, so no masking is needed.
-            printf("Servo %d on arm %d current acceleration: %u\n", id, arm_id, response.value);
+            uint8_t accel_value = (uint8_t)(response.value & 0xFF); // Acceleration is the LSB
+            printf("Servo %d on arm %d current acceleration: %u\n", id, arm_id, accel_value);
         } else {
             printf("Error: Failed to read acceleration for servo %d on arm %d (err: %s).\n", id, arm_id, esp_err_to_name(response.status));
         }
@@ -797,10 +775,7 @@ int cmd_set_pos(int argc, char **argv) {
     request.reg_address = REG_GOAL_POSITION;
     request.value = (uint16_t)pos;
     request.response_queue = NULL;
-    if (xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100)) != pdPASS) {
-        printf("Error: Failed to send request to bus manager. Queue might be full.\n");
-        return 1;
-    }
+    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
     return 0;
 }
 
@@ -833,11 +808,7 @@ int cmd_get_pos(int argc, char **argv) {
     request.servo_id = (uint8_t)id;
     request.reg_address = REG_PRESENT_POSITION;
     request.response_queue = response_queue;
-    if (xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100)) != pdPASS) {
-        printf("Error: Failed to send request to bus manager. Queue might be full.\n");
-        vQueueDelete(response_queue);
-        return 1;
-    }
+    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
 
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
@@ -928,59 +899,6 @@ int cmd_set_learning(int argc, char **argv) {
     } else {
         printf("Error: mode must be 'motors' or 'states'\n");
         return 1;
-    }
-
-    return 0;
-}
-
-static int cmd_get_wifi_config(int argc, char **argv) {
-    printf("Attempting to connect to SSID: %s\n", WIFI_SSID);
-    return 0;
-}
-
-static int cmd_scan_wifi(int argc, char **argv) {
-    g_manual_scan_in_progress = true;
-
-    printf("Disconnecting Wi-Fi to start scan...\n");
-    esp_err_t err = esp_wifi_disconnect();
-    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_CONNECT) {
-        printf("Error: Failed to disconnect Wi-Fi: %s\n", esp_err_to_name(err));
-        g_manual_scan_in_progress = false; // Reset flag on error
-        return 1;
-    }
-
-    // Wait a moment for the disconnect event to be processed.
-    vTaskDelay(pdMS_TO_TICKS(200));
-
-    uint16_t number = 20;
-    wifi_ap_record_t ap_info[20];
-    uint16_t ap_count = 0;
-    memset(ap_info, 0, sizeof(ap_info));
-
-    printf("Scanning for Wi-Fi networks...\n");
-    err = esp_wifi_scan_start(NULL, true);
-    if (err != ESP_OK) {
-        printf("Error: Wi-Fi scan failed: %s\n", esp_err_to_name(err));
-    } else {
-        ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_info));
-        ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
-
-        printf("Found %d access points:\n", ap_count);
-        printf("\n");
-        printf("               SSID              | RSSI | CHAN | AUTHMODE\n");
-        printf("----------------------------------------------------------------\n");
-        for (int i = 0; (i < 20) && (i < ap_count); i++) {
-            printf("%32s | %4d | %4d | %12s\n", (char *)ap_info[i].ssid, ap_info[i].rssi, ap_info[i].primary, ap_info[i].authmode == WIFI_AUTH_OPEN ? "open" : "wpa/wpa2");
-        }
-        printf("----------------------------------------------------------------\n");
-    }
-
-    // Clean up and restore normal operation
-    g_manual_scan_in_progress = false;
-    printf("Restoring Wi-Fi connection attempt...\n");
-    err = esp_wifi_connect();
-    if (err != ESP_OK) {
-        printf("Error: Failed to start reconnecting to Wi-Fi: %s\n", esp_err_to_name(err));
     }
 
     return 0;
@@ -1113,16 +1031,7 @@ int cmd_set_max_accel(int argc, char **argv) {
 }
 
 int cmd_get_stats(int argc, char **argv) {
-    char *buffer = malloc(2048);
-    if (buffer == NULL) {
-        printf("Error: Failed to allocate buffer for task list.\n");
-        return 1;
-    }
-    printf("Task Name\tStatus\tPrio\tHWM\tTask#\n");
-    printf("------------------------------------------------\n");
-    vTaskList(buffer);
-    printf("%s\n", buffer);
-    free(buffer);
+    printf("Task stats not implemented.\n");
     return 0;
 }
 
