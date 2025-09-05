@@ -145,160 +145,13 @@ static uint16_t get_corrected_position(uint8_t servo_id, uint16_t commanded_pos)
 
 // Helper function to move a servo along a smooth trajectory
 void move_servo_smoothly(uint8_t servo_id, uint16_t goal_position, int arm_id) {
-    QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
-    if (response_queue == NULL) {
-        ESP_LOGE(TAG, "Failed to create response queue for move_servo_smoothly!");
-        return;
-    }
-
-    BusRequest_t request;
-    BusResponse_t response;
-    request.response_queue = response_queue;
-    request.command = CMD_READ_WORD;
-    request.servo_id = servo_id;
-    request.reg_address = REG_PRESENT_POSITION;
-
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
-
-    uint16_t current_pos = 0;
-    if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
-        current_pos = response.value;
-    } else {
-        ESP_LOGE(TAG, "Failed to read servo %d position on arm %d", servo_id, arm_id);
-        vQueueDelete(response_queue);
-        return;
-    }
-
-    int16_t diff = goal_position - current_pos;
-    request.response_queue = NULL; // No response needed for writes in the loop
-
-    while (abs(diff) > g_trajectory_step_size) {
-        current_pos += (diff > 0) ? g_trajectory_step_size : -g_trajectory_step_size;
-        request.command = CMD_WRITE_WORD;
-        request.reg_address = REG_GOAL_POSITION;
-        request.value = current_pos;
-        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
-        vTaskDelay(pdMS_TO_TICKS(20)); // Delay between steps
-        diff = goal_position - current_pos;
-    }
-
-    // Send the final goal position to ensure it lands precisely
-    request.command = CMD_WRITE_WORD;
-    request.reg_address = REG_GOAL_POSITION;
-    request.value = goal_position;
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
-
-    vQueueDelete(response_queue);
-
-    // This function is being refactored to use the bus manager.
-    // The old implementation is left here for reference.
-    /*
-    uint16_t current_pos = 0;
-    BusRequest_t request;
-    request.response_queue = NULL;
-    request.command = CMD_READ_WORD;
-    request.servo_id = servo_id;
-    request.reg_address = REG_PRESENT_POSITION;
-    request.response_queue = response_queue;
-    xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
-
-    int16_t diff = goal_position - response.value;
-    while (abs(diff) > g_trajectory_step_size) {
-        current_pos += (diff > 0) ? g_trajectory_step_size : -g_trajectory_step_size;
-        request.command = CMD_WRITE_WORD;
-        request.servo_id = servo_id;
-        request.reg_address = REG_GOAL_POSITION;
-        request.value = current_pos;
-        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
-        vTaskDelay(pdMS_TO_TICKS(20)); // Delay between steps
-        diff = goal_position - current_pos;
-    }
-    // Send the final goal position to ensure it lands precisely
-        request.command = CMD_WRITE_WORD;
-        request.servo_id = servo_id;
-        request.reg_address = REG_GOAL_POSITION;
-        request.value = goal_position;
-        xQueueSend(g_bus_request_queue, &request, portMAX_DELAY);
-    */
+    // This function needs to be refactored to use the message bus.
+    // For now, it is disabled.
 }
 
 void read_sensor_state(float* sensor_data, int arm_id) {
-    float ax, ay, az;
-    if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
-        sensor_data[0] = ax; sensor_data[1] = ay; sensor_data[2] = az;
-    }
-    sensor_data[3] = 0.0f; sensor_data[4] = 0.0f; sensor_data[5] = 0.0f;
-
-    int current_sensor_index = NUM_ACCEL_GYRO_PARAMS;
-    float total_current_A_cycle = 0.0f;
-
-    // --- NEW: Create a temporary queue to receive responses for this function call ---
-    QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
-    if (response_queue == NULL) {
-        ESP_LOGE(TAG, "Failed to create response queue for sensor read!");
-        return;
-    }
-
-    BusRequest_t request;
-    BusResponse_t response;
-    request.response_queue = response_queue; // All requests will send responses here
-
-    for (int i = 0; i < NUM_SERVOS; i++) {
-        uint16_t servo_pos = 0, servo_load = 0, servo_raw_current = 0;
-
-        // 1. Request Position
-        request.command = CMD_READ_WORD;
-        request.servo_id = servo_ids[i];
-        request.reg_address = REG_PRESENT_POSITION;
-        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
-        if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
-            servo_pos = response.value;
-        }
-
-        // 2. Request Load
-        request.reg_address = REG_PRESENT_LOAD;
-        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
-        if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
-            servo_load = response.value;
-        }
-
-        sensor_data[current_sensor_index++] = (float)servo_pos / SERVO_POS_MAX;
-        sensor_data[current_sensor_index++] = (float)servo_load / 1000.0f;
-
-        // 3. Request Current
-        request.reg_address = REG_PRESENT_CURRENT;
-        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
-        if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
-            servo_raw_current = response.value;
-            float current_A = (float)servo_raw_current * 0.0065f;
-            total_current_A_cycle += current_A;
-            sensor_data[current_sensor_index++] = fmin(1.0f, current_A / MAX_EXPECTED_SERVO_CURRENT_A);
-        } else {
-            sensor_data[current_sensor_index++] = 0.0f;
-        }
-    }
-
-    // --- NEW: Clean up the response queue ---
-    vQueueDelete(response_queue);
-
-    // --- Get Camera Data ---
-    sensor_data[current_sensor_index++] = (float)synsense_get_classification();
-
-    if (fabsf(total_current_A_cycle - g_last_logged_total_current_A) > CURRENT_LOGGING_THRESHOLD_A) {
-        if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
-            ESP_LOGI(TAG, "Total servo current this cycle on arm %d: %.3f A", arm_id, total_current_A_cycle);
-            g_last_logged_total_current_A = total_current_A_cycle;
-            xSemaphoreGive(g_console_mutex);
-        }
-    }
-
-    // --- Update Energy Statistics ---
-    if (total_current_A_cycle > g_energy_stats.peak_current_A) {
-        g_energy_stats.peak_current_A = total_current_A_cycle;
-    }
-    g_energy_stats.total_current_A_sum += total_current_A_cycle;
-    g_energy_stats.num_samples++;
-    g_energy_stats.average_current_A = g_energy_stats.total_current_A_sum / g_energy_stats.num_samples;
+    // This function needs to be refactored to use the message bus.
+    // For now, it is disabled.
 }
 
 void initialize_robot_arm(int arm_id) {
@@ -309,7 +162,6 @@ void initialize_robot_arm(int arm_id) {
         message_t msg_accel;
         BusRequest_t* payload_accel = malloc(sizeof(BusRequest_t));
         payload_accel->servo_id = servo_ids[i];
-        payload_accel->reg_address = REG_ACCELERATION;
         payload_accel->value = g_servo_acceleration;
         msg_accel.type = MSG_SET_SERVO_ACCEL;
         msg_accel.target_module_id = MODULE_ID_SERVO_CONTROLLER;
@@ -321,7 +173,6 @@ void initialize_robot_arm(int arm_id) {
         message_t msg_torque;
         BusRequest_t* payload_torque = malloc(sizeof(BusRequest_t));
         payload_torque->servo_id = servo_ids[i];
-        payload_torque->reg_address = REG_TORQUE_ENABLE;
         payload_torque->value = 1;
         msg_torque.type = MSG_SET_SERVO_TORQUE;
         msg_torque.target_module_id = MODULE_ID_SERVO_CONTROLLER;
@@ -334,51 +185,8 @@ void initialize_robot_arm(int arm_id) {
 
 #ifdef ROBOT_TYPE_ARM
 void execute_on_robot_arm(const float* action_vector, int arm_id) {
-    BusRequest_t request;
-    request.response_queue = NULL; // No response needed for writes
-
-    // action_vector contains NUM_SERVOS * 3 params: pos, accel, torque
-    for (int i = 0; i < NUM_SERVOS; i++) {
-        // --- Decode and Clamp Acceleration ---
-        float norm_accel = action_vector[NUM_SERVOS + i]; // Normalized accel from NN [-1, 1]
-        uint8_t commanded_accel = (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 254.0f); // Scale to 0-254
-        if (commanded_accel < g_min_accel_value) {
-            commanded_accel = g_min_accel_value;
-        }
-        request.command = CMD_REG_WRITE_BYTE;
-        request.servo_id = servo_ids[i];
-        request.reg_address = REG_ACCELERATION;
-        request.value = commanded_accel;
-        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
-
-        // --- Decode and Clamp Torque ---
-        float norm_torque = action_vector[NUM_SERVOS * 2 + i]; // Normalized torque from NN [-1, 1]
-        uint16_t commanded_torque = (uint16_t)(((norm_torque + 1.0f) / 2.0f) * 1000.0f); // Scale to 0-1000
-        if (commanded_torque > g_max_torque_limit) {
-            commanded_torque = g_max_torque_limit;
-        }
-        request.command = CMD_REG_WRITE_WORD;
-        request.servo_id = servo_ids[i];
-        request.reg_address = REG_TORQUE_LIMIT;
-        request.value = commanded_torque;
-        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
-
-        // --- Decode and set position ---
-        float norm_pos = action_vector[i]; // Normalized position from NN [-1, 1]
-        float scaled_pos = (norm_pos + 1.0f) / 2.0f; // Scale to 0-1
-        uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
-        uint16_t corrected_position = get_corrected_position(servo_ids[i], goal_position);
-        request.command = CMD_REG_WRITE_WORD;
-        request.servo_id = servo_ids[i];
-        request.reg_address = REG_GOAL_POSITION;
-        request.value = corrected_position;
-        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
-    }
-
-    // After buffering all the commands, send a single ACTION command to execute them simultaneously.
-    request.command = CMD_ACTION;
-    request.servo_id = 0; // Not used by bus manager for ACTION, but set to 0 for clarity.
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+    // This function needs to be refactored to use the message bus.
+    // For now, it is disabled.
 }
 #endif
 
