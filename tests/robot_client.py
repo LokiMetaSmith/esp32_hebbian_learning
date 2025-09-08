@@ -160,52 +160,6 @@ class MockSerial:
             self._in_buffer += b"State learning loop set to off\nrobot>"
         elif b"set-mode 2" in data:
             self._in_buffer += b"Operating mode set to: 2\nrobot>"
-        elif b"set_pos 99 2048" in data:
-            self._in_buffer += b"Error: Servo ID must be between 1 and 6\nrobot>"
-        elif b"set_pos 1 9999" in data:
-            self._in_buffer += b"Error: Position must be between 0 and 4095\nrobot>"
-        elif b"set_pos 1 2048" in data:
-            self._in_buffer += b"Set servo 1 on arm 0 to position 2048\nrobot>"
-        elif b"get_current 1" in data:
-            self._in_buffer += b"present current: 123 (raw) -> 799.50 mA (0.800 A)\nrobot>"
-        elif b"set_sa 1 100" in data:
-            self._in_buffer += b"Acceleration for servo 1 on arm 0 set to 100\nrobot>"
-        elif b"get_sa 1" in data:
-            self._in_buffer += b"current acceleration: 100\nrobot>"
-        elif b"set_tl 1 500" in data:
-            self._in_buffer += b"torque limit read back: 500\nrobot>"
-        elif b"set_max_torque 500" in data:
-            self._in_buffer += b"Babble max torque limit set to: 500\nrobot>"
-        elif b"set_ema_alpha 0.2" in data:
-            self._in_buffer += b"EMA alpha set to: 0.200000\nrobot>"
-        elif b"set_traj_step 5" in data:
-            self._in_buffer += b"Trajectory step size set to: 5\nrobot>"
-        elif b"set_max_accel 100" in data:
-            self._in_buffer += b"Babble min acceleration value set to: 100\nrobot>"
-        elif b"plan-move 1 2 3 4 5 6" in data:
-            self._in_buffer += b"Goal set.\nrobot>"
-        elif b"save" in data:
-            self._in_buffer += b"Saving network to NVS...\nrobot>"
-        elif b"export-states" in data:
-            self._in_buffer += b"--- BEGIN STATE EXPORT ---\n--- END STATE EXPORT ---\nrobot>"
-        elif b"export" in data:
-            self._in_buffer += b"{\"hidden_layer\":{...}}\nrobot>"
-        elif b"reset_nn" in data:
-            self._in_buffer += b"Forcing network re-initialization\nrobot>"
-        elif b"start-data-acq" in data:
-            self._in_buffer += b"Starting data acquisition\nrobot>"
-        elif b"set_accel 100" in data:
-            self._in_buffer += b"Servo acceleration set to 100 for all servos.\nrobot>"
-        elif b"get_accel_raw" in data:
-            self._in_buffer += b"Raw Accelerometer: X=0.0, Y=0.0, Z=1.0 (G)\nrobot>"
-        elif b"start_map_cal 1" in data:
-            self._in_buffer += b"--- Starting Calibration for Servo 1 on Arm 0 ---\nrobot>"
-        elif b"get_stats" in data:
-            self._in_buffer += b"Task Name\tStatus\tPrio\tHWM\tTask#\nrobot>"
-        elif b"get_wifi_config" in data:
-            self._in_buffer += b"Attempting to connect to SSID: YourSSID\nrobot>"
-        elif b"scan_wifi" in data:
-            self._in_buffer += b"Found 1 access points:\nrobot>"
         elif b"rw-set-params 50 100" in data:
             self._in_buffer += b"Random walk parameters updated\nrobot>"
         elif b"export-states" in data:

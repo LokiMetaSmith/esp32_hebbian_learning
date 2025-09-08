@@ -29,9 +29,6 @@
 // --- Tag for logging ---
 static const char *TAG = "MCP_WIFI_SERVER";
 
-// --- Global flag to control manual Wi-Fi scanning ---
-bool g_manual_scan_in_progress = false;
-
 // --- FreeRTOS event group to signal when we are connected ---
 static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
@@ -102,80 +99,6 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
         } else {
             cJSON_AddStringToObject(response, "status", "Invalid embeddings");
         }
-    } else if (strcmp(tool_name, "get_pos") == 0) {
-        cJSON *id_json = cJSON_GetObjectItem(arguments_json, "id");
-        cJSON *arm_id_json = cJSON_GetObjectItem(arguments_json, "arm_id");
-
-        if (cJSON_IsNumber(id_json)) {
-            int arm_id = 0;
-            if (cJSON_IsNumber(arm_id_json)) {
-                arm_id = arm_id_json->valueint;
-            }
-            int id = id_json->valueint;
-
-            if (id < 1 || id > NUM_SERVOS) {
-                cJSON_AddStringToObject(response, "status", "Invalid arguments");
-            } else {
-                QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
-                if (response_queue == NULL) {
-                    cJSON_AddStringToObject(response, "status", "Failed to create response queue");
-                } else {
-                    BusRequest_t request;
-                    request.arm_id = arm_id;
-                    request.command = CMD_READ_WORD;
-                    request.servo_id = (uint8_t)id;
-                    request.reg_address = REG_PRESENT_POSITION;
-                    request.response_queue = response_queue;
-
-                    if (xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100)) != pdPASS) {
-                        cJSON_AddStringToObject(response, "status", "Failed to send request to bus manager");
-                    } else {
-                        BusResponse_t bus_response;
-                        if (xQueueReceive(response_queue, &bus_response, pdMS_TO_TICKS(150)) == pdTRUE) {
-                            if (bus_response.status == ESP_OK) {
-                                cJSON_AddNumberToObject(response, "result", bus_response.value);
-                            } else {
-                                cJSON_AddStringToObject(response, "status", "Failed to read position");
-                            }
-                        } else {
-                            cJSON_AddStringToObject(response, "status", "Timeout waiting for position response");
-                        }
-                    }
-                    vQueueDelete(response_queue);
-                }
-            }
-        } else {
-            cJSON_AddStringToObject(response, "status", "Invalid arguments");
-        }
-    } else if (strcmp(tool_name, "set_pos") == 0) {
-        cJSON *id_json = cJSON_GetObjectItem(arguments_json, "id");
-        cJSON *pos_json = cJSON_GetObjectItem(arguments_json, "pos");
-        cJSON *arm_id_json = cJSON_GetObjectItem(arguments_json, "arm_id");
-
-        if (cJSON_IsNumber(id_json) && cJSON_IsNumber(pos_json)) {
-            int arm_id = 0;
-            if (cJSON_IsNumber(arm_id_json)) {
-                arm_id = arm_id_json->valueint;
-            }
-            int id = id_json->valueint;
-            int pos = pos_json->valueint;
-
-            if (id < 1 || id > NUM_SERVOS || pos < SERVO_POS_MIN || pos > SERVO_POS_MAX) {
-                cJSON_AddStringToObject(response, "status", "Invalid arguments");
-            } else {
-                BusRequest_t request;
-                request.arm_id = arm_id;
-                request.command = CMD_WRITE_WORD;
-                request.servo_id = (uint8_t)id;
-                request.reg_address = REG_GOAL_POSITION;
-                request.value = (uint16_t)pos;
-                request.response_queue = NULL;
-                xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100));
-                cJSON_AddStringToObject(response, "result", "OK");
-            }
-        } else {
-            cJSON_AddStringToObject(response, "status", "Invalid arguments");
-        }
     } else {
         cJSON_AddStringToObject(response, "status", "Tool not found");
     }
@@ -193,12 +116,8 @@ static void wifi_event_handler(void* arg, esp_event_base_t event_base,
     if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_START) {
         esp_wifi_connect();
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
-        if (!g_manual_scan_in_progress) {
-            ESP_LOGI(TAG, "Disconnected from Wi-Fi. Retrying...");
-            esp_wifi_connect();
-        } else {
-            ESP_LOGI(TAG, "Disconnected from Wi-Fi for manual scan.");
-        }
+        ESP_LOGI(TAG, "Disconnected from Wi-Fi. Retrying...");
+        esp_wifi_connect();
         xEventGroupClearBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;

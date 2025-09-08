@@ -55,7 +55,6 @@
 /** @brief Defines the types of commands the bus manager can process. */
 typedef enum {
     CMD_READ_WORD,  /**< Read a 16-bit word from a servo register. */
-    CMD_READ_BYTE,  /**< Read an 8-bit byte from a servo register. */
     CMD_WRITE_WORD, /**< Write a 16-bit word to a servo register. */
     CMD_WRITE_BYTE,  /**< Write an 8-bit byte to a servo register. */
     CMD_REG_WRITE_BYTE, /**< Buffer a byte write on a servo (executes on ACTION). */
@@ -165,7 +164,6 @@ extern ServoCorrectionMap g_correction_maps[NUM_SERVOS];
 extern bool g_learning_loop_active;
 extern bool g_state_learning_active;
 extern bool g_random_walk_active;
-extern bool g_manual_scan_in_progress;
 extern TaskHandle_t g_random_walk_task_handle;
 extern uint8_t g_servo_acceleration;
 extern uint8_t servo_ids[NUM_SERVOS];

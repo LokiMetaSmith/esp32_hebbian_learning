@@ -246,15 +246,9 @@ void bus_manager_task(void *pvParameters) {
                 case CMD_READ_WORD:
                     response.status = feetech_read_word(request.servo_id, request.reg_address, &response.value, 100);
                     break;
-                case CMD_READ_BYTE:
-                    {
-                        uint8_t byte_val = 0;
-                        response.status = feetech_read_byte(request.servo_id, request.reg_address, &byte_val, 100);
-                        response.value = byte_val; // Assign to the 16-bit value field for simplicity
-                    }
-                    break;
 
                 case CMD_WRITE_WORD:
+                    // Write functions are "fire and forget", so we don't get a status back.
                     feetech_write_word(request.servo_id, request.reg_address, request.value);
                     response.status = ESP_OK;
                     break;
@@ -999,6 +993,7 @@ void app_main(void) {
     initialize_usb_cdc(); // For Feetech slave command interface
     mcp_server_init();
     
+    initialize_console();
     planner_init();
     behavior_init();
 
@@ -1024,19 +1019,18 @@ void app_main(void) {
     } else {
         ESP_LOGI(TAG, "State tokens loaded successfully from NVS.");
     }
-
-    for (int i = 0; i < NUM_ARMS; i++) {
-        char task_name[32];
-        snprintf(task_name, sizeof(task_name), "bus_manager_task_%d", i);
-        xTaskCreate(bus_manager_task, task_name, 4096, (void*)i, 10, NULL);
-    }
-
     for (int i = 0; i < NUM_ARMS; i++) {
         initialize_robot_arm(i);
     }
     // Initialize smoothed goal positions to the current actual positions
     // This part is not yet refactored to use the bus manager, so it is temporarily disabled.
     ESP_LOGI(TAG, "Initial smoothed goals set from current positions.");
+
+    for (int i = 0; i < NUM_ARMS; i++) {
+        char task_name[32];
+        snprintf(task_name, sizeof(task_name), "bus_manager_task_%d", i);
+        xTaskCreate(bus_manager_task, task_name, 4096, (void*)i, 10, NULL);
+    }
     xTaskCreate(learning_loop_task, "learning_loop", 4096, NULL, 5, NULL);
 #ifdef ROBOT_TYPE_ARM
     xTaskCreate(learning_states_loop_task, "learning_states_loop", 4096, NULL, 5, NULL);
@@ -1178,56 +1172,6 @@ void process_feetech_packet(const PacketParser *parser) {
             tinyusb_cdcacm_write_flush(TINYUSB_CDC_ACM_0, 0); // Flush after sending all responses
             break;
         }
-        case SCS_INST_REG_WRITE: {
-            ESP_LOGI(TAG, "Slave: Received REG_WRITE for ID %d", parser->id);
-            uint8_t reg_addr = parser->params[0];
-            uint8_t* data = &parser->params[1];
-            uint8_t data_len = parser->length - 3; // -2 for inst and checksum, -1 for reg_addr
-            feetech_reg_write(parser->id, reg_addr, data, data_len);
-            // REG_WRITE does not send a status packet
-            break;
-        }
-
-        case SCS_INST_ACTION: {
-            ESP_LOGI(TAG, "Slave: Received ACTION command");
-            feetech_action();
-            // ACTION does not send a status packet
-            break;
-        }
-
-        case SCS_INST_SYNC_WRITE: {
-            if (parser->length < 5) { // Reg + Len + at least one ID/Data pair
-                break;
-            }
-            uint8_t reg_addr = parser->params[0];
-            uint8_t data_len_per_servo = parser->params[1];
-            uint8_t num_servos = (parser->length - 4) / (data_len_per_servo + 1);
-
-            ESP_LOGI(TAG, "Slave: Received SYNC_WRITE for %d servos, Reg 0x%02X, Len %d", num_servos, reg_addr, data_len_per_servo);
-
-            uint8_t* servo_ids = malloc(num_servos);
-            uint8_t* all_servo_data = malloc(num_servos * data_len_per_servo);
-
-            if (!servo_ids || !all_servo_data) {
-                if(servo_ids) free(servo_ids);
-                if(all_servo_data) free(all_servo_data);
-                break;
-            }
-
-            int param_idx = 2;
-            for(int i = 0; i < num_servos; i++) {
-                servo_ids[i] = parser->params[param_idx++];
-                memcpy(&all_servo_data[i * data_len_per_servo], &parser->params[param_idx], data_len_per_servo);
-                param_idx += data_len_per_servo;
-            }
-
-            feetech_sync_write(reg_addr, data_len_per_servo, num_servos, servo_ids, all_servo_data);
-
-            free(servo_ids);
-            free(all_servo_data);
-            break;
-        }
-
         case SCS_INST_READ: {
             uint8_t reg_addr = parser->params[0];
             uint8_t read_len = parser->params[1];

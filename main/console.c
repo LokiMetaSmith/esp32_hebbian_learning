@@ -22,14 +22,12 @@
 #include "commands.h"
 #include "bma400_driver.h"
 #include "esp_log.h"
-#include "freertos/task.h"
-#include "esp_wifi.h"
+#include "message_bus.h"
+#include "servo_controller.h"
 
 static const char *TAG = "CONSOLE";
 
 // --- Forward declarations for command functions ---
-static int cmd_get_wifi_config(int argc, char **argv);
-static int cmd_scan_wifi(int argc, char **argv);
 static int cmd_set_learning(int argc, char **argv);
 static int cmd_plan_move(int argc, char **argv);
 static int cmd_start_data_acq(int argc, char **argv);
@@ -354,20 +352,6 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_energy_stats_cmd));
 
-    const esp_console_cmd_t get_wifi_config_cmd = {
-        .command = "get_wifi_config",
-        .help = "Get the currently configured Wi-Fi SSID",
-        .func = &cmd_get_wifi_config,
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&get_wifi_config_cmd));
-
-    const esp_console_cmd_t scan_wifi_cmd = {
-        .command = "scan_wifi",
-        .help = "Scan for available Wi-Fi networks",
-        .func = &cmd_scan_wifi,
-    };
-    ESP_ERROR_CHECK(esp_console_cmd_register(&scan_wifi_cmd));
-
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");
@@ -400,16 +384,21 @@ int cmd_set_accel(int argc, char **argv) {
     g_servo_acceleration = (uint8_t)accel_val;
     ESP_LOGI(TAG, "Setting servo acceleration to %u for all servos.", g_servo_acceleration);
 
-    BusRequest_t request;
-    request.command = CMD_WRITE_BYTE;
-    request.reg_address = REG_ACCELERATION;
-    request.value = g_servo_acceleration;
-    request.response_queue = NULL;
-
     for (int i = 0; i < NUM_SERVOS; i++) {
-        request.servo_id = servo_ids[i];
-        xQueueSend(g_bus_request_queues[0], &request, portMAX_DELAY);
+        ServoCommand_t* cmd = malloc(sizeof(ServoCommand_t));
+        cmd->servo_id = servo_ids[i];
+        cmd->command = CMD_WRITE_BYTE;
+        cmd->reg_address = REG_ACCELERATION;
+        cmd->value = g_servo_acceleration;
+        cmd->response_queue = NULL;
+
+        Message_t msg = {
+            .topic = TOPIC_SERVO_COMMAND,
+            .data = cmd,
+        };
+        message_bus_publish(&msg);
     }
+
     printf("Servo acceleration set to %u for all servos.\n", g_servo_acceleration);
     return 0;
 }
@@ -450,18 +439,17 @@ int cmd_start_map_cal(int argc, char **argv) {
     uint8_t servo_id = (uint8_t)id;
     int map_index = id - 1;
 
-    printf("\n--- Starting Calibration for Servo %d on Arm %d ---\n", servo_id, arm_id);
-
-    BusRequest_t request;
-    request.arm_id = arm_id;
-    request.response_queue = NULL;
+    printf("\n--- Starting Calibration for Servo %d ---\n", servo_id);
 
     // Temporarily disable torque to allow for manual movement
-    request.command = CMD_WRITE_BYTE;
-    request.servo_id = servo_id;
-    request.reg_address = REG_TORQUE_ENABLE;
-    request.value = 0; // Disable torque
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+    ServoCommand_t* disable_torque_cmd = malloc(sizeof(ServoCommand_t));
+    disable_torque_cmd->servo_id = servo_id;
+    disable_torque_cmd->command = CMD_WRITE_BYTE;
+    disable_torque_cmd->reg_address = REG_TORQUE_ENABLE;
+    disable_torque_cmd->value = 0; // Disable torque
+    disable_torque_cmd->response_queue = NULL;
+    Message_t disable_torque_msg = { .topic = TOPIC_SERVO_COMMAND, .data = disable_torque_cmd };
+    message_bus_publish(&disable_torque_msg);
 
     printf("1. Manually move servo %d to its MINIMUM position, then press ENTER.\n", servo_id);
     while(get_char_with_timeout(100) != '\n'); // Wait for Enter
@@ -472,10 +460,15 @@ int cmd_start_map_cal(int argc, char **argv) {
         printf("Error: Failed to create response queue.\n");
         return 1;
     }
-    request.command = CMD_READ_WORD;
-    request.reg_address = REG_PRESENT_POSITION;
-    request.response_queue = response_queue;
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+
+    ServoCommand_t* read_pos_cmd = malloc(sizeof(ServoCommand_t));
+    read_pos_cmd->servo_id = servo_id;
+    read_pos_cmd->command = CMD_READ_WORD;
+    read_pos_cmd->reg_address = REG_PRESENT_POSITION;
+    read_pos_cmd->response_queue = response_queue;
+    Message_t read_pos_msg = { .topic = TOPIC_SERVO_COMMAND, .data = read_pos_cmd };
+    message_bus_publish(&read_pos_msg);
+
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
         min_pos = response.value;
@@ -484,8 +477,9 @@ int cmd_start_map_cal(int argc, char **argv) {
 
     printf("2. Manually move servo %d to its MAXIMUM position, then press ENTER.\n", servo_id);
     while(get_char_with_timeout(100) != '\n'); // Wait for Enter
+
     uint16_t max_pos = 0;
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+    message_bus_publish(&read_pos_msg);
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
         max_pos = response.value;
     }
@@ -503,37 +497,41 @@ int cmd_start_map_cal(int argc, char **argv) {
         uint16_t commanded_pos = min_pos + (uint16_t)(fraction * (max_pos - min_pos));
         map->points[i].commanded_pos = commanded_pos;
 
-        request.command = CMD_WRITE_WORD;
-        request.reg_address = REG_GOAL_POSITION;
-        request.value = commanded_pos;
-        request.response_queue = NULL;
-        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+        ServoCommand_t* write_pos_cmd = malloc(sizeof(ServoCommand_t));
+        write_pos_cmd->servo_id = servo_id;
+        write_pos_cmd->command = CMD_WRITE_WORD;
+        write_pos_cmd->reg_address = REG_GOAL_POSITION;
+        write_pos_cmd->value = commanded_pos;
+        write_pos_cmd->response_queue = NULL;
+        Message_t write_pos_msg = { .topic = TOPIC_SERVO_COMMAND, .data = write_pos_cmd };
+        message_bus_publish(&write_pos_msg);
 
         vTaskDelay(pdMS_TO_TICKS(400)); // Wait for move to complete
 
-        request.command = CMD_READ_WORD;
-        request.reg_address = REG_PRESENT_POSITION;
-        request.response_queue = response_queue;
-        xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+        message_bus_publish(&read_pos_msg);
         if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE && response.status == ESP_OK) {
             map->points[i].actual_pos = response.value;
         }
         printf("  Point %2d/%d: Commanded: %4u -> Actual: %4u\n", i + 1, CORRECTION_MAP_POINTS, map->points[i].commanded_pos, map->points[i].actual_pos);
     }
     vQueueDelete(response_queue);
+    free(read_pos_cmd);
 
     map->is_calibrated = true;
     printf("\nCalibration complete for servo %d. Saving to NVS...\n", servo_id);
     save_correction_map_to_nvs(g_correction_maps);
 
     // Re-enable torque
-    request.command = CMD_WRITE_BYTE;
-    request.reg_address = REG_TORQUE_ENABLE;
-    request.value = 1; // Enable torque
-    request.response_queue = NULL;
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+    ServoCommand_t* enable_torque_cmd = malloc(sizeof(ServoCommand_t));
+    enable_torque_cmd->servo_id = servo_id;
+    enable_torque_cmd->command = CMD_WRITE_BYTE;
+    enable_torque_cmd->reg_address = REG_TORQUE_ENABLE;
+    enable_torque_cmd->value = 1; // Enable torque
+    enable_torque_cmd->response_queue = NULL;
+    Message_t enable_torque_msg = { .topic = TOPIC_SERVO_COMMAND, .data = enable_torque_cmd };
+    message_bus_publish(&enable_torque_msg);
 
-     return 0;
+    return 0;
  }
 
 // Function for the 'set_tl' command (re-implementation)
@@ -559,19 +557,25 @@ int cmd_set_torque_limit(int argc, char **argv) {
         return 1;
     }
 
-    ESP_LOGI(TAG, "Setting torque limit for servo %d on arm %d to %d.", id, arm_id, limit);
-    BusRequest_t request;
-    request.arm_id = arm_id;
-    request.command = CMD_WRITE_WORD;
-    request.servo_id = (uint8_t)id;
-    request.reg_address = REG_TORQUE_LIMIT;
-    request.value = (uint16_t)limit;
-    request.response_queue = NULL;
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
-    printf("Attempted to set torque limit for servo %d on arm %d to %d.\n", id, arm_id, limit);
+    ESP_LOGI(TAG, "Setting torque limit for servo %d to %d.", id, limit);
+
+    ServoCommand_t* cmd = malloc(sizeof(ServoCommand_t));
+    cmd->servo_id = (uint8_t)id;
+    cmd->command = CMD_WRITE_WORD;
+    cmd->reg_address = REG_TORQUE_LIMIT;
+    cmd->value = (uint16_t)limit;
+    cmd->response_queue = NULL;
+
+    Message_t msg = {
+        .topic = TOPIC_SERVO_COMMAND,
+        .data = cmd,
+    };
+    message_bus_publish(&msg);
+
+    printf("Attempted to set torque limit for servo %d to %d.\n", id, limit);
 
     // Read back to verify
-    vTaskDelay(pdMS_TO_TICKS(20)); // Give a moment for the write to be processed before reading back
+    vTaskDelay(pdMS_TO_TICKS(20));
 
     QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
     if (response_queue == NULL) {
@@ -579,26 +583,30 @@ int cmd_set_torque_limit(int argc, char **argv) {
         return 1;
     }
 
-    request.command = CMD_READ_WORD;
-    request.response_queue = response_queue;
-    if (xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100)) != pdPASS) {
-        printf("Error: Failed to send request to bus manager. Queue might be full.\n");
-        vQueueDelete(response_queue);
-        return 1;
-    }
+    ServoCommand_t* read_cmd = malloc(sizeof(ServoCommand_t));
+    read_cmd->servo_id = (uint8_t)id;
+    read_cmd->command = CMD_READ_WORD;
+    read_cmd->reg_address = REG_TORQUE_LIMIT;
+    read_cmd->response_queue = response_queue;
+
+    Message_t read_msg = {
+        .topic = TOPIC_SERVO_COMMAND,
+        .data = read_cmd,
+    };
+    message_bus_publish(&read_msg);
 
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
         if (response.status == ESP_OK) {
-            printf("Servo %d on arm %d torque limit read back: %u. (Commanded: %d)\n", id, arm_id, response.value, limit);
+            printf("Servo %d torque limit read back: %u. (Commanded: %d)\n", id, response.value, limit);
             if (response.value != (uint16_t)limit) {
-                printf("WARNING: Read back torque limit (%u) does not match commanded value (%d) for servo %d on arm %d!\n", response.value, limit, id, arm_id);
+                printf("WARNING: Read back torque limit (%u) does not match commanded value (%d) for servo %d!\n", response.value, limit, id);
             }
         } else {
-            printf("Error: Failed to read back torque limit for servo %d on arm %d (err: %s).\n", id, arm_id, esp_err_to_name(response.status));
+            printf("Error: Failed to read back torque limit for servo %d (err: %s).\n", id, esp_err_to_name(response.status));
         }
     } else {
-        printf("Error: Timeout waiting for response from bus manager on arm %d.\n", arm_id);
+        printf("Error: Timeout waiting for response from servo controller.\n");
     }
 
     vQueueDelete(response_queue);
@@ -628,16 +636,22 @@ int cmd_set_servo_acceleration(int argc, char **argv) {
         return 1;
     }
 
-    ESP_LOGI(TAG, "Setting acceleration for servo %d on arm %d to %d.", id, arm_id, accel);
-    BusRequest_t request;
-    request.arm_id = arm_id;
-    request.command = CMD_WRITE_BYTE;
-    request.servo_id = (uint8_t)id;
-    request.reg_address = REG_ACCELERATION;
-    request.value = (uint8_t)accel;
-    request.response_queue = NULL;
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
-    printf("Acceleration for servo %d on arm %d set to %d.\n", id, arm_id, accel);
+    ESP_LOGI(TAG, "Setting acceleration for servo %d to %d.", id, accel);
+
+    ServoCommand_t* cmd = malloc(sizeof(ServoCommand_t));
+    cmd->servo_id = (uint8_t)id;
+    cmd->command = CMD_WRITE_BYTE;
+    cmd->reg_address = REG_ACCELERATION;
+    cmd->value = (uint8_t)accel;
+    cmd->response_queue = NULL;
+
+    Message_t msg = {
+        .topic = TOPIC_SERVO_COMMAND,
+        .data = cmd,
+    };
+    message_bus_publish(&msg);
+
+    printf("Acceleration for servo %d set to %d.\n", id, accel);
     return 0;
 }
 
@@ -659,31 +673,34 @@ int cmd_get_servo_acceleration(int argc, char **argv) {
         return 1;
     }
 
-    ESP_LOGI(TAG, "Reading acceleration for servo %d on arm %d.", id, arm_id);
+    ESP_LOGI(TAG, "Reading acceleration for servo %d.", id);
     QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
     if (response_queue == NULL) {
         printf("Error: Failed to create response queue.\n");
         return 1;
     }
 
-    BusRequest_t request;
-    request.arm_id = arm_id;
-    request.command = CMD_READ_BYTE; // Corrected from CMD_READ_WORD
-    request.servo_id = (uint8_t)id;
-    request.reg_address = REG_ACCELERATION;
-    request.response_queue = response_queue;
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+    ServoCommand_t* cmd = malloc(sizeof(ServoCommand_t));
+    cmd->servo_id = (uint8_t)id;
+    cmd->command = CMD_READ_BYTE;
+    cmd->reg_address = REG_ACCELERATION;
+    cmd->response_queue = response_queue;
+
+    Message_t msg = {
+        .topic = TOPIC_SERVO_COMMAND,
+        .data = cmd,
+    };
+    message_bus_publish(&msg);
 
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
         if (response.status == ESP_OK) {
-            // The value is now a single byte, so no masking is needed.
-            printf("Servo %d on arm %d current acceleration: %u\n", id, arm_id, response.value);
+            printf("Servo %d current acceleration: %u\n", id, response.value);
         } else {
-            printf("Error: Failed to read acceleration for servo %d on arm %d (err: %s).\n", id, arm_id, esp_err_to_name(response.status));
+            printf("Error: Failed to read acceleration for servo %d (err: %s).\n", id, esp_err_to_name(response.status));
         }
     } else {
-        printf("Error: Timeout waiting for response from bus manager on arm %d.\n", arm_id);
+        printf("Error: Timeout waiting for response from servo controller.\n");
     }
 
     vQueueDelete(response_queue);
@@ -789,18 +806,21 @@ int cmd_set_pos(int argc, char **argv) {
         return 1;
     }
 
-    ESP_LOGI(TAG, "Manual override: Set servo %d on arm %d to position %d", id, arm_id, pos);
-    BusRequest_t request;
-    request.arm_id = arm_id;
-    request.command = CMD_WRITE_WORD;
-    request.servo_id = (uint8_t)id;
-    request.reg_address = REG_GOAL_POSITION;
-    request.value = (uint16_t)pos;
-    request.response_queue = NULL;
-    if (xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100)) != pdPASS) {
-        printf("Error: Failed to send request to bus manager. Queue might be full.\n");
-        return 1;
-    }
+    ESP_LOGI(TAG, "Manual override: Set servo %d to position %d", id, pos);
+
+    ServoCommand_t* cmd = malloc(sizeof(ServoCommand_t));
+    cmd->servo_id = (uint8_t)id;
+    cmd->command = CMD_WRITE_WORD;
+    cmd->reg_address = REG_GOAL_POSITION;
+    cmd->value = (uint16_t)pos;
+    cmd->response_queue = NULL;
+
+    Message_t msg = {
+        .topic = TOPIC_SERVO_COMMAND,
+        .data = cmd,
+    };
+    message_bus_publish(&msg);
+
     return 0;
 }
 
@@ -827,27 +847,27 @@ int cmd_get_pos(int argc, char **argv) {
         return 1;
     }
 
-    BusRequest_t request;
-    request.arm_id = arm_id;
-    request.command = CMD_READ_WORD;
-    request.servo_id = (uint8_t)id;
-    request.reg_address = REG_PRESENT_POSITION;
-    request.response_queue = response_queue;
-    if (xQueueSend(g_bus_request_queues[arm_id], &request, pdMS_TO_TICKS(100)) != pdPASS) {
-        printf("Error: Failed to send request to bus manager. Queue might be full.\n");
-        vQueueDelete(response_queue);
-        return 1;
-    }
+    ServoCommand_t* cmd = malloc(sizeof(ServoCommand_t));
+    cmd->servo_id = (uint8_t)id;
+    cmd->command = CMD_READ_WORD;
+    cmd->reg_address = REG_PRESENT_POSITION;
+    cmd->response_queue = response_queue;
+
+    Message_t msg = {
+        .topic = TOPIC_SERVO_COMMAND,
+        .data = cmd,
+    };
+    message_bus_publish(&msg);
 
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
         if (response.status == ESP_OK) {
-            printf("Servo %d on arm %d current position: %u\n", id, arm_id, response.value);
+            printf("Servo %d current position: %u\n", id, response.value);
         } else {
-            printf("Error: Failed to read position from servo %d on arm %d (err: %s).\n", id, arm_id, esp_err_to_name(response.status));
+            printf("Error: Failed to read position from servo %d (err: %s).\n", id, esp_err_to_name(response.status));
         }
     } else {
-        printf("Error: Timeout waiting for response from bus manager on arm %d.\n", arm_id);
+        printf("Error: Timeout waiting for response from servo controller.\n");
     }
 
     vQueueDelete(response_queue);
@@ -877,24 +897,28 @@ int cmd_get_current(int argc, char **argv) {
         return 1;
     }
 
-    BusRequest_t request;
-    request.arm_id = arm_id;
-    request.command = CMD_READ_WORD;
-    request.servo_id = (uint8_t)id;
-    request.reg_address = REG_PRESENT_CURRENT;
-    request.response_queue = response_queue;
-    xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+    ServoCommand_t* cmd = malloc(sizeof(ServoCommand_t));
+    cmd->servo_id = (uint8_t)id;
+    cmd->command = CMD_READ_WORD;
+    cmd->reg_address = REG_PRESENT_CURRENT;
+    cmd->response_queue = response_queue;
+
+    Message_t msg = {
+        .topic = TOPIC_SERVO_COMMAND,
+        .data = cmd,
+    };
+    message_bus_publish(&msg);
 
     BusResponse_t response;
     if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(150)) == pdTRUE) {
         if (response.status == ESP_OK) {
             float current_mA = (float)response.value * 6.5f;
-            printf("Servo %d on arm %d present current: %u (raw) -> %.2f mA (%.3f A)\n", id, arm_id, response.value, current_mA, current_mA / 1000.0f);
+            printf("Servo %d present current: %u (raw) -> %.2f mA (%.3f A)\n", id, response.value, current_mA, current_mA / 1000.0f);
         } else {
-            printf("Error: Failed to read current from servo %d on arm %d (err: %s).\n", id, arm_id, esp_err_to_name(response.status));
+            printf("Error: Failed to read current from servo %d (err: %s).\n", id, esp_err_to_name(response.status));
         }
     } else {
-        printf("Error: Timeout waiting for response from bus manager on arm %d.\n", arm_id);
+        printf("Error: Timeout waiting for response from servo controller.\n");
     }
 
     vQueueDelete(response_queue);
@@ -933,59 +957,6 @@ int cmd_set_learning(int argc, char **argv) {
     return 0;
 }
 
-static int cmd_get_wifi_config(int argc, char **argv) {
-    printf("Attempting to connect to SSID: %s\n", WIFI_SSID);
-    return 0;
-}
-
-static int cmd_scan_wifi(int argc, char **argv) {
-    g_manual_scan_in_progress = true;
-
-    printf("Disconnecting Wi-Fi to start scan...\n");
-    esp_err_t err = esp_wifi_disconnect();
-    if (err != ESP_OK && err != ESP_ERR_WIFI_NOT_CONNECT) {
-        printf("Error: Failed to disconnect Wi-Fi: %s\n", esp_err_to_name(err));
-        g_manual_scan_in_progress = false; // Reset flag on error
-        return 1;
-    }
-
-    // Wait a moment for the disconnect event to be processed.
-    vTaskDelay(pdMS_TO_TICKS(200));
-
-    uint16_t number = 20;
-    wifi_ap_record_t ap_info[20];
-    uint16_t ap_count = 0;
-    memset(ap_info, 0, sizeof(ap_info));
-
-    printf("Scanning for Wi-Fi networks...\n");
-    err = esp_wifi_scan_start(NULL, true);
-    if (err != ESP_OK) {
-        printf("Error: Wi-Fi scan failed: %s\n", esp_err_to_name(err));
-    } else {
-        ESP_ERROR_CHECK(esp_wifi_scan_get_ap_records(&number, ap_info));
-        ESP_ERROR_CHECK(esp_wifi_scan_get_ap_num(&ap_count));
-
-        printf("Found %d access points:\n", ap_count);
-        printf("\n");
-        printf("               SSID              | RSSI | CHAN | AUTHMODE\n");
-        printf("----------------------------------------------------------------\n");
-        for (int i = 0; (i < 20) && (i < ap_count); i++) {
-            printf("%32s | %4d | %4d | %12s\n", (char *)ap_info[i].ssid, ap_info[i].rssi, ap_info[i].primary, ap_info[i].authmode == WIFI_AUTH_OPEN ? "open" : "wpa/wpa2");
-        }
-        printf("----------------------------------------------------------------\n");
-    }
-
-    // Clean up and restore normal operation
-    g_manual_scan_in_progress = false;
-    printf("Restoring Wi-Fi connection attempt...\n");
-    err = esp_wifi_connect();
-    if (err != ESP_OK) {
-        printf("Error: Failed to start reconnecting to Wi-Fi: %s\n", esp_err_to_name(err));
-    }
-
-    return 0;
-}
-
 extern void data_acquisition_task(void *pvParameters);
 
 int cmd_start_data_acq(int argc, char **argv) {
@@ -1008,16 +979,20 @@ int cmd_rw_start(int argc, char **argv) {
         if (argc > 0) {
             arm_id = atoi(argv[0]);
         }
-        ESP_LOGI(TAG, "Starting standalone random walk for arm %d. Setting acceleration to global value: %u", arm_id, g_servo_acceleration);
-        BusRequest_t request;
-        request.arm_id = arm_id;
-        request.response_queue = NULL;
-        request.command = CMD_WRITE_BYTE;
-        request.reg_address = REG_ACCELERATION;
-        request.value = g_servo_acceleration;
+        ESP_LOGI(TAG, "Starting standalone random walk. Setting acceleration to global value: %u", g_servo_acceleration);
         for (int i = 0; i < NUM_SERVOS; i++) {
-            request.servo_id = servo_ids[i];
-            xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
+            ServoCommand_t* cmd = malloc(sizeof(ServoCommand_t));
+            cmd->servo_id = servo_ids[i];
+            cmd->command = CMD_WRITE_BYTE;
+            cmd->reg_address = REG_ACCELERATION;
+            cmd->value = g_servo_acceleration;
+            cmd->response_queue = NULL;
+
+            Message_t msg = {
+                .topic = TOPIC_SERVO_COMMAND,
+                .data = cmd,
+            };
+            message_bus_publish(&msg);
         }
         g_random_walk_active = true;
         if (g_random_walk_task_handle == NULL) {
@@ -1113,16 +1088,7 @@ int cmd_set_max_accel(int argc, char **argv) {
 }
 
 int cmd_get_stats(int argc, char **argv) {
-    char *buffer = malloc(2048);
-    if (buffer == NULL) {
-        printf("Error: Failed to allocate buffer for task list.\n");
-        return 1;
-    }
-    printf("Task Name\tStatus\tPrio\tHWM\tTask#\n");
-    printf("------------------------------------------------\n");
-    vTaskList(buffer);
-    printf("%s\n", buffer);
-    free(buffer);
+    printf("Task stats not implemented.\n");
     return 0;
 }
 
