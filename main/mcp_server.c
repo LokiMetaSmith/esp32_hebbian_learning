@@ -20,6 +20,7 @@
 #include "commands.h"
 #include "planner.h"
 #include "behavior.h"
+#include "inter_esp_comm.h"
 
 // --- Wi-Fi & Server Configuration ---
 #define MCP_TCP_PORT   8888
@@ -143,6 +144,23 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
                     }
                     vQueueDelete(response_queue);
                 }
+            }
+        } else {
+            cJSON_AddStringToObject(response, "status", "Invalid arguments");
+        }
+    } else if (strcmp(tool_name, "send_test_message") == 0) {
+        cJSON *command_json = cJSON_GetObjectItem(arguments_json, "command");
+        cJSON *value_json = cJSON_GetObjectItem(arguments_json, "value");
+
+        if (cJSON_IsNumber(command_json) && cJSON_IsNumber(value_json)) {
+            inter_esp_message_t msg;
+            msg.command = command_json->valueint;
+            msg.value = (float)value_json->valuedouble;
+
+            if (inter_esp_comm_send_message(&msg) == ESP_OK) {
+                cJSON_AddStringToObject(response, "status", "OK");
+            } else {
+                cJSON_AddStringToObject(response, "status", "Failed to send message");
             }
         } else {
             cJSON_AddStringToObject(response, "status", "Invalid arguments");
@@ -523,6 +541,12 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(execute_behavior_tool, "name", "execute_behavior");
     cJSON_AddStringToObject(execute_behavior_tool, "description", "Executes a sequence of goal embeddings.");
     cJSON_AddItemToArray(tools, execute_behavior_tool);
+
+    // Tool: send_test_message
+    cJSON *send_test_message_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(send_test_message_tool, "name", "send_test_message");
+    cJSON_AddStringToObject(send_test_message_tool, "description", "Sends a test message to the other ESP32.");
+    cJSON_AddItemToArray(tools, send_test_message_tool);
 
     return root;
 }

@@ -31,6 +31,7 @@ const unsigned char dummy_synsense_config[] = {0xDE, 0xAD, 0xBE, 0xEF};
 #include "tinyusb.h"
 #include "tusb_cdc_acm.h"
 #include "mcp_server.h"
+#include "inter_esp_comm.h"
 #include "argtable3/argtable3.h"
 #include "commands.h"
 
@@ -998,6 +999,7 @@ void app_main(void) {
     synsense_load_configuration(dummy_synsense_config, sizeof(dummy_synsense_config));
     initialize_usb_cdc(); // For Feetech slave command interface
     mcp_server_init();
+    inter_esp_comm_init();
     
     planner_init();
     behavior_init();
