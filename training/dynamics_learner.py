@@ -26,9 +26,12 @@ class DynamicsHandler(http.server.SimpleHTTPRequestHandler):
 
             try:
                 data = json.loads(post_data)
-                self.process_data(data)
+                calibration = self.process_data(data)
 
                 response = {"status": "OK", "message": "Data received"}
+                if calibration:
+                    response["calibration"] = calibration
+
                 self.send_response(200)
                 self.send_header('Content-type', 'application/json')
                 self.end_headers()
@@ -61,7 +64,7 @@ class DynamicsHandler(http.server.SimpleHTTPRequestHandler):
             json.dump(all_data, f)
 
         # Perform Learning
-        self.learn_dynamics(all_data)
+        return self.learn_dynamics(all_data)
 
     def learn_dynamics(self, data):
         if not HAS_ML:
@@ -128,8 +131,17 @@ class DynamicsHandler(http.server.SimpleHTTPRequestHandler):
                 plt.close()
                 print("Plot saved to dynamics_plot.png")
 
+                # Calibration calculation
+                slope = model.coef_[0]
+                intercept = model.intercept_
+                cal_gain = 1.0 / slope if abs(slope) > 1e-5 else 1.0
+                cal_offset = -intercept / slope if abs(slope) > 1e-5 else 0.0
+                return {"gain": cal_gain, "offset": cal_offset}
+
             except Exception as e:
                 print(f"Learning/Plotting Error: {e}")
+                return None
+        return None
 
 def run_server():
     # Allow address reuse to prevent "Address already in use" errors during testing

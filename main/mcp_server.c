@@ -224,6 +224,18 @@ static cJSON* handle_nanobot_tool(const cJSON *arguments_json) {
                          cJSON_AddStringToObject(response, "action_taken", "Goal Set");
                      }
                  }
+
+                 // Apply Dynamics Calibration
+                 cJSON *cal_json = cJSON_GetObjectItem(server_resp_json, "calibration");
+                 if (cal_json) {
+                     cJSON *gain_json = cJSON_GetObjectItem(cal_json, "gain");
+                     cJSON *offset_json = cJSON_GetObjectItem(cal_json, "offset");
+                     if (cJSON_IsNumber(gain_json) && cJSON_IsNumber(offset_json)) {
+                         body_set_actuator_params((float)gain_json->valuedouble, (float)offset_json->valuedouble);
+                         cJSON_AddStringToObject(response, "action_taken", "Calibration Applied");
+                     }
+                 }
+
                  cJSON_Delete(server_resp_json);
              }
              cJSON_AddStringToObject(response, "status", "OK");

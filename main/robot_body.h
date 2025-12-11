@@ -36,4 +36,11 @@ void body_act(const float* action_vector);
  */
 void body_get_config(BodyConfig_t* config);
 
+/**
+ * @brief Sets the actuator calibration parameters.
+ * @param gain The gain correction (scaling factor).
+ * @param offset The offset correction (e.g., to overcome friction).
+ */
+void body_set_actuator_params(float gain, float offset);
+
 #endif // ROBOT_BODY_H

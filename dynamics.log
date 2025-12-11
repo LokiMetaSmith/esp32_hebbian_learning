@@ -1,0 +1,10 @@
+Dynamics Learner Server running on port 8000
+Received 1 samples.
+--- Dynamics Model (Linear Regression: Action -> AccelX) ---
+Samples: 23
+R^2 Score: 1.0000
+Coefficients: [1.]
+Intercept: -1.1102230246251565e-16
+-----------------------------------------------------------
+Plot saved to dynamics_plot.png
+127.0.0.1 - - [11/Dec/2025 23:25:14] "POST /dynamics HTTP/1.1" 200 -
