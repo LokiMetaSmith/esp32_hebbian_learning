@@ -11,6 +11,9 @@
 
 static const char *TAG = "ROBOT_BODY";
 
+static float g_actuator_gain = 1.0f;
+static float g_actuator_offset = 0.0f;
+
 // --- ARM Helper Functions ---
 
 #ifdef ROBOT_TYPE_ARM
@@ -181,6 +184,30 @@ void body_sense(float* state_vector) {
 }
 
 void body_act(const float* action_vector) {
+    // Calibration
+    float calibrated_action[32]; // Max reasonable size
+    int dim = 32; // Default max to process
+
+    #ifdef ROBOT_TYPE_ARM
+    dim = NUM_SERVOS * 3;
+    #endif
+    #ifdef ROBOT_TYPE_OMNI_BASE
+    dim = 4;
+    #endif
+
+    if (dim > 32) dim = 32;
+
+    for(int i=0; i<dim; i++) {
+        float val = action_vector[i];
+        // Apply gain
+        val = val * g_actuator_gain;
+        // Apply offset (friction compensation)
+        if (val > 0.01f) val += g_actuator_offset;
+        else if (val < -0.01f) val -= g_actuator_offset;
+        calibrated_action[i] = val;
+    }
+    const float* use_action = calibrated_action;
+
 #ifdef SIMULATE_PHYSICS
     static int64_t last_time = 0;
     int64_t now = esp_timer_get_time();
@@ -188,8 +215,8 @@ void body_act(const float* action_vector) {
     float dt = (float)(now - last_time) / 1000000.0f;
     last_time = now;
 
-    // Use action_vector as Force/Torque
-    sim_physics_apply_force(action_vector);
+    // Use use_action as Force/Torque
+    sim_physics_apply_force(use_action);
     sim_physics_step(dt);
 #endif
 
@@ -201,7 +228,7 @@ void body_act(const float* action_vector) {
 
     for (int i = 0; i < NUM_SERVOS; i++) {
         // Accel
-        float norm_accel = action_vector[NUM_SERVOS + i];
+        float norm_accel = use_action[NUM_SERVOS + i];
         uint8_t commanded_accel = (uint8_t)(((norm_accel + 1.0f) / 2.0f) * 254.0f);
         if (commanded_accel < g_min_accel_value) commanded_accel = g_min_accel_value;
 
@@ -212,7 +239,7 @@ void body_act(const float* action_vector) {
         xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
 
         // Torque
-        float norm_torque = action_vector[NUM_SERVOS * 2 + i];
+        float norm_torque = use_action[NUM_SERVOS * 2 + i];
         uint16_t commanded_torque = (uint16_t)(((norm_torque + 1.0f) / 2.0f) * 1000.0f);
         if (commanded_torque > g_max_torque_limit) commanded_torque = g_max_torque_limit;
 
@@ -223,7 +250,7 @@ void body_act(const float* action_vector) {
         xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
 
         // Position
-        float norm_pos = action_vector[i];
+        float norm_pos = use_action[i];
         float scaled_pos = (norm_pos + 1.0f) / 2.0f;
         uint16_t goal_position = SERVO_POS_MIN + (uint16_t)(scaled_pos * (SERVO_POS_MAX - SERVO_POS_MIN));
         uint16_t corrected_position = get_corrected_position(servo_ids[i], goal_position);
@@ -241,11 +268,10 @@ void body_act(const float* action_vector) {
 #endif
 
 #ifdef ROBOT_TYPE_OMNI_BASE
-    // Apply Torque (simulated via PWM duty/velocity interface for now)
-    // The NN outputs [T1, T2, T3, T4] in range -1 to 1.
+    // Apply Torque
     float torques[4];
     for(int i=0; i<4; i++) {
-        torques[i] = action_vector[i];
+        torques[i] = use_action[i];
     }
     omni_base_set_torque(torques);
 #endif
@@ -264,4 +290,10 @@ void body_get_config(BodyConfig_t* config) {
     config->output_dim = 4;
     config->num_actuators = 4;
 #endif
+}
+
+void body_set_actuator_params(float gain, float offset) {
+    g_actuator_gain = gain;
+    g_actuator_offset = offset;
+    ESP_LOGI(TAG, "Actuator params updated: Gain=%.4f, Offset=%.4f", gain, offset);
 }
