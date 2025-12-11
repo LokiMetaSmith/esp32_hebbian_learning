@@ -33,6 +33,8 @@ const unsigned char dummy_synsense_config[] = {0xDE, 0xAD, 0xBE, 0xEF};
 #include "mcp_server.h"
 #include "argtable3/argtable3.h"
 #include "commands.h"
+#include "inter_esp_comm.h"
+#include "omni_base.h"
 
 // --- Application Configuration ---
 
@@ -998,6 +1000,7 @@ void app_main(void) {
     synsense_load_configuration(dummy_synsense_config, sizeof(dummy_synsense_config));
     initialize_usb_cdc(); // For Feetech slave command interface
     mcp_server_init();
+    inter_esp_comm_init();
     
     planner_init();
     behavior_init();
@@ -1034,6 +1037,10 @@ void app_main(void) {
     for (int i = 0; i < NUM_ARMS; i++) {
         initialize_robot_arm(i);
     }
+
+#ifdef ROBOT_TYPE_OMNI_BASE
+    omni_base_init();
+#endif
     // Initialize smoothed goal positions to the current actual positions
     // This part is not yet refactored to use the bus manager, so it is temporarily disabled.
     ESP_LOGI(TAG, "Initial smoothed goals set from current positions.");
