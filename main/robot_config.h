@@ -6,4 +6,8 @@
 #define ROBOT_TYPE_ARM
 // #define ROBOT_TYPE_OMNI_BASE
 
+// --- Simulation Configuration ---
+// Uncomment to enable on-device physics simulation (Newtonian mechanics)
+#define SIMULATE_PHYSICS
+
 #endif // ROBOT_CONFIG_H
