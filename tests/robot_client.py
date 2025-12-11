@@ -25,7 +25,7 @@ class MockMCPServer(threading.Thread):
             {"name": "import_nn"}, {"name": "import_nn_json"},
             {"name": "calibrate_servo"}, {"name": "set_pos"}, {"name": "get_pos"},
             {"name": "move_towards_goal_embedding"}, {"name": "set_goal_embedding"},
-            {"name": "execute_behavior"}
+            {"name": "execute_behavior"}, {"name": "nanobot"}
         ]
 
     def handle_client(self, conn, addr):
@@ -73,6 +73,8 @@ class MockMCPServer(threading.Thread):
                                 response = {"status": "OK"}
                             elif tool_name == "execute_behavior":
                                 response = {"status": "OK"}
+                            elif tool_name == "nanobot":
+                                response = {"status": "OK", "action_taken": "Goal Set"}
 
                         conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
                 except (socket.timeout, ConnectionResetError, json.JSONDecodeError):
