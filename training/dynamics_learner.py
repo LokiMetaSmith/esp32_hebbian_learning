@@ -5,9 +5,12 @@ import os
 try:
     import numpy as np
     from sklearn.linear_model import LinearRegression
+    import matplotlib
+    matplotlib.use('Agg')
+    import matplotlib.pyplot as plt
     HAS_ML = True
 except ImportError:
-    print("Warning: numpy or sklearn not found. Learning features disabled.")
+    print("Warning: numpy, sklearn, or matplotlib not found. Learning features disabled.")
     HAS_ML = False
 import threading
 import time
@@ -99,8 +102,34 @@ class DynamicsHandler(http.server.SimpleHTTPRequestHandler):
                 print(f"Coefficients: {model.coef_}")
                 print(f"Intercept: {model.intercept_}")
                 print("-----------------------------------------------------------")
+
+                # Plotting
+                plt.figure(figsize=(10, 6))
+                # Using Dim 0 vs Dim 0 for visualization
+                plt.scatter(X_np[:, 0], y_np, alpha=0.5, label='Data')
+
+                # Plot regression line
+                x_range = np.linspace(X_np[:, 0].min(), X_np[:, 0].max(), 100).reshape(-1, 1)
+                # We need to pad x_range to match input dim if > 1
+                if X_np.shape[1] > 1:
+                    # Simple visualization only works well for 1D.
+                    # We'll just plot the predictions on the actual X points sorted.
+                    sorted_idx = np.argsort(X_np[:, 0])
+                    plt.plot(X_np[sorted_idx, 0], model.predict(X_np)[sorted_idx], color='red', label='Linear Fit')
+                else:
+                    plt.plot(x_range, model.predict(x_range), color='red', label='Linear Fit')
+
+                plt.title("Dynamics: Input Torque (Dim 0) vs Output Accel (Dim 0)")
+                plt.xlabel("Input Torque (Action[0])")
+                plt.ylabel("Output Acceleration (State[0])")
+                plt.grid(True)
+                plt.legend()
+                plt.savefig("dynamics_plot.png")
+                plt.close()
+                print("Plot saved to dynamics_plot.png")
+
             except Exception as e:
-                print(f"Learning Error: {e}")
+                print(f"Learning/Plotting Error: {e}")
 
 def run_server():
     # Allow address reuse to prevent "Address already in use" errors during testing

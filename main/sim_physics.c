@@ -8,6 +8,8 @@ static const char *TAG = "SIM_PHYSICS";
 #define MAX_DOF 6
 #define SIM_MASS 1.0f // kg
 #define SIM_DAMPING 0.1f // Friction coefficient
+#define SIM_STICTION 0.3f // Static friction threshold (Dead zone)
+#define SIM_MAX_ACCEL 10.0f // Saturation limit
 
 static int g_dof = 0;
 static float g_pos[MAX_DOF];
@@ -36,11 +38,24 @@ void sim_physics_step(float dt) {
     if (dt <= 0.0f) return;
 
     for (int i = 0; i < g_dof; i++) {
+        float f_applied = g_force[i];
+
+        // Stiction (Static Friction)
+        // If velocity is near zero, force must exceed stiction to move.
+        if (fabsf(g_vel[i]) < 0.01f && fabsf(f_applied) < SIM_STICTION) {
+            f_applied = 0;
+            g_vel[i] = 0;
+        }
+
         // F_net = F_applied - Damping * Velocity
-        float f_net = g_force[i] - (SIM_DAMPING * g_vel[i]);
+        float f_net = f_applied - (SIM_DAMPING * g_vel[i]);
 
         // a = F / m
         g_accel[i] = f_net / SIM_MASS;
+
+        // Saturation
+        if (g_accel[i] > SIM_MAX_ACCEL) g_accel[i] = SIM_MAX_ACCEL;
+        if (g_accel[i] < -SIM_MAX_ACCEL) g_accel[i] = -SIM_MAX_ACCEL;
 
         // v = v + a * dt
         g_vel[i] += g_accel[i] * dt;
