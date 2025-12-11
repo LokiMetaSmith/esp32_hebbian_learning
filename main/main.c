@@ -35,6 +35,7 @@ const unsigned char dummy_synsense_config[] = {0xDE, 0xAD, 0xBE, 0xEF};
 #include "commands.h"
 #include "inter_esp_comm.h"
 #include "omni_base.h"
+#include "robot_body.h"
 
 // --- Application Configuration ---
 
@@ -628,54 +629,28 @@ void learning_loop_task(void *pvParameters) {
     while (1) {
 
         if (g_learning_loop_active) {
-            // 1. SENSE current state (first part of combined_input)
-            read_sensor_state(combined_input, arm_id);
+            // 1. SENSE current state
+            body_sense(combined_input);
 
-            // 2. BABBLE: Generate an action (positions and accelerations) and place it in the combined_input vector
-            int action_vector_start_index = NUM_ACCEL_GYRO_PARAMS + (NUM_SERVOS * NUM_SERVO_FEEDBACK_PARAMS);
-            float* action_part = combined_input + action_vector_start_index; // Pointer to the start of action data
+            // 2. BABBLE
+            // Using generic dimensions. For now, we assume PRED_NEURONS is the input size.
+            int action_vector_start_index = PRED_NEURONS;
+            float* action_part = combined_input + action_vector_start_index;
             
-            if (g_best_fitness_achieved > 0.8f) {
-                // Generate fully random actions (positions and accelerations) if fitness is high
-                for (int i = 0; i < NUM_ACTION_PARAMS; i++) { // NUM_ACTION_PARAMS is NUM_SERVOS * 2
-                    action_part[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
-                }
-                // Execute these new random actions (positions and accelerations)
-                execute_on_robot_arm(action_part, arm_id);
-            } else {
-                // Otherwise, use perform_random_walk for position exploration,
-                // and generate random accelerations separately.
-
-                // perform_random_walk fills the first NUM_SERVOS elements of action_part with positions
-                // and also executes the moves with current g_servo_acceleration (which is fine for this phase).
-                perform_random_walk(action_part, arm_id);
-
-                // Now, generate and store random accelerations for the learning input
-                // Now, generate and store random accelerations and torques for the learning input
-                for (int i = 0; i < NUM_SERVOS; i++) {
-                    action_part[NUM_SERVOS + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized acceleration
-                    action_part[NUM_SERVOS * 2 + i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Normalized torque
-                }
-                // Note: The accelerations set by execute_on_robot_arm in the next step will override
-                // the g_servo_acceleration used by perform_random_walk for this learning cycle's execution.
-                // This is a bit indirect but means the NN learns based on accelerations it *would* set.
-                // For more direct control, perform_random_walk would need not to execute.
-                // For now, we will execute the full action_part (including newly random accelerations)
-                // via execute_on_robot_arm below, which will set the new accelerations.
-                execute_on_robot_arm(action_part, arm_id);
+            // Generate random actions
+            for (int i = 0; i < OUTPUT_NEURONS; i++) {
+                action_part[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
             }
+            body_act(action_part);
 
-
-            // 3. PREDICT outcome based on the state and the chosen action (now including accelerations)
+            // 3. PREDICT outcome based on the state and the chosen action
             forward_pass(combined_input, g_hl, g_ol, g_pl);
             
             // 4. DELAY to allow action to complete and state to change
-
-
             vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
             
             // 5. OBSERVE the new state resulting from the action
-            read_sensor_state(state_t_plus_1, arm_id);
+            body_sense(state_t_plus_1);
 
             // 6. LEARN from the prediction error
             float total_error = 0;
@@ -751,7 +726,7 @@ void learning_states_loop_task(void *pvParameters) {
     while(1) {
         if (g_state_learning_active) {
             // 1. SENSE current state
-            read_sensor_state(current_state, arm_id);
+            body_sense(current_state);
 
             // 2. CHOOSE a goal state token (for now, randomly)
             int goal_token_idx = rand() % NUM_STATE_TOKENS;
@@ -766,13 +741,13 @@ void learning_states_loop_task(void *pvParameters) {
             // The action is now in g_ol->output_activations
 
             // 5. EXECUTE the predicted action
-            execute_on_robot_arm(g_ol->output_activations, arm_id);
+            body_act(g_ol->output_activations);
 
             // 6. DELAY to allow the action to have an effect
             vTaskDelay(pdMS_TO_TICKS(LOOP_DELAY_MS));
 
             // 7. OBSERVE the resulting state
-            read_sensor_state(next_state, arm_id);
+            body_sense(next_state);
 
             // 8. LEARN by calculating correctness
             float dist_before = 0;
@@ -1034,13 +1009,7 @@ void app_main(void) {
         xTaskCreate(bus_manager_task, task_name, 4096, (void*)i, 10, NULL);
     }
 
-    for (int i = 0; i < NUM_ARMS; i++) {
-        initialize_robot_arm(i);
-    }
-
-#ifdef ROBOT_TYPE_OMNI_BASE
-    omni_base_init();
-#endif
+    body_init();
     // Initialize smoothed goal positions to the current actual positions
     // This part is not yet refactored to use the bus manager, so it is temporarily disabled.
     ESP_LOGI(TAG, "Initial smoothed goals set from current positions.");

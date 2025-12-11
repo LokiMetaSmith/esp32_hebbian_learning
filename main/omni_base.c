@@ -49,3 +49,10 @@ void omni_base_set_velocity(const float* velocities) {
 
     // TODO: Send to hardware
 }
+
+void omni_base_set_torque(const float* torques) {
+    if (!torques) return;
+    ESP_LOGD(TAG, "Setting Torque: FL=%.2f, FR=%.2f, RL=%.2f, RR=%.2f",
+             torques[0], torques[1], torques[2], torques[3]);
+    // TODO: Send PWM duty to motor drivers
+}
