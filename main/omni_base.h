@@ -22,4 +22,10 @@ void omni_base_init(void);
  */
 void omni_base_set_velocity(const float* velocities);
 
+/**
+ * @brief Sets the torque (or PWM duty) for the base motors.
+ * @param torques Array of 4 floats representing torque for each wheel.
+ */
+void omni_base_set_torque(const float* torques);
+
 #endif // OMNI_BASE_H

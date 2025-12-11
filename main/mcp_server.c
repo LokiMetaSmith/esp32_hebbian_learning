@@ -9,7 +9,9 @@
  */
 
 #include "mcp_server.h"
+#include "main.h"
 #include "common.h"
+#include "esp_http_client.h"
 #include "lwip/err.h"
 #include "lwip/sockets.h"
 #include "lwip/sys.h"
@@ -46,6 +48,142 @@ static void wifi_init_sta(void);
 static void wifi_event_handler(void* arg, esp_event_base_t event_base, int32_t event_id, void* event_data);
 static void mcp_server_task(void *pvParameters);
 static cJSON* handle_list_tools(void);
+
+typedef struct {
+    char *buffer;
+    int pos;
+    int size;
+} http_response_buffer_t;
+
+static esp_err_t _http_event_handler(esp_http_client_event_t *evt) {
+    http_response_buffer_t *resp_buf = (http_response_buffer_t *)evt->user_data;
+    switch(evt->event_id) {
+        case HTTP_EVENT_ON_DATA:
+            if (resp_buf && resp_buf->buffer) {
+                int copy_len = evt->data_len;
+                if (resp_buf->pos + copy_len < resp_buf->size) {
+                    memcpy(resp_buf->buffer + resp_buf->pos, evt->data, copy_len);
+                    resp_buf->pos += copy_len;
+                    resp_buf->buffer[resp_buf->pos] = 0; // Null terminate
+                }
+            }
+            break;
+        default:
+            break;
+    }
+    return ESP_OK;
+}
+
+static cJSON* handle_nanobot_tool(const cJSON *arguments_json) {
+    cJSON *response = cJSON_CreateObject();
+    cJSON *url_json = cJSON_GetObjectItem(arguments_json, "url");
+
+    if (!cJSON_IsString(url_json) || url_json->valuestring == NULL) {
+        cJSON_AddStringToObject(response, "status", "Missing or invalid 'url' argument");
+        return response;
+    }
+
+    const char *url = url_json->valuestring;
+
+    // Create Payload
+    cJSON *payload_root = cJSON_CreateObject();
+    cJSON *centroids_array = cJSON_CreateArray();
+    cJSON *embeddings_array = cJSON_CreateArray();
+
+    for (int i = 0; i < NUM_STATE_TOKENS; i++) {
+        cJSON *centroid = cJSON_CreateArray();
+        for (int j = 0; j < STATE_VECTOR_DIM; j++) {
+            cJSON_AddItemToArray(centroid, cJSON_CreateNumber(g_state_token_centroids[i][j]));
+        }
+        cJSON_AddItemToArray(centroids_array, centroid);
+
+        cJSON *embedding = cJSON_CreateArray();
+        for (int j = 0; j < HIDDEN_NEURONS; j++) {
+            cJSON_AddItemToArray(embedding, cJSON_CreateNumber(g_state_token_embeddings[i][j]));
+        }
+        cJSON_AddItemToArray(embeddings_array, embedding);
+    }
+
+    cJSON_AddItemToObject(payload_root, "centroids", centroids_array);
+    cJSON_AddItemToObject(payload_root, "embeddings", embeddings_array);
+
+    char *post_data = cJSON_PrintUnformatted(payload_root);
+    cJSON_Delete(payload_root);
+
+    if (post_data == NULL) {
+        cJSON_AddStringToObject(response, "status", "Failed to create JSON payload");
+        return response;
+    }
+
+    // Prepare response buffer
+    char *resp_buffer = malloc(4096);
+    if (!resp_buffer) {
+        free(post_data);
+        cJSON_AddStringToObject(response, "status", "Failed to allocate memory");
+        return response;
+    }
+    http_response_buffer_t resp_struct = { .buffer = resp_buffer, .pos = 0, .size = 4096 };
+
+    // HTTP Client Setup
+    esp_http_client_config_t config = {
+        .url = url,
+        .method = HTTP_METHOD_POST,
+        .timeout_ms = 10000,
+        .event_handler = _http_event_handler,
+        .user_data = &resp_struct,
+    };
+    esp_http_client_handle_t client = esp_http_client_init(&config);
+
+    // Set headers
+    esp_http_client_set_header(client, "Content-Type", "application/json");
+
+    // Set post data
+    esp_http_client_set_post_field(client, post_data, strlen(post_data));
+
+    // Perform request
+    esp_err_t err = esp_http_client_perform(client);
+
+    if (err == ESP_OK) {
+        int status_code = esp_http_client_get_status_code(client);
+        cJSON_AddNumberToObject(response, "http_status", status_code);
+
+        if (status_code >= 200 && status_code < 300) {
+             cJSON_AddStringToObject(response, "server_response", resp_buffer);
+
+             // Parse response for control
+             cJSON *server_resp_json = cJSON_Parse(resp_buffer);
+             if (server_resp_json) {
+                 cJSON *goal_json = cJSON_GetObjectItem(server_resp_json, "goal_embedding");
+                 if (cJSON_IsArray(goal_json)) {
+                    // Apply goal
+                    float goal_embedding[HIDDEN_NEURONS];
+                     int dims = cJSON_GetArraySize(goal_json);
+                     if (dims == HIDDEN_NEURONS) {
+                         for(int k=0; k<dims; k++) {
+                             goal_embedding[k] = (float)cJSON_GetArrayItem(goal_json, k)->valuedouble;
+                         }
+                         planner_set_goal(goal_embedding);
+                         cJSON_AddStringToObject(response, "action_taken", "Goal Set");
+                     }
+                 }
+                 cJSON_Delete(server_resp_json);
+             }
+             cJSON_AddStringToObject(response, "status", "OK");
+        } else {
+             cJSON_AddStringToObject(response, "status", "Server Error");
+        }
+    } else {
+        cJSON_AddStringToObject(response, "status", "HTTP Request Failed");
+        cJSON_AddStringToObject(response, "error", esp_err_to_name(err));
+    }
+
+    esp_http_client_cleanup(client);
+    free(post_data);
+    free(resp_buffer);
+
+    return response;
+}
+
 static cJSON* handle_call_tool(const cJSON *request_json) {
     cJSON *response = cJSON_CreateObject();
     cJSON *tool_name_json = cJSON_GetObjectItem(request_json, "tool_name");
@@ -78,6 +216,9 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
         } else {
             cJSON_AddStringToObject(response, "status", "Invalid goal embedding");
         }
+    } else if (strcmp(tool_name, "nanobot") == 0) {
+        cJSON_Delete(response);
+        response = handle_nanobot_tool(arguments_json);
     } else if (strcmp(tool_name, "execute_behavior") == 0) {
         cJSON *embeddings_json = cJSON_GetObjectItem(arguments_json, "embeddings");
         if (cJSON_IsArray(embeddings_json)) {
@@ -523,6 +664,12 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(execute_behavior_tool, "name", "execute_behavior");
     cJSON_AddStringToObject(execute_behavior_tool, "description", "Executes a sequence of goal embeddings.");
     cJSON_AddItemToArray(tools, execute_behavior_tool);
+
+    // Tool: nanobot
+    cJSON *nanobot_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(nanobot_tool, "name", "nanobot");
+    cJSON_AddStringToObject(nanobot_tool, "description", "Syncs latent space mappings with the Nanochat server.");
+    cJSON_AddItemToArray(tools, nanobot_tool);
 
     return root;
 }

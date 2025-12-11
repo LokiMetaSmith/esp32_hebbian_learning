@@ -166,6 +166,11 @@ def run_mcp_tests(host, port, use_mock=False):
         assert response and response.get("status") == "OK", "MCP Test 10 Failed: execute_behavior."
         print("  [MCP] Test 10 (Execute Behavior): PASSED")
 
+        # Test 11: Nanobot
+        response = client.call_tool("nanobot", {"url": "http://mock-server.com/api"})
+        assert response and response.get("status") == "OK", "MCP Test 11 Failed: nanobot."
+        print("  [MCP] Test 11 (Nanobot): PASSED")
+
     except AssertionError as e:
         print(f"  [MCP] !!! TEST FAILED: {e}")
         return False
