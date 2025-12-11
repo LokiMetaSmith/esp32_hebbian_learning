@@ -10,6 +10,7 @@
 
 #include "mcp_server.h"
 #include "main.h"
+#include "robot_body.h"
 #include "common.h"
 #include "esp_http_client.h"
 #include "lwip/err.h"
@@ -84,28 +85,85 @@ static cJSON* handle_nanobot_tool(const cJSON *arguments_json) {
     }
 
     const char *url = url_json->valuestring;
-
-    // Create Payload
-    cJSON *payload_root = cJSON_CreateObject();
-    cJSON *centroids_array = cJSON_CreateArray();
-    cJSON *embeddings_array = cJSON_CreateArray();
-
-    for (int i = 0; i < NUM_STATE_TOKENS; i++) {
-        cJSON *centroid = cJSON_CreateArray();
-        for (int j = 0; j < STATE_VECTOR_DIM; j++) {
-            cJSON_AddItemToArray(centroid, cJSON_CreateNumber(g_state_token_centroids[i][j]));
-        }
-        cJSON_AddItemToArray(centroids_array, centroid);
-
-        cJSON *embedding = cJSON_CreateArray();
-        for (int j = 0; j < HIDDEN_NEURONS; j++) {
-            cJSON_AddItemToArray(embedding, cJSON_CreateNumber(g_state_token_embeddings[i][j]));
-        }
-        cJSON_AddItemToArray(embeddings_array, embedding);
+    char *mode = "sync";
+    cJSON *mode_json = cJSON_GetObjectItem(arguments_json, "mode");
+    if (cJSON_IsString(mode_json) && mode_json->valuestring) {
+        mode = mode_json->valuestring;
     }
 
-    cJSON_AddItemToObject(payload_root, "centroids", centroids_array);
-    cJSON_AddItemToObject(payload_root, "embeddings", embeddings_array);
+    cJSON *payload_root = cJSON_CreateObject();
+
+    if (strcmp(mode, "dynamics") == 0) {
+        // Dynamics Streaming Mode
+        int samples = 10;
+        cJSON *samples_json = cJSON_GetObjectItem(arguments_json, "samples");
+        if (cJSON_IsNumber(samples_json)) {
+            samples = samples_json->valueint;
+        }
+
+        cJSON *data_array = cJSON_CreateArray();
+        BodyConfig_t config;
+        body_get_config(&config);
+
+        float* action_vector = malloc(sizeof(float) * config.output_dim);
+        float* state_vector = malloc(sizeof(float) * config.input_dim);
+
+        if (action_vector && state_vector) {
+            for (int i = 0; i < samples; i++) {
+                // 1. Generate Random Action
+                for (int j = 0; j < config.output_dim; j++) {
+                    action_vector[j] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+                }
+
+                // 2. Act
+                body_act(action_vector);
+
+                // 3. Wait (short delay for physics)
+                vTaskDelay(pdMS_TO_TICKS(50));
+
+                // 4. Sense
+                body_sense(state_vector);
+
+                // 5. Store
+                cJSON *sample_obj = cJSON_CreateObject();
+
+                cJSON *action_arr = cJSON_CreateArray();
+                for (int j = 0; j < config.output_dim; j++) cJSON_AddItemToArray(action_arr, cJSON_CreateNumber(action_vector[j]));
+                cJSON_AddItemToObject(sample_obj, "action", action_arr);
+
+                cJSON *state_arr = cJSON_CreateArray();
+                for (int j = 0; j < config.input_dim; j++) cJSON_AddItemToArray(state_arr, cJSON_CreateNumber(state_vector[j]));
+                cJSON_AddItemToObject(sample_obj, "state", state_arr);
+
+                cJSON_AddItemToArray(data_array, sample_obj);
+            }
+            free(action_vector);
+            free(state_vector);
+        }
+        cJSON_AddItemToObject(payload_root, "data", data_array);
+
+    } else {
+        // Sync Mode (Default)
+        cJSON *centroids_array = cJSON_CreateArray();
+        cJSON *embeddings_array = cJSON_CreateArray();
+
+        for (int i = 0; i < NUM_STATE_TOKENS; i++) {
+            cJSON *centroid = cJSON_CreateArray();
+            for (int j = 0; j < STATE_VECTOR_DIM; j++) {
+                cJSON_AddItemToArray(centroid, cJSON_CreateNumber(g_state_token_centroids[i][j]));
+            }
+            cJSON_AddItemToArray(centroids_array, centroid);
+
+            cJSON *embedding = cJSON_CreateArray();
+            for (int j = 0; j < HIDDEN_NEURONS; j++) {
+                cJSON_AddItemToArray(embedding, cJSON_CreateNumber(g_state_token_embeddings[i][j]));
+            }
+            cJSON_AddItemToArray(embeddings_array, embedding);
+        }
+
+        cJSON_AddItemToObject(payload_root, "centroids", centroids_array);
+        cJSON_AddItemToObject(payload_root, "embeddings", embeddings_array);
+    }
 
     char *post_data = cJSON_PrintUnformatted(payload_root);
     cJSON_Delete(payload_root);

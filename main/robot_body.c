@@ -5,6 +5,8 @@
 #include "bma400_driver.h"
 #include "synsense_driver.h"
 #include "omni_base.h"
+#include "sim_physics.h"
+#include "esp_timer.h"
 #include <math.h>
 
 static const char *TAG = "ROBOT_BODY";
@@ -43,6 +45,15 @@ static uint16_t get_corrected_position(uint8_t servo_id, uint16_t commanded_pos)
 
 esp_err_t body_init(void) {
     ESP_LOGI(TAG, "Initializing Robot Body...");
+
+#ifdef SIMULATE_PHYSICS
+    #ifdef ROBOT_TYPE_ARM
+    sim_physics_init(NUM_SERVOS);
+    #else
+    sim_physics_init(4);
+    #endif
+#endif
+
 #ifdef ROBOT_TYPE_ARM
     for (int arm_id = 0; arm_id < NUM_ARMS; arm_id++) {
         ESP_LOGI(TAG, "Initializing servos on arm %d...", arm_id);
@@ -74,15 +85,26 @@ esp_err_t body_init(void) {
 }
 
 void body_sense(float* state_vector) {
+#ifdef SIMULATE_PHYSICS
+    float acc[6], vel[6], pos[6];
+    sim_physics_get_sensor_data(acc, vel, pos);
+#endif
+
 #ifdef ROBOT_TYPE_ARM
     // Replicating main.c:read_sensor_state logic
     int arm_id = 0; // Hardcoded for now
     float ax, ay, az;
+
+#ifdef SIMULATE_PHYSICS
+    // Override IMU with simulation
+    state_vector[0] = acc[0]; state_vector[1] = acc[1]; state_vector[2] = acc[2];
+#else
     if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
         state_vector[0] = ax; state_vector[1] = ay; state_vector[2] = az;
     } else {
         state_vector[0] = 0; state_vector[1] = 0; state_vector[2] = 0;
     }
+#endif
     state_vector[3] = 0.0f; state_vector[4] = 0.0f; state_vector[5] = 0.0f; // Gyro placeholders
 
     int current_sensor_index = NUM_ACCEL_GYRO_PARAMS;
@@ -140,6 +162,10 @@ void body_sense(float* state_vector) {
 
 #ifdef ROBOT_TYPE_OMNI_BASE
     // Base Sensing
+
+#ifdef SIMULATE_PHYSICS
+    state_vector[0] = acc[0]; state_vector[1] = acc[1]; state_vector[2] = acc[2];
+#else
     // 1. IMU (Reactant Acceleration)
     float ax, ay, az;
     if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
@@ -147,6 +173,7 @@ void body_sense(float* state_vector) {
     } else {
         state_vector[0] = 0; state_vector[1] = 0; state_vector[2] = 0;
     }
+#endif
     // 2. Encoders (Placeholder)
     // Assume 4 encoders
     state_vector[3] = 0; state_vector[4] = 0; state_vector[5] = 0; state_vector[6] = 0;
@@ -154,6 +181,18 @@ void body_sense(float* state_vector) {
 }
 
 void body_act(const float* action_vector) {
+#ifdef SIMULATE_PHYSICS
+    static int64_t last_time = 0;
+    int64_t now = esp_timer_get_time();
+    if (last_time == 0) last_time = now;
+    float dt = (float)(now - last_time) / 1000000.0f;
+    last_time = now;
+
+    // Use action_vector as Force/Torque
+    sim_physics_apply_force(action_vector);
+    sim_physics_step(dt);
+#endif
+
 #ifdef ROBOT_TYPE_ARM
     int arm_id = 0;
     BusRequest_t request;
