@@ -26,31 +26,36 @@ This phase focuses on extending the architecture to support a coordinated omni-d
 *   **[DONE] Sub-task: Abstract the "Robot" Concept**
     *   **Description:** The codebase has been refactored to support different robot types (`ROBOT_TYPE_ARM` or `ROBOT_TYPE_OMNI_BASE`) using a `robot_config.h` file and preprocessor directives.
 
-*   **[IN PROGRESS] Sub-task: Implement Omni-directional Base Driver**
+*   **[PARTIAL] Sub-task: Implement Omni-directional Base Driver**
     *   **Description:** Create a dedicated driver for the wheeled base.
+    *   **Status:** Kinematics implemented (`omni_base.c`). `set_torque` interface added.
     *   **Next Steps:**
-        *   Flesh out the placeholder functions in `omni_base.c` with hardware-specific motor control logic (e.g., PWM or I2C commands).
-        *   Implement the kinematics to translate `(vx, vy, v_theta)` commands into individual wheel velocities.
+        *   Implement hardware-specific motor control logic (e.g., PWM or I2C commands) when hardware is defined.
 
-*   **[TODO] Sub-task: Adapt Planner for the Base**
+*   **[DONE] Sub-task: Adapt Planner for the Base**
     *   **Description:** The A\* planner needs to be adapted to work with the base.
-    *   **Next Steps:**
-        *   Define what a "gesture" means for the base (e.g., path segments like "move forward 10cm," "rotate 45 degrees").
-        *   Adapt the planner's cost function to use distance and base motor energy consumption.
+    *   **Status:** Refactored `planner.c` to use `ROBOT_DOF`. Supports 3-DOF Velocity planning for the Base.
 
-*   **[TODO] Sub-task: Establish Inter-ESP32 Communication**
+*   **[DONE] Sub-task: Establish Inter-ESP32 Communication**
     *   **Description:** Implement a communication channel for the two ESP32s.
-    *   **Next Steps:**
-        *   Choose and implement a protocol (ESP-NOW is recommended).
-        *   Create a new `inter_esp_comm.c` module to handle message passing.
-        *   Define a clear message format for sharing status and coordinated goals.
+    *   **Status:** Implemented `inter_esp_comm.c` using ESP-NOW Broadcast.
 
-*   **[TODO] Sub-task: Implement Coordinated Motion**
+*   **[DONE] Sub-task: Implement Coordinated Motion**
     *   **Description:** The ultimate goal of this phase. This involves deep integration between the two subsystems.
-    *   **Next Steps:**
-        *   **Offline:** Train a new, larger neural network on data from both the arm and base to create a **combined embedding space**.
-        *   **Online:** Implement a distributed planning system where a "master" ESP32 can send coordinated goal embeddings to the "slave" to perform complex tasks (e.g., moving while manipulating an object).
-        *   **Online:** Implement shared-state reflexes, such as the arm counter-balancing to prevent the base from tipping.
+    *   **Status:** Implemented Symmetric Coherence. Robots broadcast locally generated goals and accept network goals without looping.
+
+## Phase 2.5: Adaptive Mapping (New)
+
+*   **[DONE] Sub-task: Dynamics Learning Loop**
+    *   **Description:** Implement a closed loop to learn motor dynamics.
+    *   **Status:** `nanobot` tool streams torque/accel. `nanobot_server.py` learns linear model and returns calibration (Gain/Offset). Firmware applies calibration.
+
+*   **[DONE] Sub-task: Adaptive State Clustering**
+    *   **Description:** Re-cluster state space based on dissonance.
+    *   **Status:** `nanobot` tool streams dissonance. Server performs K-Means and updates centroids via `import_centroids`.
+
+*   **[TODO] Sub-task: NVS Persistence**
+    *   **Description:** Save the learned Actuator Params and Centroids to NVS so they persist across reboots.
 
 ## Phase 3: Future Enhancements (Not Started)
 
