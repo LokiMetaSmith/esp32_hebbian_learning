@@ -1,5 +1,7 @@
 #include "planner.h"
 #include "robot_body.h"
+#include "inter_esp_comm.h"
+#include "inter_esp_comm.h"
 #include "esp_log.h"
 
 #if __has_include("generated_gestures.h")
@@ -31,7 +33,7 @@ static const char *TAG = "PLANNER";
 
 // --- Global Planner State ---
 static TaskHandle_t g_planner_task_handle = NULL;
-static float g_goal_pose[ROBOT_DOF];
+static float g_goal_pose[HIDDEN_NEURONS];
 static bool g_new_goal_set = false;
 static SemaphoreHandle_t g_planner_idle_semaphore = NULL;
 
@@ -76,21 +78,6 @@ static bool open_set_is_empty() {
     return open_set_size == 0;
 }
 
-static float heuristic_cost(int token_id, const float* goal_pose) {
-    // Heuristic: Euclidean distance between the gesture's end pose and the goal pose
-    GestureToken* token = &g_gesture_graph.gesture_library[token_id];
-    GestureWaypoint* end_waypoint = &token->waypoints[token->num_waypoints - 1];
-    float dist = 0;
-    for (int i = 0; i < ROBOT_DOF; i++) {
-        #ifdef ROBOT_TYPE_ARM
-        float diff = end_waypoint->positions[i] - goal_pose[i];
-        #else
-        float diff = end_waypoint->velocities[i] - goal_pose[i];
-        #endif
-        dist += diff * diff;
-    }
-    return sqrtf(dist);
-}
 
 static float embedding_distance(const float* emb1, const float* emb2) {
     float dist = 0;
@@ -99,6 +86,12 @@ static float embedding_distance(const float* emb1, const float* emb2) {
         dist += diff * diff;
     }
     return sqrtf(dist);
+}
+
+static float heuristic_cost(int token_id, const float* goal_pose) {
+    // Heuristic: Euclidean distance between the gesture's embedding and the goal embedding
+    GestureToken* token = &g_gesture_graph.gesture_library[token_id];
+    return embedding_distance(token->embedding, goal_pose);
 }
 
 static void reconstruct_and_execute_path(int came_from[], int current_token_id) {
@@ -214,9 +207,13 @@ void planner_init(void) {
 }
 
 void planner_set_goal(const float* target_pose) {
-    memcpy(g_goal_pose, target_pose, sizeof(float) * ROBOT_DOF);
+    memcpy(g_goal_pose, target_pose, sizeof(float) * HIDDEN_NEURONS);
     g_new_goal_set = true;
     ESP_LOGI(TAG, "Goal set.");
+
+    #if ROBOT_ROLE == ROBOT_ROLE_MASTER
+    inter_esp_send_goal(target_pose);
+    #endif
 }
 
 void planner_init_sync(void) {
