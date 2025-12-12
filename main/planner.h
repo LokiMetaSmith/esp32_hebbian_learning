@@ -22,12 +22,12 @@
  */
 #ifdef ROBOT_TYPE_ARM
 typedef struct {
-    float positions[NUM_SERVOS];    /**< Target joint positions. */
-    float velocities[NUM_SERVOS];   /**< Target joint velocities. */
+    float positions[ROBOT_DOF];    /**< Target joint positions. */
+    float velocities[ROBOT_DOF];   /**< Target joint velocities. */
 } GestureWaypoint;
 #else // ROBOT_TYPE_OMNI_BASE
 typedef struct {
-    float velocities[NUM_MOTORS];   /**< Target wheel velocities (e.g., vx, vy, v_theta). */
+    float velocities[ROBOT_DOF];   /**< Target velocities (vx, vy, v_theta). */
 } GestureWaypoint;
 #endif
 
