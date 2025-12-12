@@ -53,7 +53,7 @@ esp_err_t body_init(void) {
     #ifdef ROBOT_TYPE_ARM
     sim_physics_init(NUM_SERVOS);
     #else
-    sim_physics_init(4);
+    sim_physics_init(3); // Vx, Vy, Vtheta
     #endif
 #endif
 
@@ -268,12 +268,8 @@ void body_act(const float* action_vector) {
 #endif
 
 #ifdef ROBOT_TYPE_OMNI_BASE
-    // Apply Torque
-    float torques[4];
-    for(int i=0; i<4; i++) {
-        torques[i] = use_action[i];
-    }
-    omni_base_set_torque(torques);
+    // Apply Velocity
+    omni_base_set_velocity(use_action);
 #endif
 }
 
@@ -286,9 +282,9 @@ void body_get_config(BodyConfig_t* config) {
 #ifdef ROBOT_TYPE_OMNI_BASE
     // Input: Accel(3) + Gyro(3) + Encoders(4) = 10
     config->input_dim = 10;
-    // Output: Torque(4)
-    config->output_dim = 4;
-    config->num_actuators = 4;
+    // Output: Velocity(3)
+    config->output_dim = 3;
+    config->num_actuators = 3;
 #endif
 }
 

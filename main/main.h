@@ -19,11 +19,13 @@
 #ifdef ROBOT_TYPE_ARM
 #define NUM_ARMS 3
 #define NUM_SERVOS 6
+#define ROBOT_DOF NUM_SERVOS
 #define SERVOS_PER_ARM (NUM_SERVOS / NUM_ARMS) // Define servos per arm
 #else // ROBOT_TYPE_OMNI_BASE
 #define NUM_MOTORS 4 // Example for a 4-wheeled base
 #define NUM_SERVOS 0 // No servos on the base
 #define NUM_ARMS 0 // No arms on the base
+#define ROBOT_DOF 3 // Vx, Vy, Vtheta
 #endif
 
 // --- Neural Network Config ---

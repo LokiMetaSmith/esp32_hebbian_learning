@@ -1,4 +1,5 @@
 #include "planner.h"
+#include "robot_body.h"
 #include "esp_log.h"
 
 #if __has_include("generated_gestures.h")
@@ -13,7 +14,11 @@ static GestureGraph g_gesture_graph = {
         { // Gesture 0: Center
             .id = 0, .num_waypoints = 1, .energy_cost = 0.0f,
             .embedding = {0.0f},
+            #ifdef ROBOT_TYPE_ARM
             .waypoints = { {{0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}, {0.0f}} }
+            #else
+            .waypoints = { {{0.0f, 0.0f, 0.0f}} }
+            #endif
         }
     }
 };
@@ -26,7 +31,7 @@ static const char *TAG = "PLANNER";
 
 // --- Global Planner State ---
 static TaskHandle_t g_planner_task_handle = NULL;
-static float g_goal_pose[NUM_SERVOS];
+static float g_goal_pose[ROBOT_DOF];
 static bool g_new_goal_set = false;
 static SemaphoreHandle_t g_planner_idle_semaphore = NULL;
 
@@ -76,8 +81,12 @@ static float heuristic_cost(int token_id, const float* goal_pose) {
     GestureToken* token = &g_gesture_graph.gesture_library[token_id];
     GestureWaypoint* end_waypoint = &token->waypoints[token->num_waypoints - 1];
     float dist = 0;
-    for (int i = 0; i < NUM_SERVOS; i++) {
+    for (int i = 0; i < ROBOT_DOF; i++) {
+        #ifdef ROBOT_TYPE_ARM
         float diff = end_waypoint->positions[i] - goal_pose[i];
+        #else
+        float diff = end_waypoint->velocities[i] - goal_pose[i];
+        #endif
         dist += diff * diff;
     }
     return sqrtf(dist);
@@ -107,13 +116,16 @@ static void reconstruct_and_execute_path(int came_from[], int current_token_id) 
         GestureToken* token = &g_gesture_graph.gesture_library[path[i]];
         ESP_LOGI(TAG, "Executing gesture token %d with %d waypoints.", token->id, token->num_waypoints);
         for (int j = 0; j < token->num_waypoints; j++) {
-            // NOTE: This is a simplified execution. A real implementation would
-            // need to handle velocities and timing more carefully.
-            // We are creating a simplified action vector for execute_on_robot_arm
-            float action_vector[OUTPUT_NEURONS] = {0};
-            memcpy(action_vector, token->waypoints[j].positions, sizeof(float) * NUM_SERVOS);
-            // We'll leave acceleration and torque params as 0 for now
-            execute_on_robot_arm(action_vector, 0); // Assuming arm 0
+            // NOTE: This is a simplified execution.
+            float action_vector[32] = {0};
+
+            #ifdef ROBOT_TYPE_ARM
+            memcpy(action_vector, token->waypoints[j].positions, sizeof(float) * ROBOT_DOF);
+            #else
+            memcpy(action_vector, token->waypoints[j].velocities, sizeof(float) * ROBOT_DOF);
+            #endif
+
+            body_act(action_vector);
             vTaskDelay(pdMS_TO_TICKS(50)); // Delay between waypoints
         }
     }
@@ -202,7 +214,7 @@ void planner_init(void) {
 }
 
 void planner_set_goal(const float* target_pose) {
-    memcpy(g_goal_pose, target_pose, sizeof(float) * NUM_SERVOS);
+    memcpy(g_goal_pose, target_pose, sizeof(float) * ROBOT_DOF);
     g_new_goal_set = true;
     ESP_LOGI(TAG, "Goal set.");
 }
