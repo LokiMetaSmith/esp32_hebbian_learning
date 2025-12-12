@@ -5,6 +5,7 @@ import os
 try:
     import numpy as np
     from sklearn.linear_model import LinearRegression
+    from sklearn.cluster import KMeans
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
@@ -64,7 +65,41 @@ class DynamicsHandler(http.server.SimpleHTTPRequestHandler):
             json.dump(all_data, f)
 
         # Perform Learning
-        return self.learn_dynamics(all_data)
+        calibration = self.learn_dynamics(all_data)
+
+        # Check if we should re-cluster (Adaptive Mapping)
+        if new_samples:
+            last_sample = new_samples[-1]
+            dissonance = last_sample.get("dissonance", 0)
+            if dissonance > 0.3: # Threshold
+                print(f"High Dissonance detected: {dissonance}. Re-clustering state space...")
+                centroids = self.learn_clusters(all_data)
+                if centroids:
+                    if not calibration: calibration = {}
+                    calibration["centroids"] = centroids
+
+        return calibration
+
+    def learn_clusters(self, data):
+        if not HAS_ML or not data: return None
+        states = []
+        for s in data:
+            if "state" in s and len(s["state"]) > 0: states.append(s["state"])
+
+        if len(states) < 16: return None
+
+        try:
+            X = np.array(states)
+            # Use min(16, samples) clusters
+            n_clusters = min(16, len(states))
+            kmeans = KMeans(n_clusters=n_clusters, n_init=10)
+            kmeans.fit(X)
+            centroids = kmeans.cluster_centers_.tolist()
+            print(f"New Centroids generated ({len(centroids)}).")
+            return centroids
+        except Exception as e:
+            print(f"Clustering Error: {e}")
+            return None
 
     def learn_dynamics(self, data):
         if not HAS_ML:

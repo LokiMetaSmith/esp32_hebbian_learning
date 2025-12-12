@@ -18,7 +18,7 @@ void behavior_task(void *pvParameters) {
         // Wait for a new goal embedding to be added to the queue
         if (xQueueReceive(g_embedding_queue, &goal_embedding, portMAX_DELAY) == pdTRUE) {
             ESP_LOGI(TAG, "Received new goal embedding from queue. Executing...");
-            planner_set_goal(goal_embedding);
+            planner_set_goal_internal(goal_embedding);
             planner_wait_for_idle(); // Wait for the planner to finish the move
             ESP_LOGI(TAG, "Planner finished move. Ready for next goal.");
         }

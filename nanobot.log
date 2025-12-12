@@ -1,0 +1,14 @@
+Dynamics Learner Server running on port 8000
+Received 20 samples.
+--- Dynamics Model (Linear Regression: Action -> AccelX) ---
+Samples: 43
+R^2 Score: 1.0000
+Coefficients: [1.]
+Intercept: 2.220446049250313e-16
+-----------------------------------------------------------
+Plot saved to dynamics_plot.png
+High Dissonance detected: 0.5. Re-clustering state space...
+/home/jules/.pyenv/versions/3.12.12/lib/python3.12/site-packages/sklearn/base.py:1336: ConvergenceWarning: Number of distinct clusters (11) found smaller than n_clusters (16). Possibly due to duplicate points in X.
+  return fit_method(estimator, *args, **kwargs)
+New Centroids generated (16).
+127.0.0.1 - - [12/Dec/2025 05:58:33] "POST /dynamics HTTP/1.1" 200 -

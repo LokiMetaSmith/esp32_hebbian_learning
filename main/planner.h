@@ -67,10 +67,18 @@ void planner_task(void *pvParameters);
 void planner_init(void);
 
 /**
- * @brief Sets a new goal for the planner.
- * @param target_pose For the arm, this is the target joint positions. For the base, it's the target velocity state.
+ * @brief Sets a new goal for the planner (Local Source).
+ * Broadcasts the goal to peers.
+ * @param target_pose The target embedding.
  */
-void planner_set_goal(const float* target_pose);
+void planner_set_goal_internal(const float* target_pose);
+
+/**
+ * @brief Sets a new goal for the planner (Network Source).
+ * Does NOT broadcast (prevents feedback loops).
+ * @param target_pose The target embedding.
+ */
+void planner_set_goal_network(const float* target_pose);
 
 /** @brief A forward declaration to break a circular dependency with main.c. */
 void execute_on_robot_arm(const float* action_vector, int arm_id);

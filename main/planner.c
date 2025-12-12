@@ -206,14 +206,21 @@ void planner_init(void) {
     ESP_LOGI(TAG, "Planner initialized and task created.");
 }
 
-void planner_set_goal(const float* target_pose) {
+static void planner_set_goal_common(const float* target_pose) {
     memcpy(g_goal_pose, target_pose, sizeof(float) * HIDDEN_NEURONS);
     g_new_goal_set = true;
     ESP_LOGI(TAG, "Goal set.");
+}
 
-    #if ROBOT_ROLE == ROBOT_ROLE_MASTER
+void planner_set_goal_internal(const float* target_pose) {
+    planner_set_goal_common(target_pose);
+    // Broadcast to peers (Symmetric)
     inter_esp_send_goal(target_pose);
-    #endif
+}
+
+void planner_set_goal_network(const float* target_pose) {
+    planner_set_goal_common(target_pose);
+    // Do not broadcast to prevent loops
 }
 
 void planner_init_sync(void) {
