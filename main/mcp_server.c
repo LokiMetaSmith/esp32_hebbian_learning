@@ -220,7 +220,7 @@ static cJSON* handle_nanobot_tool(const cJSON *arguments_json) {
                          for(int k=0; k<dims; k++) {
                              goal_embedding[k] = (float)cJSON_GetArrayItem(goal_json, k)->valuedouble;
                          }
-                         planner_set_goal(goal_embedding);
+                         planner_set_goal_internal(goal_embedding);
                          cJSON_AddStringToObject(response, "action_taken", "Goal Set");
                      }
                  }
@@ -278,7 +278,7 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
                         goal_embedding[i] = (float)dim_json->valuedouble;
                     }
                 }
-                planner_set_goal(goal_embedding);
+                planner_set_goal_internal(goal_embedding);
                 cJSON_AddStringToObject(response, "status", "OK");
             } else {
                 cJSON_AddStringToObject(response, "status", "Invalid embedding dimension");

@@ -25,12 +25,10 @@ static void on_data_recv(const esp_now_recv_info_t * info, const uint8_t *data, 
 
     switch (msg->type) {
         case MSG_TYPE_GOAL_EMBEDDING:
-            #if ROBOT_ROLE == ROBOT_ROLE_SLAVE
             if (msg->data_len == HIDDEN_NEURONS) {
                 ESP_LOGI(TAG, "Setting goal from Inter-ESP message");
-                planner_set_goal(msg->data);
+                planner_set_goal_network(msg->data);
             }
-            #endif
             break;
         case MSG_TYPE_CURRENT_STATE:
             // Handle state update
