@@ -135,6 +135,8 @@ static cJSON* handle_nanobot_tool(const cJSON *arguments_json) {
                 for (int j = 0; j < config.input_dim; j++) cJSON_AddItemToArray(state_arr, cJSON_CreateNumber(state_vector[j]));
                 cJSON_AddItemToObject(sample_obj, "state", state_arr);
 
+                cJSON_AddItemToObject(sample_obj, "dissonance", cJSON_CreateNumber(g_last_prediction_error));
+
                 cJSON_AddItemToArray(data_array, sample_obj);
             }
             free(action_vector);
@@ -236,6 +238,23 @@ static cJSON* handle_nanobot_tool(const cJSON *arguments_json) {
                      }
                  }
 
+                 // Apply Centroids Update
+                 cJSON *centroids_json = cJSON_GetObjectItem(server_resp_json, "centroids");
+                 if (cJSON_IsArray(centroids_json)) {
+                     int num_centroids = cJSON_GetArraySize(centroids_json);
+                     if (num_centroids <= NUM_STATE_TOKENS) {
+                         for (int i = 0; i < num_centroids; i++) {
+                             cJSON *centroid = cJSON_GetArrayItem(centroids_json, i);
+                             if (cJSON_IsArray(centroid) && cJSON_GetArraySize(centroid) == STATE_VECTOR_DIM) {
+                                 for (int j = 0; j < STATE_VECTOR_DIM; j++) {
+                                     g_state_token_centroids[i][j] = (float)cJSON_GetArrayItem(centroid, j)->valuedouble;
+                                 }
+                             }
+                         }
+                         cJSON_AddStringToObject(response, "map_update", "Centroids Updated");
+                     }
+                 }
+
                  cJSON_Delete(server_resp_json);
              }
              cJSON_AddStringToObject(response, "status", "OK");
@@ -285,6 +304,26 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
             }
         } else {
             cJSON_AddStringToObject(response, "status", "Invalid goal embedding");
+        }
+    } else if (strcmp(tool_name, "import_centroids") == 0) {
+        cJSON *centroids_json = cJSON_GetObjectItem(arguments_json, "centroids");
+        if (cJSON_IsArray(centroids_json)) {
+            int num_centroids = cJSON_GetArraySize(centroids_json);
+            if (num_centroids == NUM_STATE_TOKENS) {
+                for (int i = 0; i < num_centroids; i++) {
+                    cJSON *centroid = cJSON_GetArrayItem(centroids_json, i);
+                    if (cJSON_IsArray(centroid) && cJSON_GetArraySize(centroid) == STATE_VECTOR_DIM) {
+                        for (int j = 0; j < STATE_VECTOR_DIM; j++) {
+                            g_state_token_centroids[i][j] = (float)cJSON_GetArrayItem(centroid, j)->valuedouble;
+                        }
+                    }
+                }
+                cJSON_AddStringToObject(response, "status", "OK");
+            } else {
+                cJSON_AddStringToObject(response, "status", "Invalid number of centroids");
+            }
+        } else {
+            cJSON_AddStringToObject(response, "status", "Invalid arguments");
         }
     } else if (strcmp(tool_name, "nanobot") == 0) {
         cJSON_Delete(response);
@@ -740,6 +779,12 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(nanobot_tool, "name", "nanobot");
     cJSON_AddStringToObject(nanobot_tool, "description", "Syncs latent space mappings with the Nanochat server.");
     cJSON_AddItemToArray(tools, nanobot_tool);
+
+    // Tool: import_centroids
+    cJSON *import_centroids_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(import_centroids_tool, "name", "import_centroids");
+    cJSON_AddStringToObject(import_centroids_tool, "description", "Updates the state space clusters (centroids).");
+    cJSON_AddItemToArray(tools, import_centroids_tool);
 
     return root;
 }
