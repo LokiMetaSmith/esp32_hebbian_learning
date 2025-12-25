@@ -36,6 +36,7 @@
 #define REG_PRESENT_POSITION    56
 #define REG_PRESENT_VELOCITY    58
 #define REG_PRESENT_LOAD        60
+#define REG_PRESENT_VOLTAGE     62
 #define REG_PRESENT_TEMPERATURE 63
 #define REG_MOVING              66
 #define REG_PRESENT_CURRENT     69
@@ -74,6 +75,17 @@ void feetech_write_word(uint8_t servo_id, uint8_t reg_address, uint16_t value);
  * @return ESP_OK on success, ESP_ERR_TIMEOUT on timeout, ESP_FAIL on other errors (checksum, servo error).
  */
 esp_err_t feetech_read_word(uint8_t servo_id, uint8_t reg_address, uint16_t *value, uint32_t timeout_ms);
+
+/**
+ * @brief Reads a single byte from a register on a specific servo.
+ *
+ * @param servo_id The ID of the target servo.
+ * @param reg_address The address of the register to read from.
+ * @param value Pointer to store the read 8-bit value.
+ * @param timeout_ms Timeout in milliseconds for waiting for the response.
+ * @return ESP_OK on success, ESP_ERR_TIMEOUT on timeout, ESP_FAIL on other errors (checksum, servo error).
+ */
+esp_err_t feetech_read_byte(uint8_t servo_id, uint8_t reg_address, uint8_t *value, uint32_t timeout_ms);
 
 
 #endif // FEETECH_PROTOCOL_H

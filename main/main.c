@@ -1345,6 +1345,27 @@ void initialize_console(void) {
 
     const esp_console_cmd_t stats_cmd = { .command = "get_stats", .help = "Get task runtime stats", .func = &cmd_get_stats };
     ESP_ERROR_CHECK(esp_console_cmd_register(&stats_cmd));
+}
+
+typedef struct {
+    int sock;
+    uint8_t servo_id;
+} calibration_task_params_t;
+
+void calibration_task(void *pvParameters) {
+    calibration_task_params_t *params = (calibration_task_params_t *)pvParameters;
+    int sock = params->sock;
+    uint8_t servo_id = params->servo_id;
+    free(params);
+
+    cJSON *response = cJSON_CreateObject();
+    cJSON_AddStringToObject(response, "prompt", "Manually move servo to its MINIMUM position, then send any character.");
+    // send_json_response(sock, response);
+    cJSON_Delete(response);
+
+    // ... rest of calibration logic ...
+
+    vTaskDelete(NULL);
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
@@ -1726,4 +1747,11 @@ void feetech_slave_task(void *pvParameters) {
         }
     }
     vTaskDelete(NULL);
+}
+
+void start_calibration_task(int sock, uint8_t servo_id) {
+    calibration_task_params_t *params = malloc(sizeof(calibration_task_params_t));
+    params->sock = sock;
+    params->servo_id = servo_id;
+    xTaskCreate(calibration_task, "calibration_task", 4096, params, 5, NULL);
 }
