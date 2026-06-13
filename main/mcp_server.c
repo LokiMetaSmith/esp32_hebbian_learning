@@ -23,6 +23,14 @@
 #include "commands.h"
 #include "planner.h"
 #include "behavior.h"
+#include "snn_lsm.h"
+
+// --- SNN Instance ---
+static snn_lsm_t g_lsm;
+static bool g_lsm_initialized = false;
+
+// --- Forward Declarations ---
+static cJSON* handle_snn_call_tool(const char *tool_name, const cJSON *arguments_json);
 
 // --- Wi-Fi & Server Configuration ---
 #define MCP_TCP_PORT   8888
@@ -324,6 +332,13 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
             }
         } else {
             cJSON_AddStringToObject(response, "status", "Invalid arguments");
+        }
+    } else if (strcmp(tool_name, "snn_export_state") == 0 || strcmp(tool_name, "snn_mutate_hyperparams") == 0) {
+        cJSON_Delete(response); // Replace the empty allocated object
+        response = handle_snn_call_tool(tool_name, arguments_json);
+        if (!response) {
+            response = cJSON_CreateObject();
+            cJSON_AddStringToObject(response, "error", "Failed to handle SNN tool.");
         }
     } else if (strcmp(tool_name, "nanobot") == 0) {
         cJSON_Delete(response);
@@ -786,6 +801,18 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(import_centroids_tool, "description", "Updates the state space clusters (centroids).");
     cJSON_AddItemToArray(tools, import_centroids_tool);
 
+    // Tool: snn_export_state
+    cJSON *snn_export_state_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(snn_export_state_tool, "name", "snn_export_state");
+    cJSON_AddStringToObject(snn_export_state_tool, "description", "Exports the current SNN reservoir and readout spiking state for LLM supervision.");
+    cJSON_AddItemToArray(tools, snn_export_state_tool);
+
+    // Tool: snn_mutate_hyperparams
+    cJSON *snn_mutate_hyperparams_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(snn_mutate_hyperparams_tool, "name", "snn_mutate_hyperparams");
+    cJSON_AddStringToObject(snn_mutate_hyperparams_tool, "description", "Mutates the SNN hyperparameters (beta, v_th, lr) based on LLM feedback.");
+    cJSON_AddItemToArray(tools, snn_mutate_hyperparams_tool);
+
     return root;
 }
 
@@ -794,6 +821,62 @@ static cJSON* handle_list_tools(void) {
  * @brief Executes a tool based on the request and creates a response JSON object.
  * @return A cJSON object that the caller must delete.
  */
+static cJSON* handle_snn_call_tool(const char *tool_name, const cJSON *arguments_json) {
+    cJSON *response = cJSON_CreateObject();
+
+    // SNN specific tools
+    if (strcmp(tool_name, "snn_export_state") == 0) {
+        if (!g_lsm_initialized) {
+            snn_lsm_init(&g_lsm);
+            g_lsm_initialized = true;
+        }
+
+        cJSON *result = cJSON_CreateObject();
+        cJSON *spk_res_array = cJSON_CreateArray();
+        for (int i = 0; i < N_RES; i++) {
+            cJSON_AddItemToArray(spk_res_array, cJSON_CreateNumber(g_lsm.spk_res[i]));
+        }
+        cJSON_AddItemToObject(result, "spk_res", spk_res_array);
+
+        cJSON *spk_out_array = cJSON_CreateArray();
+        for (int i = 0; i < N_OUTPUT; i++) {
+            cJSON_AddItemToArray(spk_out_array, cJSON_CreateNumber(g_lsm.spk_out[i]));
+        }
+        cJSON_AddItemToObject(result, "spk_out", spk_out_array);
+
+        cJSON_AddItemToObject(response, "result", result);
+        return response;
+
+    } else if (strcmp(tool_name, "snn_mutate_hyperparams") == 0) {
+        if (!g_lsm_initialized) {
+            snn_lsm_init(&g_lsm);
+            g_lsm_initialized = true;
+        }
+
+        float new_beta = -1.0f;
+        float new_v_th = -1.0f;
+        float new_lr = -1.0f;
+
+        if (arguments_json) {
+            cJSON *beta_item = cJSON_GetObjectItem(arguments_json, "beta");
+            if (cJSON_IsNumber(beta_item)) new_beta = beta_item->valuedouble;
+
+            cJSON *v_th_item = cJSON_GetObjectItem(arguments_json, "v_th");
+            if (cJSON_IsNumber(v_th_item)) new_v_th = v_th_item->valuedouble;
+
+            cJSON *lr_item = cJSON_GetObjectItem(arguments_json, "lr");
+            if (cJSON_IsNumber(lr_item)) new_lr = lr_item->valuedouble;
+        }
+
+        snn_lsm_mutate_hyperparams(&g_lsm, new_beta, new_v_th, new_lr);
+
+        cJSON_AddStringToObject(response, "result", "SNN Hyperparameters updated.");
+        return response;
+    }
+
+    return NULL;
+}
+
 static int json_to_argv(const cJSON *args_json, char **argv, int max_args) {
     int argc = 0;
     if (args_json == NULL) {
