@@ -102,6 +102,14 @@ static struct {
 } set_max_accel_args;
 
 static struct {
+    struct arg_dbl *x;
+    struct arg_dbl *y;
+    struct arg_dbl *z;
+    struct arg_dbl *radius;
+    struct arg_end *end;
+} add_obstacle_args;
+
+static struct {
     struct arg_int *id;
     struct arg_end *end;
 } start_map_cal_args;
@@ -367,6 +375,26 @@ void initialize_console(void) {
         .func = &cmd_scan_wifi,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&scan_wifi_cmd));
+
+    add_obstacle_args.x = arg_dbl1(NULL, NULL, "<x>", "X coordinate");
+    add_obstacle_args.y = arg_dbl1(NULL, NULL, "<y>", "Y coordinate");
+    add_obstacle_args.z = arg_dbl1(NULL, NULL, "<z>", "Z coordinate");
+    add_obstacle_args.radius = arg_dbl1(NULL, NULL, "<radius>", "Obstacle radius");
+    add_obstacle_args.end = arg_end(4);
+    const esp_console_cmd_t add_obstacle_cmd = {
+        .command = "add-obstacle",
+        .help = "Add a virtual obstacle (x y z radius)",
+        .func = &cmd_add_obstacle,
+        .argtable = &add_obstacle_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&add_obstacle_cmd));
+
+    const esp_console_cmd_t clear_obstacles_cmd = {
+        .command = "clear-obstacles",
+        .help = "Clear all virtual obstacles",
+        .func = &cmd_clear_obstacles,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&clear_obstacles_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 

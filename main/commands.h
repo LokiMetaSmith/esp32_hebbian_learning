@@ -28,5 +28,7 @@ int cmd_set_max_accel(int argc, char **argv);
 int cmd_get_servo_acceleration(int argc, char **argv);
 int cmd_set_torque_limit(int argc, char **argv);
 int cmd_start_map_cal(int argc, char **argv);
+int cmd_add_obstacle(int argc, char **argv);
+int cmd_clear_obstacles(int argc, char **argv);
 
 #endif // COMMANDS_H

@@ -70,6 +70,16 @@ typedef struct {
  */
 bool run_rrt_search(const float* start_state, const float* goal_state, float** path_out, int* path_len);
 
+/**
+ * @brief Adds a spherical obstacle to the registry.
+ */
+void planner_add_obstacle(float x, float y, float z, float radius);
+
+/**
+ * @brief Clears all obstacles from the registry.
+ */
+void planner_clear_obstacles(void);
+
 /** @brief The main FreeRTOS task for the motion planner. */
 void planner_task(void *pvParameters);
 

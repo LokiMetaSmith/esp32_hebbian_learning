@@ -1,14 +1,7 @@
-#ifdef UNIT_TEST
-#include <stdio.h>
-#include <stdbool.h>
-#define ESP_LOGI(tag, ...) printf(__VA_ARGS__)
-#define ESP_LOGE(tag, ...) printf(__VA_ARGS__)
-#define ROBOT_DOF 6
-#else
 #include "planner.h"
 #include "robot_body.h"
 #include "esp_log.h"
-#endif
+#include "kinematics.h"
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
@@ -16,6 +9,15 @@
 static const char *TAG = "PLANNER_RRT";
 
 #define MAX_RRT_NODES 200
+#define MAX_OBSTACLES 10
+
+typedef struct {
+    Point3D center;
+    float radius;
+    bool active;
+} Obstacle;
+
+static Obstacle g_obstacles[MAX_OBSTACLES];
 #define EXPAND_DIST 0.1f
 #define GOAL_SAMPLE_RATE 10 // 10% chance to sample the goal directly
 
@@ -61,9 +63,32 @@ static void steer(const float* from, const float* to, float* out) {
 }
 
 static bool check_collision(const float* state) {
-    // Placeholder: Collision detection is highly robot-specific.
-    // For now, assume entire space is free unless we add obstacle definitions.
-    return true; // true = safe
+    #ifndef ROBOT_TYPE_ARM
+    return true; // Only ARM supports 3D obstacles for now
+    #endif
+
+    Point3D joints[4];
+    kinematics_get_joint_positions(state, joints);
+
+    for (int i = 0; i < MAX_OBSTACLES; i++) {
+        if (!g_obstacles[i].active) continue;
+
+        // Check if any joint is inside the obstacle
+        for (int j = 0; j < 4; j++) {
+            float dx = joints[j].x - g_obstacles[i].center.x;
+            float dy = joints[j].y - g_obstacles[i].center.y;
+            float dz = joints[j].z - g_obstacles[i].center.z;
+            float d2 = dx*dx + dy*dy + dz*dz;
+
+            if (d2 < (g_obstacles[i].radius * g_obstacles[i].radius)) {
+                return false; // Collision detected
+            }
+        }
+
+        // Ideally check segments between joints, but checking joints is a good start
+    }
+
+    return true; // No collision
 }
 
 bool run_rrt_search(const float* start_state, const float* goal_state, float** path_out, int* path_len) {
@@ -86,7 +111,23 @@ bool run_rrt_search(const float* start_state, const float* goal_state, float** p
         float new_state[ROBOT_DOF];
         steer(g_node_list[nearest_idx].state, rnd_state, new_state);
 
+        // Check collision for the new state
         if (check_collision(new_state)) {
+            // Check along the segment for safety
+            bool segment_safe = true;
+            for (int s = 1; s < 5; s++) {
+                float intermediate[ROBOT_DOF];
+                float frac = (float)s / 5.0f;
+                for (int d = 0; d < ROBOT_DOF; d++) {
+                    intermediate[d] = g_node_list[nearest_idx].state[d] + (new_state[d] - g_node_list[nearest_idx].state[d]) * frac;
+                }
+                if (!check_collision(intermediate)) {
+                    segment_safe = false;
+                    break;
+                }
+            }
+            if (!segment_safe) continue;
+
             memcpy(g_node_list[g_node_count].state, new_state, sizeof(float) * ROBOT_DOF);
             g_node_list[g_node_count].parent_index = nearest_idx;
 
@@ -123,4 +164,24 @@ bool run_rrt_search(const float* start_state, const float* goal_state, float** p
 
     ESP_LOGE(TAG, "RRT failed to find a path.");
     return false;
+}
+
+void planner_add_obstacle(float x, float y, float z, float radius) {
+    for (int i = 0; i < MAX_OBSTACLES; i++) {
+        if (!g_obstacles[i].active) {
+            g_obstacles[i].center = (Point3D){x, y, z};
+            g_obstacles[i].radius = radius;
+            g_obstacles[i].active = true;
+            ESP_LOGI(TAG, "Obstacle added at (%.2f, %.2f, %.2f) R=%.2f", x, y, z, radius);
+            return;
+        }
+    }
+    ESP_LOGE(TAG, "Obstacle registry full!");
+}
+
+void planner_clear_obstacles(void) {
+    for (int i = 0; i < MAX_OBSTACLES; i++) {
+        g_obstacles[i].active = false;
+    }
+    ESP_LOGI(TAG, "All obstacles cleared.");
 }

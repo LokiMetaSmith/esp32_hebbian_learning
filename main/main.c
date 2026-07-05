@@ -827,6 +827,24 @@ int cmd_export_states(int argc, char **argv) {
     return 0;
 }
 
+int cmd_add_obstacle(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&add_obstacle_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, add_obstacle_args.end, argv[0]);
+        return 1;
+    }
+    planner_add_obstacle((float)add_obstacle_args.x->dval[0],
+                         (float)add_obstacle_args.y->dval[0],
+                         (float)add_obstacle_args.z->dval[0],
+                         (float)add_obstacle_args.radius->dval[0]);
+    return 0;
+}
+
+int cmd_clear_obstacles(int argc, char **argv) {
+    planner_clear_obstacles();
+    return 0;
+}
+
 int cmd_import_states(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&import_states_args);
     if (nerrors != 0) {
