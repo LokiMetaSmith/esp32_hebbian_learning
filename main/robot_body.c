@@ -6,6 +6,7 @@
 #include "synsense_driver.h"
 #include "omni_base.h"
 #include "sim_physics.h"
+#include "nvs_storage.h"
 #include "esp_timer.h"
 #include <math.h>
 
@@ -48,6 +49,11 @@ static uint16_t get_corrected_position(uint8_t servo_id, uint16_t commanded_pos)
 
 esp_err_t body_init(void) {
     ESP_LOGI(TAG, "Initializing Robot Body...");
+
+    // Load actuator parameters from NVS if available
+    if (load_actuator_params_from_nvs(&g_actuator_gain, &g_actuator_offset) != ESP_OK) {
+        ESP_LOGI(TAG, "No actuator params in NVS, using defaults.");
+    }
 
 #ifdef SIMULATE_PHYSICS
     #ifdef ROBOT_TYPE_ARM
@@ -292,4 +298,5 @@ void body_set_actuator_params(float gain, float offset) {
     g_actuator_gain = gain;
     g_actuator_offset = offset;
     ESP_LOGI(TAG, "Actuator params updated: Gain=%.4f, Offset=%.4f", gain, offset);
+    save_actuator_params_to_nvs(gain, offset);
 }
