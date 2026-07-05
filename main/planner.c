@@ -1,7 +1,6 @@
 #include "planner.h"
 #include "robot_body.h"
 #include "inter_esp_comm.h"
-#include "inter_esp_comm.h"
 #include "esp_log.h"
 
 #if __has_include("generated_gestures.h")
@@ -94,6 +93,47 @@ static float heuristic_cost(int token_id, const float* goal_pose) {
     return embedding_distance(token->embedding, goal_pose);
 }
 
+// --- Interpolation Utilities ---
+
+/**
+ * @brief Calculates a cubic Hermite spline interpolation for a single DOF.
+ * @param p0 Start position
+ * @param v0 Start velocity
+ * @param p1 End position
+ * @param v1 End velocity
+ * @param t Normalized time [0, 1]
+ * @param dt Real-time duration of the segment in seconds
+ * @return Interpolated position
+ */
+static float calculate_hermite_spline(float p0, float v0, float p1, float v1, float t, float dt) {
+    float t2 = t * t;
+    float t3 = t2 * t;
+
+    // Hermite basis functions
+    float h00 = 2.0f * t3 - 3.0f * t2 + 1.0f;
+    float h10 = t3 - 2.0f * t2 + t;
+    float h01 = -2.0f * t3 + 3.0f * t2;
+    float h11 = t3 - t2;
+
+    // Scale velocities by the segment duration
+    float m0 = v0 * dt;
+    float m1 = v1 * dt;
+
+    return h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1;
+}
+
+/**
+ * @brief Calculates a linear interpolation for a single DOF.
+ * @param a Start value
+ * @param b End value
+ * @param t Normalized time [0, 1]
+ * @return Interpolated value
+ */
+static float calculate_linear_interpolation(float a, float b, float t) {
+    return a + (b - a) * t;
+}
+
+
 static void reconstruct_and_execute_path(int came_from[], int current_token_id) {
     ESP_LOGI(TAG, "A* search successful! Reconstructing and executing path.");
     int path[MAX_GESTURE_TOKENS];
@@ -104,22 +144,66 @@ static void reconstruct_and_execute_path(int came_from[], int current_token_id) 
         temp_id = came_from[temp_id];
     }
 
+    float last_positions[ROBOT_DOF] = {0};
+    float last_velocities[ROBOT_DOF] = {0};
+
+    // Initialize from current state
+    float current_state[64];
+    body_sense(current_state);
+
+    #ifdef ROBOT_TYPE_ARM
+    // Find where servos start in the state vector.
+    for (int d = 0; d < ROBOT_DOF; d++) {
+        // body_sense returns 0..1, action_vector/waypoints expect -1..1
+        last_positions[d] = current_state[NUM_ACCEL_GYRO_PARAMS + d * NUM_SERVO_FEEDBACK_PARAMS] * 2.0f - 1.0f;
+        last_velocities[d] = 0.0f; // Initial velocity assumed zero
+    }
+    #else
+    // For OMNI_BASE, start from zero velocity
+    for (int d = 0; d < ROBOT_DOF; d++) {
+        last_velocities[d] = 0.0f;
+    }
+    #endif
+
+    const float segment_duration = 0.050f; // 50ms between waypoints
+    const int num_sub_steps = 5;
+    const int sub_step_ms = 10;
+
     // Execute path in reverse order (from start to goal)
     for (int i = path_len - 1; i >= 0; i--) {
         GestureToken* token = &g_gesture_graph.gesture_library[path[i]];
         ESP_LOGI(TAG, "Executing gesture token %d with %d waypoints.", token->id, token->num_waypoints);
+
         for (int j = 0; j < token->num_waypoints; j++) {
-            // NOTE: This is a simplified execution.
-            float action_vector[32] = {0};
+            GestureWaypoint* wp = &token->waypoints[j];
 
+            for (int step = 1; step <= num_sub_steps; step++) {
+                float t = (float)step / (float)num_sub_steps;
+                float action_vector[32] = {0};
+
+                #ifdef ROBOT_TYPE_ARM
+                for (int d = 0; d < ROBOT_DOF; d++) {
+                    action_vector[d] = calculate_hermite_spline(last_positions[d], last_velocities[d],
+                                                                wp->positions[d], wp->velocities[d],
+                                                                t, segment_duration);
+                }
+                #else
+                for (int d = 0; d < ROBOT_DOF; d++) {
+                    action_vector[d] = calculate_linear_interpolation(last_velocities[d], wp->velocities[d], t);
+                }
+                #endif
+
+                body_act(action_vector);
+                vTaskDelay(pdMS_TO_TICKS(sub_step_ms));
+            }
+
+            // Update last state for next interpolation segment
             #ifdef ROBOT_TYPE_ARM
-            memcpy(action_vector, token->waypoints[j].positions, sizeof(float) * ROBOT_DOF);
+            memcpy(last_positions, wp->positions, sizeof(float) * ROBOT_DOF);
+            memcpy(last_velocities, wp->velocities, sizeof(float) * ROBOT_DOF);
             #else
-            memcpy(action_vector, token->waypoints[j].velocities, sizeof(float) * ROBOT_DOF);
+            memcpy(last_velocities, wp->velocities, sizeof(float) * ROBOT_DOF);
             #endif
-
-            body_act(action_vector);
-            vTaskDelay(pdMS_TO_TICKS(50)); // Delay between waypoints
         }
     }
 }
