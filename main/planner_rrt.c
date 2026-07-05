@@ -104,6 +104,10 @@ bool run_rrt_search(const float* start_state, const float* goal_state, float** p
 
                 *path_len = count;
                 *path_out = malloc(sizeof(float) * ROBOT_DOF * count);
+                if (*path_out == NULL) {
+                    ESP_LOGE(TAG, "Failed to allocate memory for RRT path.");
+                    return false;
+                }
 
                 curr = g_node_count;
                 for (int p = count - 1; p >= 0; p--) {
