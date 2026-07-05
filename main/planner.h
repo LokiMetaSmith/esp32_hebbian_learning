@@ -60,6 +60,16 @@ typedef struct {
 
 // --- Planner Function Prototypes ---
 
+/**
+ * @brief Performs an RRT search to find a path in the configuration space.
+ * @param start_state The starting state vector.
+ * @param goal_state The target state vector.
+ * @param path_out Output pointer for the generated path. Must be freed by caller.
+ * @param path_len Output pointer for the number of waypoints in the path.
+ * @return true if a path was found, false otherwise.
+ */
+bool run_rrt_search(const float* start_state, const float* goal_state, float** path_out, int* path_len);
+
 /** @brief The main FreeRTOS task for the motion planner. */
 void planner_task(void *pvParameters);
 
