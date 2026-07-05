@@ -33,7 +33,9 @@ static const char *TAG = "PLANNER";
 // --- Global Planner State ---
 static TaskHandle_t g_planner_task_handle = NULL;
 static float g_goal_pose[HIDDEN_NEURONS];
+static float g_goal_joints[ROBOT_DOF];
 static bool g_new_goal_set = false;
+static bool g_goal_is_joints = false;
 static SemaphoreHandle_t g_planner_idle_semaphore = NULL;
 
 // --- A* Search Implementation ---
@@ -258,52 +260,76 @@ void planner_task(void *pvParameters) {
         if (g_new_goal_set) {
             planner_wait_for_idle(); // Wait until the semaphore is available
             g_new_goal_set = false;
-            ESP_LOGI(TAG, "New goal embedding received. Finding closest gesture token.");
 
-            int best_token_id = -1;
-            float min_dist = INFINITY;
-
-            for (int i = 0; i < g_gesture_graph.num_tokens; i++) {
-                float dist = embedding_distance(g_goal_pose, g_gesture_graph.gesture_library[i].embedding);
-                if (dist < min_dist) {
-                    min_dist = dist;
-                    best_token_id = i;
+            if (g_goal_is_joints) {
+                ESP_LOGI(TAG, "New joint goal received. Using RRT to find path.");
+                float start_state[ROBOT_DOF];
+                float current_full_state[64];
+                body_sense(current_full_state);
+                #ifdef ROBOT_TYPE_ARM
+                for (int d = 0; d < ROBOT_DOF; d++) {
+                    start_state[d] = current_full_state[NUM_ACCEL_GYRO_PARAMS + d * NUM_SERVO_FEEDBACK_PARAMS] * 2.0f - 1.0f;
                 }
-            }
+                #endif
 
-            if (best_token_id != -1) {
-                ESP_LOGI(TAG, "Closest gesture token found: %d. Starting A* search.", best_token_id);
-                // For now, we'll assume the start token is always 0.
-                if (!run_astar_search(0, best_token_id)) {
-                    ESP_LOGW(TAG, "A* search failed. Falling back to RRT search.");
-
-                    float start_state[ROBOT_DOF] = {0};
-                    float current_full_state[64];
-                    body_sense(current_full_state);
-                    #ifdef ROBOT_TYPE_ARM
-                    for (int d = 0; d < ROBOT_DOF; d++) {
-                        start_state[d] = current_full_state[NUM_ACCEL_GYRO_PARAMS + d * NUM_SERVO_FEEDBACK_PARAMS] * 2.0f - 1.0f;
+                float* rrt_path = NULL;
+                int rrt_path_len = 0;
+                if (run_rrt_search(start_state, g_goal_joints, &rrt_path, &rrt_path_len)) {
+                    ESP_LOGI(TAG, "RRT found path with %d points. Executing...", rrt_path_len);
+                    for (int k = 0; k < rrt_path_len; k++) {
+                        body_act(rrt_path + k * ROBOT_DOF);
+                        vTaskDelay(pdMS_TO_TICKS(50));
                     }
-                    #endif
-
-                    float goal_state[ROBOT_DOF] = {0};
-                    // Simplified: Map goal embedding back to state vector space
-                    // For now, use the centroid of the best token as a target state
-                    memcpy(goal_state, g_gesture_graph.gesture_library[best_token_id].waypoints[0].positions, sizeof(float) * ROBOT_DOF);
-
-                    float* rrt_path = NULL;
-                    int rrt_path_len = 0;
-                    if (run_rrt_search(start_state, goal_state, &rrt_path, &rrt_path_len)) {
-                        ESP_LOGI(TAG, "RRT found path with %d points. Executing...", rrt_path_len);
-                        for (int k = 0; k < rrt_path_len; k++) {
-                            body_act(rrt_path + k * ROBOT_DOF);
-                            vTaskDelay(pdMS_TO_TICKS(50));
-                        }
-                        free(rrt_path);
-                    }
+                    free(rrt_path);
                 }
             } else {
-                ESP_LOGE(TAG, "Could not find a suitable gesture token for the given embedding.");
+                ESP_LOGI(TAG, "New goal embedding received. Finding closest gesture token.");
+
+                int best_token_id = -1;
+                float min_dist = INFINITY;
+
+                for (int i = 0; i < g_gesture_graph.num_tokens; i++) {
+                    float dist = embedding_distance(g_goal_pose, g_gesture_graph.gesture_library[i].embedding);
+                    if (dist < min_dist) {
+                        min_dist = dist;
+                        best_token_id = i;
+                    }
+                }
+
+                if (best_token_id != -1) {
+                    ESP_LOGI(TAG, "Closest gesture token found: %d. Starting A* search.", best_token_id);
+                    // For now, we'll assume the start token is always 0.
+                    if (!run_astar_search(0, best_token_id)) {
+                        ESP_LOGW(TAG, "A* search failed. Falling back to RRT search.");
+
+                        float start_state[ROBOT_DOF] = {0};
+                        float current_full_state[64];
+                        body_sense(current_full_state);
+                        #ifdef ROBOT_TYPE_ARM
+                        for (int d = 0; d < ROBOT_DOF; d++) {
+                            start_state[d] = current_full_state[NUM_ACCEL_GYRO_PARAMS + d * NUM_SERVO_FEEDBACK_PARAMS] * 2.0f - 1.0f;
+                        }
+                        #endif
+
+                        float goal_state[ROBOT_DOF] = {0};
+                        // Simplified: Map goal embedding back to state vector space
+                        // For now, use the centroid of the best token as a target state
+                        memcpy(goal_state, g_gesture_graph.gesture_library[best_token_id].waypoints[0].positions, sizeof(float) * ROBOT_DOF);
+
+                        float* rrt_path = NULL;
+                        int rrt_path_len = 0;
+                        if (run_rrt_search(start_state, goal_state, &rrt_path, &rrt_path_len)) {
+                            ESP_LOGI(TAG, "RRT found path with %d points. Executing...", rrt_path_len);
+                            for (int k = 0; k < rrt_path_len; k++) {
+                                body_act(rrt_path + k * ROBOT_DOF);
+                                vTaskDelay(pdMS_TO_TICKS(50));
+                            }
+                            free(rrt_path);
+                        }
+                    }
+                } else {
+                    ESP_LOGE(TAG, "Could not find a suitable gesture token for the given embedding.");
+                }
             }
             planner_signal_idle(); // Signal that the plan is complete
         }
@@ -321,7 +347,15 @@ void planner_init(void) {
 static void planner_set_goal_common(const float* target_pose) {
     memcpy(g_goal_pose, target_pose, sizeof(float) * HIDDEN_NEURONS);
     g_new_goal_set = true;
-    ESP_LOGI(TAG, "Goal set.");
+    g_goal_is_joints = false;
+    ESP_LOGI(TAG, "Goal embedding set.");
+}
+
+void planner_set_goal_joints(const float* target_joints) {
+    memcpy(g_goal_joints, target_joints, sizeof(float) * ROBOT_DOF);
+    g_new_goal_set = true;
+    g_goal_is_joints = true;
+    ESP_LOGI(TAG, "Goal joints set.");
 }
 
 void planner_set_goal_internal(const float* target_pose) {

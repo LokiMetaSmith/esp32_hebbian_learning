@@ -27,6 +27,13 @@ struct set_mode_args_t {
     struct arg_int *mode;
     struct arg_end *end;
 };
+
+struct ik_move_args_t {
+    struct arg_dbl *x;
+    struct arg_dbl *y;
+    struct arg_dbl *z;
+    struct arg_end *end;
+};
 extern struct set_mode_args_t set_mode_args;
 
 struct rw_set_params_args_t {

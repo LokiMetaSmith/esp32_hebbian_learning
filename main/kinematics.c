@@ -1,5 +1,6 @@
 #include "kinematics.h"
 #include <math.h>
+#include <string.h>
 
 // Forward Kinematics for a 6-DOF Robotic Arm (SO100 style)
 // Simplified DH-like parameters for an arm with 6 joints
@@ -50,4 +51,56 @@ void kinematics_get_joint_positions(const float* angles, Point3D* joint_position
     joint_positions[3].x = joint_positions[2].x + LINK3_LEN * cosf(q[0]) * cosf(pitch_sum);
     joint_positions[3].y = joint_positions[2].y + LINK3_LEN * sinf(q[0]) * cosf(pitch_sum);
     joint_positions[3].z = joint_positions[2].z + LINK3_LEN * sinf(pitch_sum);
+}
+
+/**
+ * @brief Simple Numerical IK solver using Gradient Descent.
+ */
+bool kinematics_inverse(Point3D target, const float* initial_angles, float* out_angles) {
+    float current_angles[6];
+    memcpy(current_angles, initial_angles, sizeof(float) * 6);
+
+    const float step_size = 0.2f; // Increased step size
+    const float epsilon = 1e-4f;
+    const int max_iter = 1000; // More iterations
+
+    for (int iter = 0; iter < max_iter; iter++) {
+        Point3D joints[4];
+        kinematics_get_joint_positions(current_angles, joints);
+        Point3D ee = joints[3];
+
+        float dx = target.x - ee.x;
+        float dy = target.y - ee.y;
+        float dz = target.z - ee.z;
+        float error = sqrtf(dx*dx + dy*dy + dz*dz);
+
+        if (error < 0.005f) { // 5mm tolerance
+            memcpy(out_angles, current_angles, sizeof(float) * 6);
+            return true;
+        }
+
+        // Numerical Jacobian approximation for 3 main joints (Base, Shoulder, Elbow)
+        for (int j = 0; j < 3; j++) {
+            float temp_angles[6];
+            memcpy(temp_angles, current_angles, sizeof(float) * 6);
+            temp_angles[j] += epsilon;
+
+            Point3D joints_eps[4];
+            kinematics_get_joint_positions(temp_angles, joints_eps);
+            Point3D ee_eps = joints_eps[3];
+
+            float dedq_x = (ee_eps.x - ee.x) / epsilon;
+            float dedq_y = (ee_eps.y - ee.y) / epsilon;
+            float dedq_z = (ee_eps.z - ee.z) / epsilon;
+
+            // Gradient descent step: q = q + step * (J^T * error)
+            current_angles[j] += step_size * (dedq_x * dx + dedq_y * dy + dedq_z * dz);
+
+            // Clamp to -1..1
+            if (current_angles[j] > 1.0f) current_angles[j] = 1.0f;
+            if (current_angles[j] < -1.0f) current_angles[j] = -1.0f;
+        }
+    }
+
+    return false; // Convergence failed
 }
