@@ -883,7 +883,11 @@ int cmd_import_states(int argc, char **argv) {
     printf("Successfully imported %d state tokens.\n", num_centroids);
     cJSON_Delete(root);
 
-    // TODO: Add NVS saving for the state tokens
+    if (save_state_tokens_to_nvs(g_state_token_centroids, g_state_token_embeddings) == ESP_OK) {
+        printf("State tokens saved to NVS.\n");
+    } else {
+        printf("Error: Failed to save state tokens to NVS.\n");
+    }
 
     return 0;
 }

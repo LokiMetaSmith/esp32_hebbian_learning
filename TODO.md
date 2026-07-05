@@ -54,7 +54,7 @@ This phase focuses on extending the architecture to support a coordinated omni-d
     *   **Description:** Re-cluster state space based on dissonance.
     *   **Status:** `nanobot` tool streams dissonance. Server performs K-Means and updates centroids via `import_centroids`.
 
-*   **[TODO] Sub-task: NVS Persistence**
+*   **[DONE] Sub-task: NVS Persistence**
     *   **Description:** Save the learned Actuator Params and Centroids to NVS so they persist across reboots.
 
 ## Phase 3: Future Enhancements (Not Started)

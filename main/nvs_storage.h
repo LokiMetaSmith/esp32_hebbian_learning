@@ -103,5 +103,21 @@ esp_err_t save_state_tokens_to_nvs(const float centroids[NUM_STATE_TOKENS][STATE
  */
 esp_err_t load_state_tokens_from_nvs(float centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM], float embeddings[NUM_STATE_TOKENS][HIDDEN_NEURONS]);
 
+/**
+ * @brief Saves the actuator calibration parameters to NVS.
+ * @param gain The gain correction factor.
+ * @param offset The offset correction factor.
+ * @return esp_err_t Result of the operation.
+ */
+esp_err_t save_actuator_params_to_nvs(float gain, float offset);
+
+/**
+ * @brief Loads the actuator calibration parameters from NVS.
+ * @param gain Pointer to store the loaded gain.
+ * @param offset Pointer to store the loaded offset.
+ * @return esp_err_t Result of the operation.
+ */
+esp_err_t load_actuator_params_from_nvs(float *gain, float *offset);
+
 
 #endif // NVS_STORAGE_H

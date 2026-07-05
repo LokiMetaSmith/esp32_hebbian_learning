@@ -57,6 +57,46 @@ cleanup:
     return err;
 }
 
+esp_err_t save_actuator_params_to_nvs(float gain, float offset) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) return err;
+
+    err = nvs_set_blob(nvs_handle, "act_gain", &gain, sizeof(float));
+    if (err == ESP_OK) {
+        err = nvs_set_blob(nvs_handle, "act_offset", &offset, sizeof(float));
+    }
+
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs_handle);
+    }
+
+    nvs_close(nvs_handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Actuator parameters saved to NVS.");
+    }
+    return err;
+}
+
+esp_err_t load_actuator_params_from_nvs(float *gain, float *offset) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) return err;
+
+    size_t size = sizeof(float);
+    err = nvs_get_blob(nvs_handle, "act_gain", gain, &size);
+    if (err == ESP_OK) {
+        size = sizeof(float);
+        err = nvs_get_blob(nvs_handle, "act_offset", offset, &size);
+    }
+
+    nvs_close(nvs_handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Actuator parameters loaded from NVS.");
+    }
+    return err;
+}
+
 esp_err_t save_state_tokens_to_nvs(const float centroids[NUM_STATE_TOKENS][STATE_VECTOR_DIM], const float embeddings[NUM_STATE_TOKENS][HIDDEN_NEURONS]) {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
