@@ -1,6 +1,7 @@
 #include "planner.h"
 #include "robot_body.h"
 #include "inter_esp_comm.h"
+#include "kinematics.h"
 #include "esp_log.h"
 
 #if __has_include("generated_gestures.h")
@@ -135,6 +136,41 @@ static float calculate_linear_interpolation(float a, float b, float t) {
     return a + (b - a) * t;
 }
 
+// --- Reactive Obstacle Avoidance (APF) ---
+
+typedef struct {
+    Point3D center;
+    float radius;
+    bool active;
+} Obstacle;
+extern Obstacle g_obstacles[10]; // Shared with planner_rrt.c
+
+/**
+ * @brief Calculates a repulsive "nudge" for the end-effector based on nearby obstacles.
+ */
+static void calculate_repulsive_force(const Point3D ee, float* nudge_x, float* nudge_y, float* nudge_z) {
+    *nudge_x = 0; *nudge_y = 0; *nudge_z = 0;
+    const float k_rep = 0.05f; // Repulsion gain
+    const float d_limit = 0.15f; // Max distance for influence
+
+    for (int i = 0; i < 10; i++) {
+        if (!g_obstacles[i].active) continue;
+
+        float dx = ee.x - g_obstacles[i].center.x;
+        float dy = ee.y - g_obstacles[i].center.y;
+        float dz = ee.z - g_obstacles[i].center.z;
+        float d2 = dx*dx + dy*dy + dz*dz;
+        float d = sqrtf(d2);
+
+        if (d < d_limit && d > 0.01f) {
+            float force = k_rep * (1.0f/d - 1.0f/d_limit) / (d2);
+            *nudge_x += (dx / d) * force;
+            *nudge_y += (dy / d) * force;
+            *nudge_z += (dz / d) * force;
+        }
+    }
+}
+
 
 static void reconstruct_and_execute_path(int came_from[], int current_token_id) {
     ESP_LOGI(TAG, "A* search successful! Reconstructing and executing path.");
@@ -189,6 +225,21 @@ static void reconstruct_and_execute_path(int came_from[], int current_token_id) 
                                                                 wp->positions[d], wp->velocities[d],
                                                                 t, segment_duration);
                 }
+
+                // --- APF Reactive Nudge ---
+                Point3D joints[4];
+                kinematics_get_joint_positions(action_vector, joints);
+                Point3D ee = joints[3];
+                float nx, ny, nz;
+                calculate_repulsive_force(ee, &nx, &ny, &nz);
+                if (nx != 0 || ny != 0 || nz != 0) {
+                    float nudged_angles[6];
+                    Point3D nudged_ee = {ee.x + nx, ee.y + ny, ee.z + nz};
+                    if (kinematics_inverse(nudged_ee, action_vector, nudged_angles)) {
+                        memcpy(action_vector, nudged_angles, sizeof(float) * 6);
+                    }
+                }
+
                 #else
                 for (int d = 0; d < ROBOT_DOF; d++) {
                     action_vector[d] = calculate_linear_interpolation(last_velocities[d], wp->velocities[d], t);
