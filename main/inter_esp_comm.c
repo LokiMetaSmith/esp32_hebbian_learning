@@ -8,6 +8,8 @@
 
 static const char *TAG = "INTER_ESP";
 
+PeerStatus_t g_peer_status = {0};
+
 // Broadcast address
 static uint8_t broadcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
@@ -32,6 +34,13 @@ static void on_data_recv(const esp_now_recv_info_t * info, const uint8_t *data, 
             break;
         case MSG_TYPE_CURRENT_STATE:
             // Handle state update
+            break;
+        case MSG_TYPE_STATUS_UPDATE:
+            g_peer_status.stress_level = msg->stress_level;
+            g_peer_status.vision_class = msg->vision_class;
+            g_peer_status.last_seen_ms = esp_timer_get_time() / 1000;
+            g_peer_status.active = true;
+            ESP_LOGD(TAG, "Received peer status: Stress=%.2f, Vision=%d", msg->stress_level, msg->vision_class);
             break;
         default:
             break;
@@ -68,10 +77,21 @@ esp_err_t inter_esp_comm_init(void) {
 
 esp_err_t inter_esp_send_goal(const float* embedding) {
     InterEspMessage_t msg;
+    memset(&msg, 0, sizeof(msg));
     msg.type = MSG_TYPE_GOAL_EMBEDDING;
     msg.source_id = 0; // Default to 0 for now
     msg.data_len = HIDDEN_NEURONS;
     memcpy(msg.data, embedding, sizeof(float) * HIDDEN_NEURONS);
+
+    return esp_now_send(broadcast_mac, (uint8_t *)&msg, sizeof(msg));
+}
+
+esp_err_t inter_esp_send_status(float stress, uint8_t vision_class) {
+    InterEspMessage_t msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.type = MSG_TYPE_STATUS_UPDATE;
+    msg.stress_level = stress;
+    msg.vision_class = vision_class;
 
     return esp_now_send(broadcast_mac, (uint8_t *)&msg, sizeof(msg));
 }
