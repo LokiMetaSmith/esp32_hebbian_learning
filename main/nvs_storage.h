@@ -11,6 +11,7 @@
 
 #include "main.h" // Include main header to get network struct definitions
 #include "esp_err.h"
+#include "snn_lsm.h"
 
 // Forward declaration to avoid circular dependency if main.h includes this file.
 struct HiddenLayer;
@@ -118,6 +119,20 @@ esp_err_t save_actuator_params_to_nvs(float gain, float offset);
  * @return esp_err_t Result of the operation.
  */
 esp_err_t load_actuator_params_from_nvs(float *gain, float *offset);
+
+/**
+ * @brief Saves the SNN readout weights to NVS.
+ * @param lsm Pointer to the LSM structure.
+ * @return esp_err_t Result of the operation.
+ */
+esp_err_t save_snn_weights_to_nvs(const snn_lsm_t *lsm);
+
+/**
+ * @brief Loads the SNN readout weights from NVS.
+ * @param lsm Pointer to the LSM structure.
+ * @return esp_err_t Result of the operation.
+ */
+esp_err_t load_snn_weights_from_nvs(snn_lsm_t *lsm);
 
 
 #endif // NVS_STORAGE_H

@@ -687,9 +687,27 @@ void learning_loop_task(void *pvParameters) {
             snn_inputs[0] = g_last_prediction_error;
             snn_inputs[1] = current_draw / (NUM_SERVOS * 2.0f); // Normalized Current
             snn_inputs[2] = state_change_magnitude;
-            snn_inputs[3] = fabsf(combined_input[0]); // Accel X
-            snn_inputs[4] = fabsf(combined_input[1]); // Accel Y
-            snn_inputs[5] = fabsf(combined_input[2]); // Accel Z
+
+            // Proximity Sensor simulation for SNN
+            float min_dist = 1.0f;
+            #ifdef ROBOT_TYPE_ARM
+            Point3D joints[4];
+            kinematics_get_joint_positions(combined_input + PRED_NEURONS, joints); // Use last action
+            for(int i=0; i<10; i++) {
+                extern Obstacle g_obstacles[10];
+                if(!g_obstacles[i].active) continue;
+                for(int j=0; j<4; j++) {
+                    float dx = joints[j].x - g_obstacles[i].center.x;
+                    float dy = joints[j].y - g_obstacles[i].center.y;
+                    float dz = joints[j].z - g_obstacles[i].center.z;
+                    float d = sqrtf(dx*dx + dy*dy + dz*dz) - g_obstacles[i].radius;
+                    if(d < min_dist) min_dist = d;
+                }
+            }
+            #endif
+            snn_inputs[3] = 1.0f - fmaxf(0, fminf(1.0f, min_dist / 0.2f)); // Proximity Signal (1 = close)
+            snn_inputs[4] = fabsf(combined_input[0]); // Accel X
+            snn_inputs[5] = fabsf(combined_input[1]); // Accel Y
 
             snn_lsm_forward(&g_lsm, snn_inputs);
             snn_lsm_stdp_update(&g_lsm);
@@ -1078,6 +1096,7 @@ void app_main(void) {
     mcp_server_init();
     inter_esp_comm_init();
     snn_lsm_init(&g_lsm);
+    load_snn_weights_from_nvs(&g_lsm);
     
     planner_init();
     behavior_init();
