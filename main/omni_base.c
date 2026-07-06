@@ -1,5 +1,6 @@
 #include "omni_base.h"
 #include "esp_log.h"
+#include "driver/ledc.h"
 #include <math.h>
 
 static const char *TAG = "OMNI_BASE";
@@ -13,10 +14,37 @@ static const char *TAG = "OMNI_BASE";
 // Assuming 4 PWM channels
 #define MOTOR_PWM_MAX 100.0f // Duty cycle percentage or similar
 
+#define LEDC_TIMER              LEDC_TIMER_0
+#define LEDC_MODE               LEDC_LOW_SPEED_MODE
+#define LEDC_DUTY_RES           LEDC_TIMER_13_BIT
+#define LEDC_FREQUENCY          (5000)
+
+static const int motor_pins[] = {GPIO_NUM_10, GPIO_NUM_11, GPIO_NUM_12, GPIO_NUM_13};
+
 void omni_base_init(void) {
-    ESP_LOGI(TAG, "Initializing Omni-directional Base...");
-    // Initialize motor drivers (e.g., PWM, I2C)
-    // Example: ledc_timer_config_t ...
+    ESP_LOGI(TAG, "Initializing Omni-directional Base (LEDC PWM)...");
+
+    ledc_timer_config_t ledc_timer = {
+        .speed_mode       = LEDC_MODE,
+        .timer_num        = LEDC_TIMER,
+        .duty_resolution  = LEDC_DUTY_RES,
+        .freq_hz          = LEDC_FREQUENCY,
+        .clk_cfg          = LEDC_AUTO_CLK
+    };
+    ESP_ERROR_CHECK(ledc_timer_config(&ledc_timer));
+
+    for (int i = 0; i < 4; i++) {
+        ledc_channel_config_t ledc_channel = {
+            .speed_mode     = LEDC_MODE,
+            .channel        = (ledc_channel_t)i,
+            .timer_sel      = LEDC_TIMER,
+            .intr_type      = LEDC_INTR_DISABLE,
+            .gpio_num       = motor_pins[i],
+            .duty           = 0,
+            .hpoint         = 0
+        };
+        ESP_ERROR_CHECK(ledc_channel_config(&ledc_channel));
+    }
 }
 
 void omni_base_set_velocity(const float* velocities) {
@@ -47,7 +75,14 @@ void omni_base_set_velocity(const float* velocities) {
 
     ESP_LOGI(TAG, "Motor Commands (rad/s): FL=%.2f, FR=%.2f, RL=%.2f, RR=%.2f", w1, w2, w3, w4);
 
-    // TODO: Send to hardware
+    float wheel_speeds[] = {w1, w2, w3, w4};
+    for (int i = 0; i < 4; i++) {
+        // Map rad/s to PWM duty cycle
+        // Simplified: Assume 0..20 rad/s maps to 0..8191 duty
+        uint32_t duty = (uint32_t)(fminf(fabsf(wheel_speeds[i]), 20.0f) / 20.0f * 8191.0f);
+        ledc_set_duty(LEDC_MODE, (ledc_channel_t)i, duty);
+        ledc_update_duty(LEDC_MODE, (ledc_channel_t)i);
+    }
 }
 
 void omni_base_set_torque(const float* torques) {

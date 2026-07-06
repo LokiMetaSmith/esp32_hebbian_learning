@@ -107,6 +107,10 @@ uint8_t synsense_get_classification(void) {
     return g_classification_index;
 }
 
+void synsense_set_mock_classification(uint8_t c) {
+    g_classification_index = c;
+}
+
 float synsense_get_event_rate(void) {
     return (float)g_classification_index;
 }

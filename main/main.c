@@ -940,6 +940,17 @@ int cmd_get_snn_stats(int argc, char **argv) {
     return 0;
 }
 
+int cmd_set_vision_class(int argc, char **argv) {
+    if (argc < 2) return 1;
+    uint8_t class = atoi(argv[1]);
+    // We need to inject this into the driver state
+    // For simulation, we can just use a global or modify the driver
+    extern void synsense_set_mock_classification(uint8_t c);
+    synsense_set_mock_classification(class);
+    printf("Mock vision classification set to %d\n", class);
+    return 0;
+}
+
 int cmd_import_states(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&import_states_args);
     if (nerrors != 0) {
