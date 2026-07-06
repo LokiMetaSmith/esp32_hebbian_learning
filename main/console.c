@@ -409,6 +409,13 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&ik_move_cmd));
 
+    const esp_console_cmd_t get_snn_stats_cmd = {
+        .command = "get-snn-stats",
+        .help = "Get neuromorphic SNN activity and stress level",
+        .func = &cmd_get_snn_stats,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_snn_stats_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");

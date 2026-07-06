@@ -173,6 +173,7 @@ extern uint8_t g_servo_acceleration;
 extern uint8_t servo_ids[NUM_SERVOS];
 extern float g_best_fitness_achieved;
 extern float g_last_prediction_error;
+extern float g_lsm_stress_level;
 
 void initialize_network(HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl);
 void random_walk_task_fn(void *pvParameters);
