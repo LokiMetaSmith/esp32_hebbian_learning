@@ -682,11 +682,17 @@ void learning_loop_task(void *pvParameters) {
             update_weights_hebbian(combined_input, correctness, current_draw, g_hl, g_ol, g_pl);
             led_indicator_set_color_from_fitness(correctness);
 
+            static long snn_comm_counter = 0;
+            if (++snn_comm_counter % 50 == 0) {
+                save_snn_weights_to_nvs(&g_lsm);
+                inter_esp_send_status(g_lsm_stress_level, synsense_get_classification());
+            }
+
             // --- Neuromorphic Update (Pain/Stress) ---
             float snn_inputs[N_INPUT] = {0};
             snn_inputs[0] = g_last_prediction_error;
             snn_inputs[1] = current_draw / (NUM_SERVOS * 2.0f); // Normalized Current
-            snn_inputs[2] = state_change_magnitude;
+            snn_inputs[2] = g_peer_status.stress_level; // Integrate Peer Stress
 
             // Proximity Sensor simulation for SNN
             float min_dist = 1.0f;
@@ -948,6 +954,18 @@ int cmd_set_vision_class(int argc, char **argv) {
     extern void synsense_set_mock_classification(uint8_t c);
     synsense_set_mock_classification(class);
     printf("Mock vision classification set to %d\n", class);
+    return 0;
+}
+
+int cmd_get_peer_stats(int argc, char **argv) {
+    if (!g_peer_status.active) {
+        printf("No peer robot detected on network.\n");
+        return 0;
+    }
+    printf("--- Peer Robot Status (ESP-NOW) ---\n");
+    printf("Stress Level: %.4f\n", g_peer_status.stress_level);
+    printf("Vision Class: %d\n", g_peer_status.vision_class);
+    printf("Last Seen: %lu ms ago\n", (uint32_t)(esp_timer_get_time()/1000 - g_peer_status.last_seen_ms));
     return 0;
 }
 

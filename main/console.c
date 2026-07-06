@@ -430,6 +430,13 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&set_vision_class_cmd));
 
+    const esp_console_cmd_t get_peer_stats_cmd = {
+        .command = "get-peer-stats",
+        .help = "Show status of the peer robot via ESP-NOW",
+        .func = &cmd_get_peer_stats,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_peer_stats_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");

@@ -5,6 +5,7 @@
 #include "planner.h"
 #include "kinematics.h"
 #include "synsense_driver.h"
+#include "inter_esp_comm.h"
 #include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -77,6 +78,14 @@ static BTStatus condition_sees_object(BTNode* node) {
     uint8_t target_class = (uint8_t)(uintptr_t)node->context;
     uint8_t current_class = synsense_get_classification();
     return (current_class == target_class) ? BT_SUCCESS : BT_FAILURE;
+}
+
+static BTStatus condition_peer_sees_object(BTNode* node) {
+    uint8_t target_class = (uint8_t)(uintptr_t)node->context;
+    if (g_peer_status.active && g_peer_status.vision_class == target_class) {
+        return BT_SUCCESS;
+    }
+    return BT_FAILURE;
 }
 
 static BTStatus action_track_object(BTNode* node) {
@@ -165,13 +174,22 @@ void behavior_init(void) {
     grab_children[3] = close_g;
     BTNode* grab_seq = bt_create_sequence("GrabRedBlockSequence", grab_children, 4);
 
+    // Collaborative Branch
+    BTNode* peer_sees_blue = bt_create_condition("PeerSeesBlue?", condition_peer_sees_object, (void*)2);
+    // Simple response: robot also tracks if peer sees blue
+    BTNode* peer_track = bt_create_action("CollaborativeTrack", action_track_object, NULL);
+    BTNode** collab_children = malloc(sizeof(BTNode*) * 2);
+    collab_children[0] = peer_sees_blue; collab_children[1] = peer_track;
+    BTNode* collab_seq = bt_create_sequence("SwarmSync", collab_children, 2);
+
     // Root Selector
-    BTNode** root_children = malloc(sizeof(BTNode*) * 4);
+    BTNode** root_children = malloc(sizeof(BTNode*) * 5);
     root_children[0] = safety_seq;
     root_children[1] = grab_seq;
-    root_children[2] = task_seq;
-    root_children[3] = idle_act;
-    g_root_node = bt_create_selector("RootSelector", root_children, 4);
+    root_children[2] = collab_seq;
+    root_children[3] = task_seq;
+    root_children[4] = idle_act;
+    g_root_node = bt_create_selector("RootSelector", root_children, 5);
 
     xTaskCreate(behavior_task, "behavior_task", 4096, NULL, 5, &g_behavior_task_handle);
     ESP_LOGI(TAG, "Behavior system initialized and BT created.");
