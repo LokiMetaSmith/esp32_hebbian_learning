@@ -898,6 +898,14 @@ int cmd_ik_move(int argc, char **argv) {
     return 0;
 }
 
+int cmd_get_bt_status(int argc, char **argv) {
+    printf("--- Behavior Tree Status ---\n");
+    // We need to export g_root_node from behavior.c
+    extern BTNode* g_root_node;
+    bt_print(g_root_node, 0);
+    return 0;
+}
+
 int cmd_get_snn_stats(int argc, char **argv) {
     printf("--- Neuromorphic SNN Statistics ---\n");
     printf("LSM Stress Level: %.4f\n", g_lsm_stress_level);
