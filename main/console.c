@@ -416,6 +416,13 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_snn_stats_cmd));
 
+    const esp_console_cmd_t get_bt_status_cmd = {
+        .command = "get-bt-status",
+        .help = "Get the current status of the Behavior Tree",
+        .func = &cmd_get_bt_status,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_bt_status_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");
