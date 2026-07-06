@@ -100,6 +100,11 @@ void planner_set_goal_internal(const float* target_pose);
  */
 void planner_set_goal_network(const float* target_pose);
 
+/**
+ * @brief Sets a target joint state as the goal.
+ */
+void planner_set_goal_joints(const float* target_joints);
+
 /** @brief A forward declaration to break a circular dependency with main.c. */
 void execute_on_robot_arm(const float* action_vector, int arm_id);
 

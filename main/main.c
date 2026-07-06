@@ -845,6 +845,36 @@ int cmd_clear_obstacles(int argc, char **argv) {
     return 0;
 }
 
+int cmd_ik_move(int argc, char **argv) {
+    int nerrors = arg_parse(argc, argv, (void **)&ik_move_args);
+    if (nerrors != 0) {
+        arg_print_errors(stderr, ik_move_args.end, argv[0]);
+        return 1;
+    }
+
+    Point3D target = {(float)ik_move_args.x->dval[0], (float)ik_move_args.y->dval[0], (float)ik_move_args.z->dval[0]};
+
+    float current_full_state[64];
+    body_sense(current_full_state);
+    float start_angles[6];
+    #ifdef ROBOT_TYPE_ARM
+    for (int d = 0; d < 6; d++) {
+        start_angles[d] = current_full_state[NUM_ACCEL_GYRO_PARAMS + d * NUM_SERVO_FEEDBACK_PARAMS] * 2.0f - 1.0f;
+    }
+    #else
+    memset(start_angles, 0, sizeof(start_angles));
+    #endif
+
+    float goal_angles[6];
+    if (kinematics_inverse(target, start_angles, goal_angles)) {
+        printf("IK solution found. Planning move...\n");
+        planner_set_goal_joints(goal_angles);
+    } else {
+        printf("Error: Could not find IK solution for (%.2f, %.2f, %.2f)\n", target.x, target.y, target.z);
+    }
+    return 0;
+}
+
 int cmd_import_states(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&import_states_args);
     if (nerrors != 0) {

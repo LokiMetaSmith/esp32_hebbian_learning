@@ -41,6 +41,7 @@ struct export_states_args_t export_states_args;
 struct import_states_args_t import_states_args;
 struct rw_set_params_args_t rw_set_params_args;
 struct set_mode_args_t set_mode_args;
+struct ik_move_args_t ik_move_args;
 
 static struct {
     struct arg_int *id;
@@ -395,6 +396,18 @@ void initialize_console(void) {
         .func = &cmd_clear_obstacles,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&clear_obstacles_cmd));
+
+    ik_move_args.x = arg_dbl1(NULL, NULL, "<x>", "X coordinate");
+    ik_move_args.y = arg_dbl1(NULL, NULL, "<y>", "Y coordinate");
+    ik_move_args.z = arg_dbl1(NULL, NULL, "<z>", "Z coordinate");
+    ik_move_args.end = arg_end(3);
+    const esp_console_cmd_t ik_move_cmd = {
+        .command = "ik-move",
+        .help = "Move arm to 3D coordinate using IK",
+        .func = &cmd_ik_move,
+        .argtable = &ik_move_args
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&ik_move_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
