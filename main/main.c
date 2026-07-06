@@ -36,6 +36,7 @@ const unsigned char dummy_synsense_config[] = {0xDE, 0xAD, 0xBE, 0xEF};
 #include "inter_esp_comm.h"
 #include "omni_base.h"
 #include "robot_body.h"
+#include "snn_lsm.h"
 
 // --- Application Configuration ---
 
@@ -67,6 +68,10 @@ bool g_learning_loop_active = false;
 bool g_state_learning_active = false;
 // --- Global flag for standalone random walk ---
 bool g_random_walk_active = false;
+
+// --- Neuromorphic State ---
+snn_lsm_t g_lsm;
+float g_lsm_stress_level = 0.0f;
 
 // --- Energy Statistics ---
 EnergyStats g_energy_stats = {0};
@@ -677,6 +682,24 @@ void learning_loop_task(void *pvParameters) {
             update_weights_hebbian(combined_input, correctness, current_draw, g_hl, g_ol, g_pl);
             led_indicator_set_color_from_fitness(correctness);
 
+            // --- Neuromorphic Update (Pain/Stress) ---
+            float snn_inputs[N_INPUT] = {0};
+            snn_inputs[0] = g_last_prediction_error;
+            snn_inputs[1] = current_draw / (NUM_SERVOS * 2.0f); // Normalized Current
+            snn_inputs[2] = state_change_magnitude;
+            snn_inputs[3] = fabsf(combined_input[0]); // Accel X
+            snn_inputs[4] = fabsf(combined_input[1]); // Accel Y
+            snn_inputs[5] = fabsf(combined_input[2]); // Accel Z
+
+            snn_lsm_forward(&g_lsm, snn_inputs);
+            snn_lsm_stdp_update(&g_lsm);
+
+            // Update Stress Level: Average firing rate of output neurons
+            float current_firing = 0;
+            for(int o=0; o<N_OUTPUT; o++) if(g_lsm.spk_out[o]) current_firing += 1.0f;
+            current_firing /= N_OUTPUT;
+            g_lsm_stress_level = 0.9f * g_lsm_stress_level + 0.1f * current_firing;
+
             if (g_network_weights_updated) {
                 if (correctness > g_best_fitness_achieved + MIN_FITNESS_IMPROVEMENT_TO_SAVE) {
                     if (xSemaphoreTake(g_console_mutex, pdMS_TO_TICKS(10)) == pdTRUE) {
@@ -875,6 +898,22 @@ int cmd_ik_move(int argc, char **argv) {
     return 0;
 }
 
+int cmd_get_snn_stats(int argc, char **argv) {
+    printf("--- Neuromorphic SNN Statistics ---\n");
+    printf("LSM Stress Level: %.4f\n", g_lsm_stress_level);
+    printf("Output Firing: [");
+    for (int i = 0; i < N_OUTPUT; i++) {
+        printf("%d%s", g_lsm.spk_out[i], (i == N_OUTPUT - 1) ? "" : ", ");
+    }
+    printf("]\n");
+    printf("Membrane Potentials (Output): [");
+    for (int i = 0; i < N_OUTPUT; i++) {
+        printf("%.2f%s", g_lsm.mem_out[i], (i == N_OUTPUT - 1) ? "" : ", ");
+    }
+    printf("]\n");
+    return 0;
+}
+
 int cmd_import_states(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&import_states_args);
     if (nerrors != 0) {
@@ -1030,6 +1069,7 @@ void app_main(void) {
     initialize_usb_cdc(); // For Feetech slave command interface
     mcp_server_init();
     inter_esp_comm_init();
+    snn_lsm_init(&g_lsm);
     
     planner_init();
     behavior_init();

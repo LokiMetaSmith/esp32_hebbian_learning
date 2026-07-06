@@ -55,7 +55,7 @@ void snn_lsm_init(snn_lsm_t *lsm) {
     // 3. Initialize readout weights (random uniform)
     for (int i = 0; i < N_OUTPUT; i++) {
         for (int j = 0; j < N_RES; j++) {
-            lsm->w_out[i][j] = rand_float() * 0.1f;
+            lsm->w_out[i][j] = rand_float() * 0.5f; // Increased initial readout weights
         }
     }
 }

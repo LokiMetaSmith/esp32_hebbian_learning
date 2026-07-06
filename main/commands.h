@@ -31,5 +31,6 @@ int cmd_start_map_cal(int argc, char **argv);
 int cmd_add_obstacle(int argc, char **argv);
 int cmd_clear_obstacles(int argc, char **argv);
 int cmd_ik_move(int argc, char **argv);
+int cmd_get_snn_stats(int argc, char **argv);
 
 #endif // COMMANDS_H
