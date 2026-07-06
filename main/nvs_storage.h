@@ -128,6 +128,16 @@ esp_err_t load_actuator_params_from_nvs(float *gain, float *offset);
 esp_err_t save_snn_weights_to_nvs(const snn_lsm_t *lsm);
 
 /**
+ * @brief Saves the visual workspace map to NVS.
+ */
+esp_err_t save_workspace_map_to_nvs(const Point3D* targets, int count);
+
+/**
+ * @brief Loads the visual workspace map from NVS.
+ */
+esp_err_t load_workspace_map_from_nvs(Point3D* targets, int count);
+
+/**
  * @brief Loads the SNN readout weights from NVS.
  * @param lsm Pointer to the LSM structure.
  * @return esp_err_t Result of the operation.

@@ -115,6 +115,38 @@ static BTStatus action_close_gripper(BTNode* node) {
     return BT_SUCCESS;
 }
 
+static BTStatus condition_is_touching(BTNode* node) {
+    // Check local stress (SNN detected anomaly) or current spike
+    if (g_lsm_stress_level > 0.15f) return BT_SUCCESS;
+    // Current-based touch detection could be added here
+    return BT_FAILURE;
+}
+
+static BTStatus action_update_map_from_touch(BTNode* node) {
+    uint8_t current_class = synsense_get_classification();
+    if (current_class == 0) return BT_FAILURE;
+
+    float current_angles[6];
+    float full_state[64];
+    body_sense(full_state);
+    #ifdef ROBOT_TYPE_ARM
+    for(int d=0; d<6; d++) current_angles[d] = full_state[NUM_ACCEL_GYRO_PARAMS + d * NUM_SERVO_FEEDBACK_PARAMS] * 2.0f - 1.0f;
+    #endif
+
+    Point3D joints[4];
+    kinematics_get_joint_positions(current_angles, joints);
+    Point3D ee = joints[3];
+
+    ESP_LOGI(TAG, "BT: Haptic feedback! Updating map for class %d to (%.2f, %.2f, %.2f)", current_class, ee.x, ee.y, ee.z);
+    kinematics_update_target(current_class, ee);
+
+    // Save to NVS
+    extern Point3D g_workspace_targets[5];
+    save_workspace_map_to_nvs(g_workspace_targets, 5);
+
+    return BT_SUCCESS;
+}
+
 static BTStatus action_open_gripper(BTNode* node) {
     ESP_LOGI(TAG, "BT: Opening gripper...");
     float action[32] = {0};
@@ -166,13 +198,23 @@ void behavior_init(void) {
     BTNode* sees_red = bt_create_condition("SeesRedBlock?", condition_sees_object, (void*)1);
     BTNode* open_g = bt_create_action("OpenGripper", action_open_gripper, NULL);
     BTNode* track_red = bt_create_action("TrackRed", action_track_object, NULL);
+
+    // Adaptive mapping sub-branch
+    BTNode* is_touching = bt_create_condition("IsTouching?", condition_is_touching, NULL);
+    BTNode* update_map = bt_create_action("UpdateMap", action_update_map_from_touch, NULL);
+    BTNode** haptic_children = malloc(sizeof(BTNode*) * 2);
+    haptic_children[0] = is_touching; haptic_children[1] = update_map;
+    BTNode* haptic_seq = bt_create_sequence("HapticUpdate", haptic_children, 2);
+
     BTNode* close_g = bt_create_action("CloseGripper", action_close_gripper, NULL);
-    BTNode** grab_children = malloc(sizeof(BTNode*) * 4);
+
+    BTNode** grab_children = malloc(sizeof(BTNode*) * 5);
     grab_children[0] = sees_red;
     grab_children[1] = open_g;
     grab_children[2] = track_red;
-    grab_children[3] = close_g;
-    BTNode* grab_seq = bt_create_sequence("GrabRedBlockSequence", grab_children, 4);
+    grab_children[3] = haptic_seq; // Ensure we are touching before closing or update if we felt it
+    grab_children[4] = close_g;
+    BTNode* grab_seq = bt_create_sequence("GrabRedBlockSequence", grab_children, 5);
 
     // Collaborative Branch
     BTNode* peer_sees_blue = bt_create_condition("PeerSeesBlue?", condition_peer_sees_object, (void*)2);
