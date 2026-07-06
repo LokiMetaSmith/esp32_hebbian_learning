@@ -12,6 +12,7 @@
 #include "main.h" // Include main header to get network struct definitions
 #include "esp_err.h"
 #include "snn_lsm.h"
+#include "kinematics.h"
 
 // Forward declaration to avoid circular dependency if main.h includes this file.
 struct HiddenLayer;
