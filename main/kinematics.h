@@ -2,6 +2,7 @@
 #define KINEMATICS_H
 
 #include <stdbool.h>
+#include <stdint.h>
 
 typedef struct {
     float x, y, z;
@@ -30,5 +31,15 @@ bool kinematics_inverse(Point3D target, const float* initial_angles, float* out_
  * @return true if coordinate found.
  */
 bool kinematics_get_target_from_vision(uint8_t class_idx, Point3D* out_pos);
+
+/**
+ * @brief Updates the stored target coordinate for a vision class.
+ */
+void kinematics_update_target(uint8_t class_idx, Point3D new_pos);
+
+/**
+ * @brief Initializes the workspace map from NVS.
+ */
+void kinematics_init_workspace(void);
 
 #endif // KINEMATICS_H

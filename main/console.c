@@ -437,6 +437,13 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_peer_stats_cmd));
 
+    const esp_console_cmd_t get_workspace_map_cmd = {
+        .command = "get-workspace-map",
+        .help = "Show the learned 3D coordinates for vision classes",
+        .func = &cmd_get_workspace_map,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_workspace_map_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");

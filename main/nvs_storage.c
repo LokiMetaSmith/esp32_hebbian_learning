@@ -78,6 +78,38 @@ esp_err_t save_actuator_params_to_nvs(float gain, float offset) {
     return err;
 }
 
+esp_err_t save_workspace_map_to_nvs(const Point3D* targets, int count) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) return err;
+
+    err = nvs_set_blob(nvs_handle, "v_ws_map", targets, sizeof(Point3D) * count);
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs_handle);
+    }
+
+    nvs_close(nvs_handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Workspace map saved to NVS.");
+    }
+    return err;
+}
+
+esp_err_t load_workspace_map_from_nvs(Point3D* targets, int count) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) return err;
+
+    size_t required_size = sizeof(Point3D) * count;
+    err = nvs_get_blob(nvs_handle, "v_ws_map", targets, &required_size);
+
+    nvs_close(nvs_handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Workspace map loaded from NVS.");
+    }
+    return err;
+}
+
 esp_err_t save_snn_weights_to_nvs(const snn_lsm_t *lsm) {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);

@@ -969,6 +969,17 @@ int cmd_get_peer_stats(int argc, char **argv) {
     return 0;
 }
 
+int cmd_get_workspace_map(int argc, char **argv) {
+    printf("--- Visual Workspace Map ---\n");
+    for (int i = 1; i < 5; i++) {
+        Point3D p;
+        if (kinematics_get_target_from_vision(i, &p)) {
+            printf("Class %d: (%.3f, %.3f, %.3f)\n", i, p.x, p.y, p.z);
+        }
+    }
+    return 0;
+}
+
 int cmd_import_states(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&import_states_args);
     if (nerrors != 0) {
