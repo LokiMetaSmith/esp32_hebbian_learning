@@ -107,7 +107,7 @@ bool kinematics_inverse(Point3D target, const float* initial_angles, float* out_
 }
 
 #define WORKSPACE_SIZE 5
-static Point3D g_workspace_targets[WORKSPACE_SIZE] = {
+Point3D g_workspace_targets[WORKSPACE_SIZE] = {
     {0.0f, 0.0f, 0.0f},   // 0: N/A
     {0.25f, 0.10f, 0.05f}, // 1: Red Block
     {0.25f, -0.10f, 0.05f}, // 2: Blue Block

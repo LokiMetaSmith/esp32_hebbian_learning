@@ -50,4 +50,35 @@ The system now supports a 4-wheel Omni-directional/Mecanum base.
 *   **File:** `main/omni_base.c`
 *   **Control:** 3-DOF Velocity (`Vx`, `Vy`, `Omega`).
 *   **Kinematics:** Implements the inverse kinematics to convert the 3-DOF target into 4 individual wheel velocities.
+*   **Hardware Driver:** Uses the ESP32 LEDC (PWM) peripheral at 5kHz for precise motor control.
 *   **Planner Integration:** The Planner logic has been generalized using `ROBOT_DOF` (6 for Arm, 3 for Base) to plan trajectories in the appropriate configuration space.
+
+## 6. Cognitive Decision Making (Behavior Trees)
+
+The robot's high-level logic is organized via a hierarchical Behavior Tree.
+
+*   **File:** `main/behavior_tree.c`, `main/behavior.c`
+*   **Concept:** Replaces complex nested `if` statements with a modular, tick-based engine supporting Sequences, Selectors, Actions, and Conditions.
+*   **Autonomous Logic:**
+    1.  **Safety:** Neuromorphic stress levels from the SNN trigger immediate aborts and "Brace" behaviors.
+    2.  **Visual Tasks:** High-level behaviors driven by Synsense DVS detections.
+    3.  **Haptic Learning:** Verification of visual targets via physical contact detection.
+    4.  **Learning:** Motor babbling and autonomous exploration.
+
+## 7. Neuromorphic Safety & Distributed Fusion
+
+A Spiking Neural Network (LSM) monitors the physical "normalcy" of the robot and coordinates with peers.
+
+*   **File:** `main/snn_lsm.c`, `main/inter_esp_comm.c`
+*   **Fusion:** Integrates local prediction error, current draw, and peer-to-peer stress levels via ESP-NOW.
+*   **Collective Awareness:** Robots share their "pain" (stress) levels, allowing for collaborative safety responses across the swarm.
+
+## 8. Precision Planning & Kinematics
+
+The motion planner supports professional-grade robotic navigation and workspace learning.
+
+*   **File:** `main/planner.c`, `main/kinematics.c`, `main/planner_rrt.c`
+*   **Kinematics:** 6-DOF Forward and Inverse Kinematics (Jacobian-transpose Gradient Descent).
+*   **Interpolation:** Hermite Cubic Splines ensure position and velocity continuity at 100Hz.
+*   **Pathfinding:** RRT (Rapidly-exploring Random Trees) provides a robust fallback for unstructured configuration spaces.
+*   **Obstacle Avoidance:** Artificial Potential Fields (APF) provide real-time reactive "nudges" around defined virtual obstacles.

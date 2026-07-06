@@ -1140,6 +1140,8 @@ void app_main(void) {
     
     planner_init();
     behavior_init();
+    kinematics_init_workspace();
+    start_web_dashboard();
 
     if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
         ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");
