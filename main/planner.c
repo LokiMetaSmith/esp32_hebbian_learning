@@ -430,3 +430,8 @@ void planner_signal_idle(void) {
 void planner_wait_for_idle(void) {
     xSemaphoreTake(g_planner_idle_semaphore, portMAX_DELAY);
 }
+
+bool planner_is_idle(void) {
+    if (uxSemaphoreGetCount(g_planner_idle_semaphore) > 0) return true;
+    return false;
+}

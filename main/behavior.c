@@ -37,6 +37,8 @@ static BTStatus condition_has_goal(BTNode* node) {
     return BT_FAILURE;
 }
 
+extern bool planner_is_idle(void);
+
 static BTStatus action_return_home(BTNode* node) {
     static bool move_started = false;
     if (!move_started) {
@@ -46,13 +48,12 @@ static BTStatus action_return_home(BTNode* node) {
         move_started = true;
         return BT_RUNNING;
     }
-    // Check if move is done
-    // For now, simple delay or poll planner status
-    // (Assuming planner_wait_for_idle is not blocking for the task)
-    // To keep BT non-blocking, we'd need a non-blocking planner check
-    move_started = false;
-    g_has_active_goal = false; // Cancel current task
-    return BT_SUCCESS;
+    if (planner_is_idle()) {
+        move_started = false;
+        g_has_active_goal = false; // Cancel current task
+        return BT_SUCCESS;
+    }
+    return BT_RUNNING;
 }
 
 static BTStatus action_execute_goal(BTNode* node) {
@@ -63,10 +64,12 @@ static BTStatus action_execute_goal(BTNode* node) {
         move_started = true;
         return BT_RUNNING;
     }
-    // Check completion
-    move_started = false;
-    g_has_active_goal = false;
-    return BT_SUCCESS;
+    if (planner_is_idle()) {
+        move_started = false;
+        g_has_active_goal = false;
+        return BT_SUCCESS;
+    }
+    return BT_RUNNING;
 }
 
 static BTStatus action_idle_wander(BTNode* node) {
