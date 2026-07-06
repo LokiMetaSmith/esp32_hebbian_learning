@@ -34,6 +34,17 @@ struct ik_move_args_t {
     struct arg_dbl *z;
     struct arg_end *end;
 };
+extern struct ik_move_args_t ik_move_args;
+
+struct add_obstacle_args_t {
+    struct arg_dbl *x;
+    struct arg_dbl *y;
+    struct arg_dbl *z;
+    struct arg_dbl *radius;
+    struct arg_end *end;
+};
+extern struct add_obstacle_args_t add_obstacle_args;
+
 extern struct set_mode_args_t set_mode_args;
 
 struct rw_set_params_args_t {

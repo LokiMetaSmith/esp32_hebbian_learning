@@ -102,13 +102,7 @@ static struct {
     struct arg_end *end;
 } set_max_accel_args;
 
-static struct {
-    struct arg_dbl *x;
-    struct arg_dbl *y;
-    struct arg_dbl *z;
-    struct arg_dbl *radius;
-    struct arg_end *end;
-} add_obstacle_args;
+struct add_obstacle_args_t add_obstacle_args;
 
 static struct {
     struct arg_int *id;

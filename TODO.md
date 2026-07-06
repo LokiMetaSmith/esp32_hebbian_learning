@@ -59,10 +59,10 @@ This phase focuses on extending the architecture to support a coordinated omni-d
 
 ## Phase 3: Future Enhancements (Not Started)
 
-*   **[TODO] Advanced Clustering:** Upgrade the training pipeline from K-Means to a Self-Organizing Map (SOM) for a more topologically meaningful gesture map.
-*   **[TODO] Real-time Obstacle Avoidance:** Integrate distance sensors (e.g., IR, Ultrasonic) into the planner's cost function to enable dynamic obstacle avoidance.
-*   **[TODO] Higher-Level Behavior Tree:** Implement a formal behavior tree on a host PC that can sequence complex, multi-step tasks by sending goal sequences to the robot.
-*   **[TODO] Vision System Integration:** Add a camera and a vision processing pipeline (e.g., on the host PC) to enable object detection and visual servoing.
+*   **[DONE] Advanced Clustering:** Upgraded the training pipeline from K-Means to a Self-Organizing Map (SOM) for a more topologically meaningful and stable gesture map.
+*   **[DONE] Real-time Obstacle Avoidance:** Integrated Forward Kinematics and an Artificial Potential Field (APF) model into the 100Hz smooth motion loop for reactive obstacle avoidance.
+*   **[DONE] Higher-Level Behavior Tree:** Implemented a modular on-device Behavior Tree engine (`main/behavior_tree.c`) to coordinate Safety, Vision, Collaboration, and Learning.
+*   **[DONE] Vision System Integration:** Established a visual-spatial learning loop where the robot learns object 3D coordinates by physically touching them after a visual detection.
 
 *   **[DONE] Sub-task: Implement Python-based Vision Processing**
     *   **Description:** Implement a Python script to configure the Synsense Speck camera for a specific task (e.g., edge detection) and read the output. This approach leverages the high-level `samna` and `sinabs` libraries, removing the need for a low-level C driver.

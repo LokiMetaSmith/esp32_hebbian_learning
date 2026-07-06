@@ -28,10 +28,12 @@ The project is currently in a stable state. The bus manager has been implemented
 ## Features
 
 * **Real-Time On-Device Learning:** All learning happens directly on the ESP32-S3 with no need for a PC.
-* **Predictive Hebbian Model:** A computationally lightweight and biologically-inspired learning algorithm.
-* **Modular C Drivers:** Clean, separated drivers for all hardware components, written for the ESP-IDF framework.
-* **Visual Feedback:** The onboard RGB LED provides real-time feedback on the model's learning "fitness," shifting from Red (high error) to Green (low error).
-* **Feetech Slave Interface:** The ESP32 exposes a Feetech-compatible slave interface over its native USB port. This allows it to be controlled by higher-level frameworks like **LeRobot** as if it were a smart servo controller.
+* **Cognitive Decision Making (Behavior Trees):** A modular on-device BT engine for complex, hierarchical task execution and safety.
+* **Neuromorphic Safety ("Pain Response"):** Real-time monitoring of SNN stress levels to trigger immediate safety protocols and "brace" for anomalies.
+* **Advanced Motion Planning:** Smooth 100Hz execution using Hermite Cubic Splines, IK for Cartesian control, and RRT for global pathfinding.
+* **Visual-Spatial Haptic Learning:** A closed-loop system where the robot learns object positions through vision and physical contact.
+* **Distributed sensory Fusion:** Multi-robot coordination via ESP-NOW, sharing vision and stress signals across the network.
+* **Feetech Slave Interface:** Controlled by high-level frameworks like **LeRobot** over USB.
 
 ## Hardware Required
 
