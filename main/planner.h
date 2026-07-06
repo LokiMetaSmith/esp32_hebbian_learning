@@ -11,6 +11,14 @@
 
 #include "common.h"
 #include "main.h"
+#include "kinematics.h"
+
+// --- Obstacle Definition ---
+typedef struct {
+    Point3D center;
+    float radius;
+    bool active;
+} Obstacle;
 
 // --- Gesture Token Definition ---
 

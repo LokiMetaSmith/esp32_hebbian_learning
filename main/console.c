@@ -423,6 +423,13 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_bt_status_cmd));
 
+    const esp_console_cmd_t set_vision_class_cmd = {
+        .command = "set-vision-class",
+        .help = "Mock a vision detection (class index)",
+        .func = &cmd_set_vision_class,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&set_vision_class_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");

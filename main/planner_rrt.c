@@ -11,13 +11,7 @@ static const char *TAG = "PLANNER_RRT";
 #define MAX_RRT_NODES 200
 #define MAX_OBSTACLES 10
 
-typedef struct {
-    Point3D center;
-    float radius;
-    bool active;
-} Obstacle;
-
-static Obstacle g_obstacles[MAX_OBSTACLES];
+Obstacle g_obstacles[MAX_OBSTACLES];
 #define EXPAND_DIST 0.1f
 #define GOAL_SAMPLE_RATE 10 // 10% chance to sample the goal directly
 

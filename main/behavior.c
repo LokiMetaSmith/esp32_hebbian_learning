@@ -3,6 +3,10 @@
 #include "esp_log.h"
 #include "main.h"
 #include "planner.h"
+#include "kinematics.h"
+#include "synsense_driver.h"
+#include <stdlib.h>
+#include <string.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/queue.h"
 
@@ -69,6 +73,50 @@ static BTStatus action_idle_wander(BTNode* node) {
     return BT_SUCCESS;
 }
 
+static BTStatus condition_sees_object(BTNode* node) {
+    uint8_t target_class = (uint8_t)(uintptr_t)node->context;
+    uint8_t current_class = synsense_get_classification();
+    return (current_class == target_class) ? BT_SUCCESS : BT_FAILURE;
+}
+
+static BTStatus action_track_object(BTNode* node) {
+    uint8_t current_class = synsense_get_classification();
+    Point3D target_pos;
+    if (kinematics_get_target_from_vision(current_class, &target_pos)) {
+        ESP_LOGI(TAG, "BT: Tracking object class %d at (%.2f, %.2f, %.2f)", current_class, target_pos.x, target_pos.y, target_pos.z);
+
+        float start_angles[6] = {0};
+        float goal_angles[6];
+        if (kinematics_inverse(target_pos, start_angles, goal_angles)) {
+            planner_set_goal_joints(goal_angles);
+            return BT_SUCCESS;
+        }
+    }
+    return BT_FAILURE;
+}
+
+static BTStatus action_close_gripper(BTNode* node) {
+    ESP_LOGI(TAG, "BT: Closing gripper...");
+    float action[32] = {0};
+    #ifdef ROBOT_TYPE_ARM
+    action[5] = 0.5f; // Joint 6 (Gripper) to closed position
+    #endif
+    body_act(action);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    return BT_SUCCESS;
+}
+
+static BTStatus action_open_gripper(BTNode* node) {
+    ESP_LOGI(TAG, "BT: Opening gripper...");
+    float action[32] = {0};
+    #ifdef ROBOT_TYPE_ARM
+    action[5] = -0.5f; // Joint 6 (Gripper) to open position
+    #endif
+    body_act(action);
+    vTaskDelay(pdMS_TO_TICKS(500));
+    return BT_SUCCESS;
+}
+
 void behavior_task(void *pvParameters) {
     for (;;) {
         if (g_root_node) {
@@ -105,12 +153,25 @@ void behavior_init(void) {
     // Idle Branch
     BTNode* idle_act = bt_create_action("IdleWander", action_idle_wander, NULL);
 
+    // Vision & Grab Branch
+    BTNode* sees_red = bt_create_condition("SeesRedBlock?", condition_sees_object, (void*)1);
+    BTNode* open_g = bt_create_action("OpenGripper", action_open_gripper, NULL);
+    BTNode* track_red = bt_create_action("TrackRed", action_track_object, NULL);
+    BTNode* close_g = bt_create_action("CloseGripper", action_close_gripper, NULL);
+    BTNode** grab_children = malloc(sizeof(BTNode*) * 4);
+    grab_children[0] = sees_red;
+    grab_children[1] = open_g;
+    grab_children[2] = track_red;
+    grab_children[3] = close_g;
+    BTNode* grab_seq = bt_create_sequence("GrabRedBlockSequence", grab_children, 4);
+
     // Root Selector
-    BTNode** root_children = malloc(sizeof(BTNode*) * 3);
+    BTNode** root_children = malloc(sizeof(BTNode*) * 4);
     root_children[0] = safety_seq;
-    root_children[1] = task_seq;
-    root_children[2] = idle_act;
-    g_root_node = bt_create_selector("RootSelector", root_children, 3);
+    root_children[1] = grab_seq;
+    root_children[2] = task_seq;
+    root_children[3] = idle_act;
+    g_root_node = bt_create_selector("RootSelector", root_children, 4);
 
     xTaskCreate(behavior_task, "behavior_task", 4096, NULL, 5, &g_behavior_task_handle);
     ESP_LOGI(TAG, "Behavior system initialized and BT created.");

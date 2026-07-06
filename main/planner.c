@@ -3,6 +3,9 @@
 #include "inter_esp_comm.h"
 #include "kinematics.h"
 #include "esp_log.h"
+#include <math.h>
+#include <string.h>
+#include <stdlib.h>
 
 #if __has_include("generated_gestures.h")
 #include "generated_gestures.h"
@@ -138,11 +141,6 @@ static float calculate_linear_interpolation(float a, float b, float t) {
 
 // --- Reactive Obstacle Avoidance (APF) ---
 
-typedef struct {
-    Point3D center;
-    float radius;
-    bool active;
-} Obstacle;
 extern Obstacle g_obstacles[10]; // Shared with planner_rrt.c
 
 /**

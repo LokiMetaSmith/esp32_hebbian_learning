@@ -23,4 +23,12 @@ void kinematics_get_joint_positions(const float* angles, Point3D* joint_position
  */
 bool kinematics_inverse(Point3D target, const float* initial_angles, float* out_angles);
 
+/**
+ * @brief Retrieves a 3D coordinate for a given visual classification.
+ * @param class_idx The classification index from the vision chip.
+ * @param out_pos Output target position.
+ * @return true if coordinate found.
+ */
+bool kinematics_get_target_from_vision(uint8_t class_idx, Point3D* out_pos);
+
 #endif // KINEMATICS_H

@@ -104,3 +104,22 @@ bool kinematics_inverse(Point3D target, const float* initial_angles, float* out_
 
     return false; // Convergence failed
 }
+
+bool kinematics_get_target_from_vision(uint8_t class_idx, Point3D* out_pos) {
+    if (class_idx == 0) return false; // Class 0 is background
+
+    // Define a simple workspace map
+    static const Point3D workspace_targets[] = {
+        {0.0f, 0.0f, 0.0f},   // 0: N/A
+        {0.25f, 0.10f, 0.05f}, // 1: Red Block
+        {0.25f, -0.10f, 0.05f}, // 2: Blue Block
+        {0.30f, 0.00f, 0.10f},  // 3: Green Tool
+        {0.15f, 0.15f, 0.05f}   // 4: Goal Container
+    };
+
+    if (class_idx < (sizeof(workspace_targets)/sizeof(Point3D))) {
+        *out_pos = workspace_targets[class_idx];
+        return true;
+    }
+    return false;
+}
