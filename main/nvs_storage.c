@@ -57,6 +57,38 @@ cleanup:
     return err;
 }
 
+esp_err_t save_joint_limits_to_nvs(const JointLimits_t* limits) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) return err;
+
+    err = nvs_set_blob(nvs_handle, "joint_limits", limits, sizeof(JointLimits_t));
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs_handle);
+    }
+
+    nvs_close(nvs_handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Joint limits saved to NVS.");
+    }
+    return err;
+}
+
+esp_err_t load_joint_limits_from_nvs(JointLimits_t* limits) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) return err;
+
+    size_t required_size = sizeof(JointLimits_t);
+    err = nvs_get_blob(nvs_handle, "joint_limits", limits, &required_size);
+
+    nvs_close(nvs_handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Joint limits loaded from NVS.");
+    }
+    return err;
+}
+
 esp_err_t save_actuator_params_to_nvs(float gain, float offset) {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);

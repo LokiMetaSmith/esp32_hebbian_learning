@@ -176,6 +176,9 @@ extern float g_last_prediction_error;
 extern float g_lsm_stress_level;
 extern bool g_learning_loop_active;
 
+#include "robot_body.h"
+extern JointLimits_t g_joint_limits;
+
 typedef struct {
     float curiosity;
     float fatigue;
