@@ -123,6 +123,19 @@ static BTStatus action_idle_wander(BTNode* node) {
     return BT_SUCCESS;
 }
 
+static BTStatus condition_model_dissonance(BTNode* node) {
+    // High prediction error suggests the internal model is out of sync with reality
+    return (g_last_prediction_error > 0.4f) ? BT_SUCCESS : BT_FAILURE;
+}
+
+static BTStatus action_request_calibration(BTNode* node) {
+    ESP_LOGW(TAG, "BT: Model dissonance detected! Requesting server-side re-calibration.");
+    // In a real scenario, this would trigger a nanobot server request
+    // For now, we signal it via the SNN Stress (Neuromorphic Pain) to get attention
+    g_lsm_stress_level += 0.2f;
+    return BT_SUCCESS;
+}
+
 static BTStatus condition_is_tired(BTNode* node) {
     return (g_drives.fatigue > 0.8f) ? BT_SUCCESS : BT_FAILURE;
 }
@@ -237,6 +250,13 @@ void behavior_init(void) {
     safety_children[0] = safety_cond; safety_children[1] = safety_act;
     BTNode* safety_seq = bt_create_sequence("SafetySequence", safety_children, 2);
 
+    // Adaptive Calibration Branch
+    BTNode* dissonance_cond = bt_create_condition("IsDissonant?", condition_model_dissonance, NULL);
+    BTNode* cal_act = bt_create_action("RequestCalibration", action_request_calibration, NULL);
+    BTNode** cal_children = malloc(sizeof(BTNode*) * 2);
+    cal_children[0] = dissonance_cond; cal_children[1] = cal_act;
+    BTNode* cal_seq = bt_create_sequence("CalibrationLogic", cal_children, 2);
+
     // Task Branch
     BTNode* task_cond = bt_create_condition("HasGoal?", condition_has_goal, NULL);
     BTNode* task_act = bt_create_action("ExecuteGoal", action_execute_goal, NULL);
@@ -295,14 +315,15 @@ void behavior_init(void) {
     BTNode* collab_branch = bt_create_selector("SwarmLogic", collab_children, 2);
 
     // Root Selector
-    BTNode** root_children = malloc(sizeof(BTNode*) * 6);
+    BTNode** root_children = malloc(sizeof(BTNode*) * 7);
     root_children[0] = safety_seq;
-    root_children[1] = homeo_seq;
-    root_children[2] = grab_seq;
-    root_children[3] = collab_branch;
-    root_children[4] = task_seq;
-    root_children[5] = idle_act;
-    g_root_node = bt_create_selector("RootSelector", root_children, 6);
+    root_children[1] = cal_seq; // Priority: Safety > Calibration > Motivation
+    root_children[2] = homeo_seq;
+    root_children[3] = grab_seq;
+    root_children[4] = collab_branch;
+    root_children[5] = task_seq;
+    root_children[6] = idle_act;
+    g_root_node = bt_create_selector("RootSelector", root_children, 7);
 
     xTaskCreate(behavior_task, "behavior_task", 4096, NULL, 5, &g_behavior_task_handle);
     ESP_LOGI(TAG, "Behavior system initialized and BT created.");

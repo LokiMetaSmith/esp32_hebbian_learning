@@ -1055,6 +1055,22 @@ int cmd_teach_gesture(int argc, char **argv) {
     return 0;
 }
 
+int cmd_start_record(int argc, char **argv) {
+    if (argc < 2) return 1;
+    int id = atoi(argv[1]);
+
+    // Clear the gesture first
+    g_gesture_graph.gesture_library[id].num_waypoints = 0;
+
+    planner_start_recording(id);
+    return 0;
+}
+
+int cmd_stop_record(int argc, char **argv) {
+    planner_stop_recording();
+    return 0;
+}
+
 int cmd_import_states(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&import_states_args);
     if (nerrors != 0) {

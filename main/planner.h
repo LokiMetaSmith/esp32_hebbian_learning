@@ -117,6 +117,12 @@ void planner_set_goal_joints(const float* target_joints);
 /** @brief A forward declaration to break a circular dependency with main.c. */
 void execute_on_robot_arm(const float* action_vector, int arm_id);
 
+/** @brief Starts recording robot poses for a new gesture. */
+void planner_start_recording(int gesture_id);
+
+/** @brief Stops recording and saves the gesture. */
+void planner_stop_recording(void);
+
 /** @brief Initializes a semaphore used to signal when the planner is idle. */
 void planner_init_sync(void);
 

@@ -42,6 +42,11 @@ static bool g_new_goal_set = false;
 static bool g_goal_is_joints = false;
 static SemaphoreHandle_t g_planner_idle_semaphore = NULL;
 
+// --- Recording State ---
+static bool g_is_recording = false;
+static int g_recording_gesture_id = -1;
+static int g_recording_tick = 0;
+
 // --- A* Search Implementation ---
 
 typedef struct {
@@ -382,8 +387,71 @@ void planner_task(void *pvParameters) {
             }
             planner_signal_idle(); // Signal that the plan is complete
         }
+        // --- Kinesthetic Recording Loop ---
+        if (g_is_recording) {
+            if (g_recording_tick % 5 == 0) { // Record at 2Hz (every 500ms since delay is 100ms)
+                GestureToken* token = &g_gesture_graph.gesture_library[g_recording_gesture_id];
+                if (token->num_waypoints < MAX_GESTURE_WAYPOINTS) {
+                    float current_full_state[64];
+                    body_sense(current_full_state);
+                    GestureWaypoint* wp = &token->waypoints[token->num_waypoints];
+
+                    #ifdef ROBOT_TYPE_ARM
+                    for (int d = 0; d < ROBOT_DOF; d++) {
+                        wp->positions[d] = current_full_state[NUM_ACCEL_GYRO_PARAMS + d * NUM_SERVO_FEEDBACK_PARAMS] * 2.0f - 1.0f;
+                        wp->velocities[d] = 0.0f;
+                    }
+                    #endif
+                    token->num_waypoints++;
+                    if (g_recording_gesture_id >= g_gesture_graph.num_tokens) g_gesture_graph.num_tokens = g_recording_gesture_id + 1;
+                } else {
+                    ESP_LOGW(TAG, "Max waypoints reached for gesture %d. Stopping recording.", g_recording_gesture_id);
+                    planner_stop_recording();
+                }
+            }
+            g_recording_tick++;
+        }
+
         vTaskDelay(pdMS_TO_TICKS(100));
     }
+}
+
+void planner_start_recording(int gesture_id) {
+    if (gesture_id < 0 || gesture_id >= MAX_GESTURE_TOKENS) return;
+
+    // Disable torque for all servos to allow manual movement
+    BusRequest_t request;
+    request.command = CMD_WRITE_BYTE;
+    request.reg_address = REG_TORQUE_ENABLE;
+    request.value = 0;
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        request.servo_id = servo_ids[i];
+        xQueueSend(g_bus_request_queues[0], &request, portMAX_DELAY);
+    }
+
+    g_recording_gesture_id = gesture_id;
+    g_recording_tick = 0;
+    g_is_recording = true;
+    ESP_LOGI(TAG, "Kinesthetic Recording STARTED for gesture %d. Move the robot!", gesture_id);
+}
+
+void planner_stop_recording(void) {
+    if (!g_is_recording) return;
+    g_is_recording = false;
+
+    // Re-enable torque
+    BusRequest_t request;
+    request.command = CMD_WRITE_BYTE;
+    request.reg_address = REG_TORQUE_ENABLE;
+    request.value = 1;
+    for (int i = 0; i < NUM_SERVOS; i++) {
+        request.servo_id = servo_ids[i];
+        xQueueSend(g_bus_request_queues[0], &request, portMAX_DELAY);
+    }
+
+    save_gestures_to_nvs(&g_gesture_graph);
+    ESP_LOGI(TAG, "Kinesthetic Recording STOPPED and saved to NVS. Recorded %d waypoints for gesture %d.",
+             g_gesture_graph.gesture_library[g_recording_gesture_id].num_waypoints, g_recording_gesture_id);
 }
 
 void planner_init(void) {

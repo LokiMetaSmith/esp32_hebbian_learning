@@ -445,6 +445,20 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&teach_gesture_cmd));
 
+    const esp_console_cmd_t start_record_cmd = {
+        .command = "start-record",
+        .help = "Start kinesthetic path recording (start-record <id>)",
+        .func = &cmd_start_record,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&start_record_cmd));
+
+    const esp_console_cmd_t stop_record_cmd = {
+        .command = "stop-record",
+        .help = "Stop kinesthetic path recording",
+        .func = &cmd_stop_record,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&stop_record_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");
