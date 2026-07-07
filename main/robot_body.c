@@ -114,9 +114,12 @@ void body_sense(float* state_vector) {
         state_vector[0] = 0; state_vector[1] = 0; state_vector[2] = 0;
     }
 #endif
-    state_vector[3] = 0.0f; state_vector[4] = 0.0f; state_vector[5] = 0.0f; // Gyro placeholders
 
     int current_sensor_index = NUM_ACCEL_GYRO_PARAMS;
+    // Add gyro placeholders only if dimension allows
+    if (NUM_ACCEL_GYRO_PARAMS == 6) {
+        state_vector[3] = 0.0f; state_vector[4] = 0.0f; state_vector[5] = 0.0f;
+    }
 
     // Create response queue
     QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
@@ -299,4 +302,230 @@ void body_set_actuator_params(float gain, float offset) {
     g_actuator_offset = offset;
     ESP_LOGI(TAG, "Actuator params updated: Gain=%.4f, Offset=%.4f", gain, offset);
     save_actuator_params_to_nvs(gain, offset);
+}
+
+esp_err_t body_get_sensor_baseline(float* out_accel_threshold, float* out_current_thresholds) {
+    const int num_samples = 50;
+    float impulse_history[num_samples - 1];
+    float** current_history = malloc(sizeof(float*) * NUM_SERVOS);
+    for(int s=0; s<NUM_SERVOS; s++) current_history[s] = malloc(sizeof(float) * num_samples);
+
+    ESP_LOGI(TAG, "Calibrating sensor baseline (1s)...");
+
+    float last_ax = 0, last_ay = 0, last_az = 0;
+    QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
+    if (response_queue == NULL) {
+        for(int s=0; s<NUM_SERVOS; s++) free(current_history[s]);
+        free(current_history);
+        return ESP_ERR_NO_MEM;
+    }
+
+    for (int i = 0; i < num_samples; i++) {
+        float ax, ay, az;
+        if (bma400_read_acceleration(&ax, &ay, &az) == ESP_OK) {
+            if (i > 0) {
+                float dx = ax - last_ax;
+                float dy = ay - last_ay;
+                float dz = az - last_az;
+                impulse_history[i - 1] = sqrtf(dx * dx + dy * dy + dz * dz);
+            }
+            last_ax = ax; last_ay = ay; last_az = az;
+        } else {
+            if (i > 0) impulse_history[i - 1] = 0;
+        }
+
+        BusRequest_t request;
+        BusResponse_t response;
+        request.response_queue = response_queue;
+        request.arm_id = 0;
+        request.command = CMD_READ_WORD;
+        request.reg_address = REG_PRESENT_CURRENT;
+
+        for (int s = 0; s < NUM_SERVOS; s++) {
+            request.servo_id = servo_ids[s];
+            xQueueSend(g_bus_request_queues[0], &request, portMAX_DELAY);
+            if (xQueueReceive(response_queue, &response, pdMS_TO_TICKS(50)) == pdTRUE && response.status == ESP_OK) {
+                float current_A = (float)response.value * 0.0065f;
+                current_history[s][i] = current_A;
+            } else {
+                current_history[s][i] = 0;
+            }
+        }
+        vTaskDelay(pdMS_TO_TICKS(20));
+    }
+    vQueueDelete(response_queue);
+
+    // Calculate stats
+    float impulse_mean = 0;
+    for (int i = 0; i < num_samples - 1; i++) impulse_mean += impulse_history[i];
+    impulse_mean /= (num_samples - 1);
+
+    float impulse_var = 0;
+    for (int i = 0; i < num_samples - 1; i++) {
+        float diff = impulse_history[i] - impulse_mean;
+        impulse_var += diff * diff;
+    }
+    float impulse_std = sqrtf(impulse_var / (num_samples - 1));
+    *out_accel_threshold = impulse_mean + 3.0f * impulse_std;
+    if (*out_accel_threshold < 0.05f) *out_accel_threshold = 0.05f;
+
+    for (int s = 0; s < NUM_SERVOS; s++) {
+        float current_mean = 0;
+        for (int i = 0; i < num_samples; i++) current_mean += current_history[s][i];
+        current_mean /= num_samples;
+
+        float current_var = 0;
+        for (int i = 0; i < num_samples; i++) {
+            float diff = current_history[s][i] - current_mean;
+            current_var += diff * diff;
+        }
+        float current_std = sqrtf(current_var / num_samples);
+        out_current_thresholds[s] = current_mean + 3.0f * current_std;
+        if (out_current_thresholds[s] < 0.05f) out_current_thresholds[s] = 0.05f;
+        free(current_history[s]);
+    }
+    free(current_history);
+
+    ESP_LOGI(TAG, "Baseline Calibrated. Accel Threshold: %.4f", *out_accel_threshold);
+    return ESP_OK;
+}
+
+esp_err_t body_perform_homing_discovery(JointLimits_t* out_limits) {
+    float accel_threshold;
+    float current_thresholds[NUM_SERVOS];
+    if (body_get_sensor_baseline(&accel_threshold, current_thresholds) != ESP_OK) return ESP_FAIL;
+
+    JointLimits_t limits = {0};
+    float current_angles[NUM_SERVOS];
+
+    // Read current positions to avoid jumping
+    QueueHandle_t response_queue = xQueueCreate(1, sizeof(BusResponse_t));
+    if (response_queue == NULL) return ESP_ERR_NO_MEM;
+    BusRequest_t request;
+    BusResponse_t resp;
+    request.response_queue = response_queue;
+    request.arm_id = 0;
+    request.command = CMD_READ_WORD;
+    request.reg_address = REG_PRESENT_POSITION;
+
+    for (int s = 0; s < NUM_SERVOS; s++) {
+        request.servo_id = servo_ids[s];
+        xQueueSend(g_bus_request_queues[0], &request, portMAX_DELAY);
+        if (xQueueReceive(response_queue, &resp, pdMS_TO_TICKS(150)) == pdTRUE && resp.status == ESP_OK) {
+            current_angles[s] = ((float)resp.value / SERVO_POS_MAX) * 2.0f - 1.0f;
+        } else {
+            current_angles[s] = 0;
+        }
+    }
+
+    ESP_LOGI(TAG, "Starting joint-wise sweep discovery...");
+
+    for (int s = 0; s < NUM_SERVOS; s++) {
+        float last_ax = 0, last_ay = 0, last_az = 0;
+        bool first_accel = true;
+        float original_angle = current_angles[s];
+
+        // Find MIN bound
+        ESP_LOGI(TAG, "Sweeping Joint %d MIN...", s);
+        for (float a = original_angle; a >= -1.0f; a -= 0.05f) {
+            current_angles[s] = a;
+            body_act(current_angles);
+            vTaskDelay(pdMS_TO_TICKS(100));
+
+            // Check for collision
+            float ax, ay, az;
+            if (bma400_read_acceleration(&ax, &ay, &az) != ESP_OK) continue;
+            float impulse = 0;
+            if (!first_accel) {
+                float dx = ax - last_ax;
+                float dy = ay - last_ay;
+                float dz = az - last_az;
+                impulse = sqrtf(dx * dx + dy * dy + dz * dz);
+            }
+            first_accel = false;
+            last_ax = ax; last_ay = ay; last_az = az;
+
+            bool stall = false;
+            request.command = CMD_READ_WORD;
+            request.servo_id = servo_ids[s];
+            request.reg_address = REG_PRESENT_CURRENT;
+            xQueueSend(g_bus_request_queues[0], &request, portMAX_DELAY);
+            if (xQueueReceive(response_queue, &resp, pdMS_TO_TICKS(50)) == pdTRUE && resp.status == ESP_OK) {
+                if ((float)resp.value * 0.0065f > current_thresholds[s]) stall = true;
+            }
+
+            if (impulse > accel_threshold || stall) {
+                ESP_LOGW(TAG, "Contact detected on Joint %d at %.2f! Backing off.", s, a);
+                limits.min_pos[s] = a + 0.05f; // Backoff
+                if (limits.min_pos[s] > 1.0f) limits.min_pos[s] = 1.0f;
+                if (limits.min_pos[s] < -1.0f) limits.min_pos[s] = -1.0f;
+                break;
+            }
+            if (a <= -0.99f) {
+                limits.min_pos[s] = -1.0f;
+                break;
+            }
+        }
+
+        // Return to neutral for next sweep
+        current_angles[s] = 0.0f;
+        body_act(current_angles);
+        vTaskDelay(pdMS_TO_TICKS(500));
+        first_accel = true;
+
+        // Find MAX bound
+        ESP_LOGI(TAG, "Sweeping Joint %d MAX...", s);
+        for (float a = 0.0f; a <= 1.0f; a += 0.05f) {
+            current_angles[s] = a;
+            body_act(current_angles);
+            vTaskDelay(pdMS_TO_TICKS(100));
+
+            float ax, ay, az;
+            if (bma400_read_acceleration(&ax, &ay, &az) != ESP_OK) continue;
+            float impulse = 0;
+            if (!first_accel) {
+                float dx = ax - last_ax;
+                float dy = ay - last_ay;
+                float dz = az - last_az;
+                impulse = sqrtf(dx * dx + dy * dy + dz * dz);
+            }
+            first_accel = false;
+            last_ax = ax; last_ay = ay; last_az = az;
+
+            bool stall = false;
+            request.command = CMD_READ_WORD;
+            request.servo_id = servo_ids[s];
+            request.reg_address = REG_PRESENT_CURRENT;
+            xQueueSend(g_bus_request_queues[0], &request, portMAX_DELAY);
+            if (xQueueReceive(response_queue, &resp, pdMS_TO_TICKS(50)) == pdTRUE && resp.status == ESP_OK) {
+                if ((float)resp.value * 0.0065f > current_thresholds[s]) stall = true;
+            }
+
+            if (impulse > accel_threshold || stall) {
+                ESP_LOGW(TAG, "Contact detected on Joint %d at %.2f! Backing off.", s, a);
+                limits.max_pos[s] = a - 0.05f; // Backoff
+                if (limits.max_pos[s] > 1.0f) limits.max_pos[s] = 1.0f;
+                if (limits.max_pos[s] < -1.0f) limits.max_pos[s] = -1.0f;
+                break;
+            }
+            if (a >= 0.99f) {
+                limits.max_pos[s] = 1.0f;
+                break;
+            }
+        }
+        // Return to neutral
+        current_angles[s] = 0.0f;
+        body_act(current_angles);
+        vTaskDelay(pdMS_TO_TICKS(500));
+    }
+    vQueueDelete(response_queue);
+
+    limits.is_valid = true;
+    *out_limits = limits;
+    save_joint_limits_to_nvs(&limits);
+    ESP_LOGI(TAG, "Workspace discovery complete and saved to NVS.");
+    for (int s = 0; s < NUM_SERVOS; s++) {
+        ESP_LOGI(TAG, "  Joint %d Limits: [%.2f, %.2f]", s, limits.min_pos[s], limits.max_pos[s]);
+    }
+    return ESP_OK;
 }
