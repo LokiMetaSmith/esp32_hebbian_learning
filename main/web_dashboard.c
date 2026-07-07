@@ -61,6 +61,18 @@ static esp_err_t stats_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(local_ee, "y", joints[3].y);
     cJSON_AddNumberToObject(local_ee, "z", joints[3].z);
 
+    // Obstacles for World Map
+    cJSON *obstacles = cJSON_AddArrayToObject(root, "obstacles");
+    for(int i=0; i<10; i++) {
+        extern Obstacle g_obstacles[10];
+        if(!g_obstacles[i].active) continue;
+        cJSON *obj = cJSON_CreateObject();
+        cJSON_AddNumberToObject(obj, "x", g_obstacles[i].center.x);
+        cJSON_AddNumberToObject(obj, "y", g_obstacles[i].center.y);
+        cJSON_AddNumberToObject(obj, "r", g_obstacles[i].radius);
+        cJSON_AddItemToArray(obstacles, obj);
+    }
+
     // Peer Robot Status
     if (g_peer_status.active) {
         cJSON *peer = cJSON_AddObjectToObject(root, "peer");
@@ -141,8 +153,10 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "{label:'Fatigue',data:[],borderColor:'orange'}]}});"
         "const ctxT = document.getElementById('trailChart').getContext('2d');"
         "const chartT = new Chart(ctxT, {type:'scatter',data:{datasets:["
-        "{label:'XY Path',data:[],borderColor:'green',showLine:true}]},"
-        "options:{scales:{x:{min:-0.5,max:0.5},y:{min:-0.5,max:0.5}}}});"
+        "{label:'XY Path',data:[],borderColor:'green',showLine:true,pointRadius:0},"
+        "{label:'Obstacles',data:[],backgroundColor:'rgba(255,0,0,0.5)',pointRadius:10},"
+        "{label:'Peer',data:[],backgroundColor:'blue',pointRadius:5}]},"
+        "options:{animation:false,scales:{x:{min:-0.5,max:0.5},y:{min:-0.5,max:0.5}}}});"
         "async function sendCmd(o){await fetch('/api/command',{method:'POST',body:JSON.stringify(o)});}"
         "setInterval(async () => {"
         "  const r = await fetch('/api/stats'); const d = await r.json();"
@@ -157,6 +171,8 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "  chartD.update();"
         "  chartT.data.datasets[0].data.push({x:d.local_ee.x, y:d.local_ee.y});"
         "  if(chartT.data.datasets[0].data.length > 50) chartT.data.datasets[0].data.shift();"
+        "  chartT.data.datasets[1].data = d.obstacles.map(o => ({x:o.x, y:o.y}));"
+        "  chartT.data.datasets[2].data = d.peer ? [{x:d.peer.end_effector.x, y:d.peer.end_effector.y}] : [];"
         "  chartT.update();"
         "}, 500);"
         "</script>"

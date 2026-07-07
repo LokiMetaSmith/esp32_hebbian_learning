@@ -219,7 +219,9 @@ static void reconstruct_and_execute_path(int came_from[], int current_token_id) 
             GestureWaypoint* wp = &token->waypoints[j];
 
             for (int step = 1; step <= num_sub_steps; step++) {
-                float t = (float)step / (float)num_sub_steps;
+                float t_linear = (float)step / (float)num_sub_steps;
+                // Simple Trapezoidal (S-Curve) smoothing: t = 3t^2 - 2t^3
+                float t = t_linear * t_linear * (3.0f - 2.0f * t_linear);
                 float action_vector[32] = {0};
 
                 #ifdef ROBOT_TYPE_ARM
@@ -236,6 +238,12 @@ static void reconstruct_and_execute_path(int came_from[], int current_token_id) 
                 float nx, ny, nz;
                 calculate_repulsive_force(ee, &nx, &ny, &nz);
                 if (nx != 0 || ny != 0 || nz != 0) {
+                    float force_mag = sqrtf(nx*nx + ny*ny + nz*nz);
+                    if (force_mag > 0.05f) { // If nudge is too extreme
+                        ESP_LOGW(TAG, "APF Nudge extreme (%.3f). Requesting REPLAN.", force_mag);
+                        g_new_goal_set = true; // Re-trigger the planning block
+                        return; // Abort this execution
+                    }
                     float nudged_angles[6];
                     Point3D nudged_ee = {ee.x + nx, ee.y + ny, ee.z + nz};
                     if (kinematics_inverse(nudged_ee, action_vector, nudged_angles)) {
@@ -342,7 +350,8 @@ void planner_task(void *pvParameters) {
                         float next_vel[ROBOT_DOF] = {0}; // Assume zero velocity at nodes for simplicity
 
                         for (int step = 1; step <= 5; step++) {
-                            float t = (float)step / 5.0f;
+                            float t_linear = (float)step / 5.0f;
+                            float t = t_linear * t_linear * (3.0f - 2.0f * t_linear);
                             float action[32] = {0};
                             #ifdef ROBOT_TYPE_ARM
                             for(int d=0; d<ROBOT_DOF; d++) {
@@ -403,7 +412,8 @@ void planner_task(void *pvParameters) {
                                 float next_vel[ROBOT_DOF] = {0};
 
                                 for (int step = 1; step <= 5; step++) {
-                                    float t = (float)step / 5.0f;
+                                    float t_linear = (float)step / 5.0f;
+                                    float t = t_linear * t_linear * (3.0f - 2.0f * t_linear);
                                     float action[32] = {0};
                                     #ifdef ROBOT_TYPE_ARM
                                     for(int d=0; d<ROBOT_DOF; d++) {
@@ -424,6 +434,23 @@ void planner_task(void *pvParameters) {
             }
             planner_signal_idle(); // Signal that the plan is complete
         }
+        // --- Peer Priority Arbitration ---
+        if (g_peer_status.active && !planner_is_idle()) {
+            float my_drive = g_drives.curiosity - g_drives.fatigue;
+            float peer_drive = g_peer_status.curiosity - g_peer_status.fatigue;
+
+            // If I am closer to the peer than 20cm and have lower priority (lower curiosity/higher fatigue)
+            float dx = g_peer_status.current_ee.x - g_goal_joints[0]; // Simplified dist check
+            // (Real implementation would use FK of current action_vector)
+
+            if (my_drive < peer_drive - 0.1f) {
+                // Check for potential collision course (Simplified)
+                // If I am moving and the peer is nearby, I yield.
+                ESP_LOGW(TAG, "Peer has higher priority drive. YIELDING.");
+                vTaskDelay(pdMS_TO_TICKS(500)); // Yield 0.5s
+            }
+        }
+
         // --- Kinesthetic Recording Loop ---
         if (g_is_recording) {
             if (g_recording_tick % 5 == 0) { // Record at 2Hz (every 500ms since delay is 100ms)
