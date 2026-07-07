@@ -438,6 +438,13 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_workspace_map_cmd));
 
+    const esp_console_cmd_t teach_gesture_cmd = {
+        .command = "teach-gesture",
+        .help = "Record current pose as a gesture (teach-gesture <id>)",
+        .func = &cmd_teach_gesture,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&teach_gesture_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");

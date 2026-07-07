@@ -638,15 +638,41 @@ void learning_loop_task(void *pvParameters) {
             // 1. SENSE current state
             body_sense(combined_input);
 
-            // 2. BABBLE
-            // Using generic dimensions. For now, we assume PRED_NEURONS is the input size.
+            // 2. CURIOSITY ENGINE (Active Inference)
             int action_vector_start_index = PRED_NEURONS;
             float* action_part = combined_input + action_vector_start_index;
             
-            // Generate random actions
-            for (int i = 0; i < OUTPUT_NEURONS; i++) {
-                action_part[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+            float best_action[OUTPUT_NEURONS];
+            float max_expected_error = -1.0f;
+
+            // Sample 3 candidate actions and predict which one is most "interesting"
+            for (int candidate = 0; candidate < 3; candidate++) {
+                float candidate_action[OUTPUT_NEURONS];
+                for (int i = 0; i < OUTPUT_NEURONS; i++) candidate_action[i] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f;
+
+                // Temporarily swap into combined_input for prediction
+                memcpy(action_part, candidate_action, sizeof(float) * OUTPUT_NEURONS);
+                forward_pass(combined_input, g_hl, g_ol, g_pl);
+
+                // Calculate novelty: how far is the predicted state from known centroids?
+                float predicted_novelty = 0;
+                for (int c = 0; c < NUM_STATE_TOKENS; c++) {
+                    float dist = 0;
+                    for (int d = 0; d < STATE_VECTOR_DIM; d++) {
+                        float diff = g_pl->pred_activations[d] - g_state_token_centroids[c][d];
+                        dist += diff * diff;
+                    }
+                    if (c == 0 || dist < predicted_novelty) predicted_novelty = dist;
+                }
+
+                if (predicted_novelty > max_expected_error) {
+                    max_expected_error = predicted_novelty;
+                    memcpy(best_action, candidate_action, sizeof(float) * OUTPUT_NEURONS);
+                }
             }
+
+            // Execute the most "curious" action
+            memcpy(action_part, best_action, sizeof(float) * OUTPUT_NEURONS);
             body_act(action_part);
 
             // 3. PREDICT outcome based on the state and the chosen action
@@ -977,6 +1003,38 @@ int cmd_get_workspace_map(int argc, char **argv) {
             printf("Class %d: (%.3f, %.3f, %.3f)\n", i, p.x, p.y, p.z);
         }
     }
+    return 0;
+}
+
+int cmd_teach_gesture(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: teach-gesture <id>\n");
+        return 1;
+    }
+    int gesture_id = atoi(argv[1]);
+    if (gesture_id < 0 || gesture_id >= MAX_GESTURE_TOKENS) return 1;
+
+    printf("Teach Mode: Recording current pose for gesture %d...\n", gesture_id);
+
+    float full_state[64];
+    body_sense(full_state);
+
+    // Create a new gesture token with a single waypoint (the current pose)
+    GestureToken* token = &g_gesture_graph.gesture_library[gesture_id];
+    token->id = gesture_id;
+    token->num_waypoints = 1;
+    token->energy_cost = 0.1f;
+
+    #ifdef ROBOT_TYPE_ARM
+    for(int d=0; d<6; d++) {
+        token->waypoints[0].positions[d] = full_state[NUM_ACCEL_GYRO_PARAMS + d * NUM_SERVO_FEEDBACK_PARAMS] * 2.0f - 1.0f;
+        token->waypoints[0].velocities[d] = 0.0f;
+    }
+    #endif
+
+    if (gesture_id >= g_gesture_graph.num_tokens) g_gesture_graph.num_tokens = gesture_id + 1;
+
+    printf("Gesture %d recorded. (NVS save placeholder)\n", gesture_id);
     return 0;
 }
 
