@@ -13,6 +13,7 @@
 #include "esp_err.h"
 #include "snn_lsm.h"
 #include "kinematics.h"
+#include "planner.h"
 
 // Forward declaration to avoid circular dependency if main.h includes this file.
 struct HiddenLayer;
@@ -144,6 +145,16 @@ esp_err_t load_workspace_map_from_nvs(Point3D* targets, int count);
  * @return esp_err_t Result of the operation.
  */
 esp_err_t load_snn_weights_from_nvs(snn_lsm_t *lsm);
+
+/**
+ * @brief Saves the gesture graph library to NVS.
+ */
+esp_err_t save_gestures_to_nvs(const GestureGraph *graph);
+
+/**
+ * @brief Loads the gesture graph library from NVS.
+ */
+esp_err_t load_gestures_from_nvs(GestureGraph *graph);
 
 
 #endif // NVS_STORAGE_H

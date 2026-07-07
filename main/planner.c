@@ -12,7 +12,7 @@
 #else
 #warning "generated_gestures.h not found. Using default placeholder gestures."
 // Define a default gesture graph if the generated one doesn't exist
-static GestureGraph g_gesture_graph = {
+GestureGraph g_gesture_graph = {
     .num_tokens = 1,
     .transition_costs = {{0.0f}},
     .gesture_library = {

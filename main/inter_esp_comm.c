@@ -38,6 +38,9 @@ static void on_data_recv(const esp_now_recv_info_t * info, const uint8_t *data, 
         case MSG_TYPE_STATUS_UPDATE:
             g_peer_status.stress_level = msg->stress_level;
             g_peer_status.vision_class = msg->vision_class;
+            // The payload data field can be used for extra floats like drives
+            g_peer_status.curiosity = msg->data[0];
+            g_peer_status.fatigue = msg->data[1];
             g_peer_status.last_seen_ms = esp_timer_get_time() / 1000;
             g_peer_status.active = true;
             ESP_LOGD(TAG, "Received peer status: Stress=%.2f, Vision=%d", msg->stress_level, msg->vision_class);
@@ -86,12 +89,14 @@ esp_err_t inter_esp_send_goal(const float* embedding) {
     return esp_now_send(broadcast_mac, (uint8_t *)&msg, sizeof(msg));
 }
 
-esp_err_t inter_esp_send_status(float stress, uint8_t vision_class) {
+esp_err_t inter_esp_send_status(float stress, uint8_t vision_class, float curiosity, float fatigue) {
     InterEspMessage_t msg;
     memset(&msg, 0, sizeof(msg));
     msg.type = MSG_TYPE_STATUS_UPDATE;
     msg.stress_level = stress;
     msg.vision_class = vision_class;
+    msg.data[0] = curiosity;
+    msg.data[1] = fatigue;
 
     return esp_now_send(broadcast_mac, (uint8_t *)&msg, sizeof(msg));
 }

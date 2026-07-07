@@ -78,6 +78,38 @@ esp_err_t save_actuator_params_to_nvs(float gain, float offset) {
     return err;
 }
 
+esp_err_t save_gestures_to_nvs(const GestureGraph *graph) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);
+    if (err != ESP_OK) return err;
+
+    err = nvs_set_blob(nvs_handle, "gesture_graph", graph, sizeof(GestureGraph));
+    if (err == ESP_OK) {
+        err = nvs_commit(nvs_handle);
+    }
+
+    nvs_close(nvs_handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Gesture library saved to NVS.");
+    }
+    return err;
+}
+
+esp_err_t load_gestures_from_nvs(GestureGraph *graph) {
+    nvs_handle_t nvs_handle;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
+    if (err != ESP_OK) return err;
+
+    size_t required_size = sizeof(GestureGraph);
+    err = nvs_get_blob(nvs_handle, "gesture_graph", graph, &required_size);
+
+    nvs_close(nvs_handle);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "Gesture library loaded from NVS.");
+    }
+    return err;
+}
+
 esp_err_t save_workspace_map_to_nvs(const Point3D* targets, int count) {
     nvs_handle_t nvs_handle;
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_handle);

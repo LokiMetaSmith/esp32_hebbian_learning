@@ -72,6 +72,7 @@ bool g_random_walk_active = false;
 // --- Neuromorphic State ---
 snn_lsm_t g_lsm;
 float g_lsm_stress_level = 0.0f;
+DriveState_t g_drives = {0.5f, 0.0f, 0.0f};
 
 // --- Energy Statistics ---
 EnergyStats g_energy_stats = {0};
@@ -709,9 +710,11 @@ void learning_loop_task(void *pvParameters) {
             led_indicator_set_color_from_fitness(correctness);
 
             static long snn_comm_counter = 0;
-            if (++snn_comm_counter % 50 == 0) {
+            if (++snn_comm_counter % 500 == 0) { // Reduced NVS write frequency to 1/500 cycles (every ~100s)
                 save_snn_weights_to_nvs(&g_lsm);
-                inter_esp_send_status(g_lsm_stress_level, synsense_get_classification());
+            }
+            if (snn_comm_counter % 50 == 0) {
+                inter_esp_send_status(g_lsm_stress_level, synsense_get_classification(), g_drives.curiosity, g_drives.fatigue);
             }
 
             // --- Neuromorphic Update (Pain/Stress) ---
@@ -749,6 +752,12 @@ void learning_loop_task(void *pvParameters) {
             for(int o=0; o<N_OUTPUT; o++) if(g_lsm.spk_out[o]) current_firing += 1.0f;
             current_firing /= N_OUTPUT;
             g_lsm_stress_level = 0.9f * g_lsm_stress_level + 0.1f * current_firing;
+
+            // --- Homeostatic Drive Update ---
+            g_drives.safety = g_lsm_stress_level;
+            g_drives.fatigue = fminf(1.0f, g_drives.fatigue + 0.01f); // Fatigue increases per cycle
+            if (correctness > 0.3f) g_drives.curiosity *= 0.95f; // Knowledge satisfies curiosity
+            else g_drives.curiosity = fminf(1.0f, g_drives.curiosity + 0.02f); // Boredom increases curiosity
 
             if (g_network_weights_updated) {
                 if (correctness > g_best_fitness_achieved + MIN_FITNESS_IMPROVEMENT_TO_SAVE) {
@@ -1034,7 +1043,8 @@ int cmd_teach_gesture(int argc, char **argv) {
 
     if (gesture_id >= g_gesture_graph.num_tokens) g_gesture_graph.num_tokens = gesture_id + 1;
 
-    printf("Gesture %d recorded. (NVS save placeholder)\n", gesture_id);
+    save_gestures_to_nvs(&g_gesture_graph);
+    printf("Gesture %d recorded and saved to NVS.\n", gesture_id);
     return 0;
 }
 
@@ -1222,6 +1232,10 @@ void app_main(void) {
         ESP_LOGW(TAG, "No state tokens found in NVS. Please run `import_states` to generate them.");
     } else {
         ESP_LOGI(TAG, "State tokens loaded successfully from NVS.");
+    }
+
+    if (load_gestures_from_nvs(&g_gesture_graph) == ESP_OK) {
+        ESP_LOGI(TAG, "Custom gestures loaded from NVS.");
     }
 
     for (int i = 0; i < NUM_ARMS; i++) {
