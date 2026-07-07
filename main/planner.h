@@ -65,6 +65,7 @@ typedef struct {
     int num_tokens;                                               /**< The number of valid tokens in the library. */
 } GestureGraph;
 
+extern GestureGraph g_gesture_graph;
 
 // --- Planner Function Prototypes ---
 

@@ -89,6 +89,30 @@ static BTStatus action_rest(BTNode* node) {
     return BT_RUNNING;
 }
 
+static BTStatus condition_peer_needs_help(BTNode* node) {
+    if (g_peer_status.active && g_peer_status.stress_level > 0.6f) {
+        return BT_SUCCESS;
+    }
+    return BT_FAILURE;
+}
+
+static BTStatus action_support_peer(BTNode* node) {
+    static bool moved_to_support = false;
+    if (!moved_to_support) {
+        ESP_LOGI(TAG, "BT: Peer robot is stressed! Moving to supportive waypoint.");
+        // Move to a location that clears the peer's potential workspace
+        float support_pose[6] = {-0.5f, 0.5f, 0.5f, 0, 0, 0};
+        planner_set_goal_joints(support_pose);
+        moved_to_support = true;
+        return BT_RUNNING;
+    }
+    if (planner_is_idle()) {
+        moved_to_support = false;
+        return BT_SUCCESS;
+    }
+    return BT_RUNNING;
+}
+
 static BTStatus action_idle_wander(BTNode* node) {
     // Start learning loop if curious
     if (g_drives.curiosity > 0.4f) {
@@ -254,18 +278,28 @@ void behavior_init(void) {
 
     // Collaborative Branch
     BTNode* peer_sees_blue = bt_create_condition("PeerSeesBlue?", condition_peer_sees_object, (void*)2);
-    // Simple response: robot also tracks if peer sees blue
     BTNode* peer_track = bt_create_action("CollaborativeTrack", action_track_object, NULL);
+
+    // Swarm Empathy (Help stressed peer)
+    BTNode* peer_stressed = bt_create_condition("PeerStressed?", condition_peer_needs_help, NULL);
+    BTNode* support_act = bt_create_action("SupportPeer", action_support_peer, NULL);
+    BTNode** empathy_children = malloc(sizeof(BTNode*) * 2);
+    empathy_children[0] = peer_stressed; empathy_children[1] = support_act;
+    BTNode* empathy_seq = bt_create_sequence("SwarmEmpathy", empathy_children, 2);
+
     BTNode** collab_children = malloc(sizeof(BTNode*) * 2);
-    collab_children[0] = peer_sees_blue; collab_children[1] = peer_track;
-    BTNode* collab_seq = bt_create_sequence("SwarmSync", collab_children, 2);
+    collab_children[0] = empathy_seq; // Empathy takes priority over shared vision
+    BTNode** sync_children = malloc(sizeof(BTNode*) * 2);
+    sync_children[0] = peer_sees_blue; sync_children[1] = peer_track;
+    collab_children[1] = bt_create_sequence("SwarmSync", sync_children, 2);
+    BTNode* collab_branch = bt_create_selector("SwarmLogic", collab_children, 2);
 
     // Root Selector
     BTNode** root_children = malloc(sizeof(BTNode*) * 6);
     root_children[0] = safety_seq;
     root_children[1] = homeo_seq;
     root_children[2] = grab_seq;
-    root_children[3] = collab_seq;
+    root_children[3] = collab_branch;
     root_children[4] = task_seq;
     root_children[5] = idle_act;
     g_root_node = bt_create_selector("RootSelector", root_children, 6);
