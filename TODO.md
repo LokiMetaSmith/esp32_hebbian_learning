@@ -75,4 +75,14 @@ This phase focuses on extending the architecture to support a coordinated omni-d
 ## Phase 5: Cognitive Learning (Complete)
 
 *   **[DONE] Curiosity Engine:** Refactored motor babbling to use Active Inference, sampling actions to maximize novelty and state-space coverage.
-*   **[DONE] Teach Mode:** Added the ability to record physical poses as gesture tokens directly on the device.
+*   **[DONE] Teach Mode:** Added the ability to record physical poses and multi-waypoint paths as gesture tokens directly on the device.
+*   **[DONE] Spatial Awareness:** Implemented self-collision avoidance and autonomous haptic obstacle discovery/mapping.
+
+## Phase 6: Future Potential Tasks (Upcoming)
+
+*   **[ ] Reinforcement Learning (RL) Readout:** Transition the plastic SNN readout layer from unsupervised Hebbian to a supervised/reward-based RL rule (e.g., R-STDP) for goal-oriented skill refinement.
+*   **[ ] Multi-Modal Sensory Fusion:** Integrate the BMA400 accelerometer, motor current, and vision data into a single unified latent representation using a Multimodal SOM or VAE.
+*   **[ ] Sleep/Consolidation Cycles:** Implement an "Offline" mode where the robot "dreams" by replaying high-error trajectories from NVS to further refine the neural weights without physical motion.
+*   **[ ] Decentralized Swarm Consensus:** Move beyond symmetric broadcasting to a consensus-based protocol where robots negotiate shared goals or workspace partitions via ESP-NOW.
+*   **[ ] On-Device 3D Visualization:** Upgrade the Web Dashboard to use Three.js for a full 3D rendering of the robot arm and detected obstacles.
+*   **[ ] Natural Language Gesture Mapping:** Use an external LLM to map natural language commands to specific gesture embeddings or latent space coordinates.
