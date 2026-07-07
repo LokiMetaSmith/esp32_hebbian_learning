@@ -23,6 +23,8 @@
 #include "commands.h"
 #include "planner.h"
 #include "behavior.h"
+#include "behavior_tree.h"
+#include "kinematics.h"
 #include "snn_lsm.h"
 
 // --- SNN Instance ---
@@ -409,6 +411,64 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
                     vQueueDelete(response_queue);
                 }
             }
+        } else {
+            cJSON_AddStringToObject(response, "status", "Invalid arguments");
+        }
+    } else if (strcmp(tool_name, "ik_move") == 0) {
+        cJSON *x_json = cJSON_GetObjectItem(arguments_json, "x");
+        cJSON *y_json = cJSON_GetObjectItem(arguments_json, "y");
+        cJSON *z_json = cJSON_GetObjectItem(arguments_json, "z");
+        if (cJSON_IsNumber(x_json) && cJSON_IsNumber(y_json) && cJSON_IsNumber(z_json)) {
+            Point3D target = {(float)x_json->valuedouble, (float)y_json->valuedouble, (float)z_json->valuedouble};
+            float start_angles[6] = {0}; // Simplified: start from home
+            float goal_angles[6];
+            if (kinematics_inverse(target, start_angles, goal_angles)) {
+                planner_set_goal_joints(goal_angles);
+                cJSON_AddStringToObject(response, "result", "OK");
+            } else {
+                cJSON_AddStringToObject(response, "status", "IK Failed");
+            }
+        } else {
+            cJSON_AddStringToObject(response, "status", "Invalid arguments");
+        }
+    } else if (strcmp(tool_name, "get_bt_status") == 0) {
+        extern BTNode* g_root_node;
+        if (g_root_node) {
+            cJSON_AddStringToObject(response, "result", (g_root_node->last_status == BT_SUCCESS) ? "SUCCESS" :
+                                                         (g_root_node->last_status == BT_RUNNING) ? "RUNNING" : "FAILURE");
+            cJSON_AddStringToObject(response, "node_name", g_root_node->name);
+        } else {
+            cJSON_AddStringToObject(response, "status", "BT not initialized");
+        }
+    } else if (strcmp(tool_name, "get_full_status") == 0) {
+        cJSON *result = cJSON_CreateObject();
+        extern float g_lsm_stress_level;
+        cJSON_AddNumberToObject(result, "snn_stress", g_lsm_stress_level);
+        extern BTNode* g_root_node;
+        if (g_root_node) cJSON_AddStringToObject(result, "bt_status", (g_root_node->last_status == BT_SUCCESS) ? "SUCCESS" : "RUNNING");
+
+        float current_state[64];
+        body_sense(current_state);
+        #ifdef ROBOT_TYPE_ARM
+        float angles[6];
+        for(int d=0; d<6; d++) angles[d] = current_state[NUM_ACCEL_GYRO_PARAMS + d * NUM_SERVO_FEEDBACK_PARAMS] * 2.0f - 1.0f;
+        Point3D joints[4];
+        kinematics_get_joint_positions(angles, joints);
+        cJSON *ee = cJSON_AddObjectToObject(result, "end_effector");
+        cJSON_AddNumberToObject(ee, "x", joints[3].x);
+        cJSON_AddNumberToObject(ee, "y", joints[3].y);
+        cJSON_AddNumberToObject(ee, "z", joints[3].z);
+        #endif
+
+        cJSON_AddItemToObject(response, "result", result);
+    } else if (strcmp(tool_name, "add_obstacle") == 0) {
+        cJSON *x_json = cJSON_GetObjectItem(arguments_json, "x");
+        cJSON *y_json = cJSON_GetObjectItem(arguments_json, "y");
+        cJSON *z_json = cJSON_GetObjectItem(arguments_json, "z");
+        cJSON *r_json = cJSON_GetObjectItem(arguments_json, "radius");
+        if (cJSON_IsNumber(x_json) && cJSON_IsNumber(y_json) && cJSON_IsNumber(z_json) && cJSON_IsNumber(r_json)) {
+            planner_add_obstacle((float)x_json->valuedouble, (float)y_json->valuedouble, (float)z_json->valuedouble, (float)r_json->valuedouble);
+            cJSON_AddStringToObject(response, "result", "OK");
         } else {
             cJSON_AddStringToObject(response, "status", "Invalid arguments");
         }
@@ -812,6 +872,30 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(snn_mutate_hyperparams_tool, "name", "snn_mutate_hyperparams");
     cJSON_AddStringToObject(snn_mutate_hyperparams_tool, "description", "Mutates the SNN hyperparameters (beta, v_th, lr) based on LLM feedback.");
     cJSON_AddItemToArray(tools, snn_mutate_hyperparams_tool);
+
+    // Tool: ik_move
+    cJSON *ik_move_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(ik_move_tool, "name", "ik_move");
+    cJSON_AddStringToObject(ik_move_tool, "description", "Moves the arm to a 3D coordinate (x, y, z) using IK.");
+    cJSON_AddItemToArray(tools, ik_move_tool);
+
+    // Tool: get_bt_status
+    cJSON *get_bt_status_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(get_bt_status_tool, "name", "get_bt_status");
+    cJSON_AddStringToObject(get_bt_status_tool, "description", "Returns the current state of the Behavior Tree.");
+    cJSON_AddItemToArray(tools, get_bt_status_tool);
+
+    // Tool: add_obstacle
+    cJSON *add_obstacle_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(add_obstacle_tool, "name", "add_obstacle");
+    cJSON_AddStringToObject(add_obstacle_tool, "description", "Adds a virtual obstacle to the robot's world model.");
+    cJSON_AddItemToArray(tools, add_obstacle_tool);
+
+    // Tool: get_full_status
+    cJSON *get_full_status_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(get_full_status_tool, "name", "get_full_status");
+    cJSON_AddStringToObject(get_full_status_tool, "description", "Returns a unified status of SNN, BT, and Kinematics.");
+    cJSON_AddItemToArray(tools, get_full_status_tool);
 
     return root;
 }
