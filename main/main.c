@@ -59,6 +59,8 @@ float g_state_token_embeddings[NUM_STATE_TOKENS][HIDDEN_NEURONS];
 // --- Global Correction Maps ---
 ServoCorrectionMap g_correction_maps[NUM_SERVOS];
 
+// --- Global Joint Limits ---
+JointLimits_t g_joint_limits = { .is_valid = false };
 
 // --- Global variables for smart network saving ---
 bool g_network_weights_updated = false;
@@ -1233,6 +1235,10 @@ void app_main(void) {
     behavior_init();
     kinematics_init_workspace();
     start_web_dashboard();
+
+    if (load_joint_limits_from_nvs(&g_joint_limits) != ESP_OK) {
+        ESP_LOGI(TAG, "No joint limits found in NVS. Discovery will be triggered.");
+    }
 
     if (load_network_from_nvs(g_hl, g_ol, g_pl) != ESP_OK) {
         ESP_LOGI(TAG, "No saved network found. Initializing with random weights.");

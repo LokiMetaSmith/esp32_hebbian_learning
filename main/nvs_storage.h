@@ -14,6 +14,7 @@
 #include "snn_lsm.h"
 #include "kinematics.h"
 #include "planner.h"
+#include "robot_body.h"
 
 // Forward declaration to avoid circular dependency if main.h includes this file.
 struct HiddenLayer;
@@ -155,6 +156,16 @@ esp_err_t save_gestures_to_nvs(const GestureGraph *graph);
  * @brief Loads the gesture graph library from NVS.
  */
 esp_err_t load_gestures_from_nvs(GestureGraph *graph);
+
+/**
+ * @brief Saves joint limits to NVS.
+ */
+esp_err_t save_joint_limits_to_nvs(const JointLimits_t* limits);
+
+/**
+ * @brief Loads joint limits from NVS.
+ */
+esp_err_t load_joint_limits_from_nvs(JointLimits_t* limits);
 
 
 #endif // NVS_STORAGE_H

@@ -122,13 +122,18 @@ bool run_rrt_search(const float* start_state, const float* goal_state, float** p
     g_node_list[g_node_count].parent_index = -1;
     g_node_count++;
 
+    extern JointLimits_t g_joint_limits;
     for (int i = 0; i < 1000; i++) { // Max iterations
         float rnd_state[ROBOT_DOF];
         if (rand() % 100 < GOAL_SAMPLE_RATE) {
             memcpy(rnd_state, goal_state, sizeof(float) * ROBOT_DOF);
         } else {
             for (int d = 0; d < ROBOT_DOF; d++) {
-                rnd_state[d] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Assume normalized -1 to 1 space
+                if (g_joint_limits.is_valid && d < 6) {
+                    rnd_state[d] = g_joint_limits.min_pos[d] + ((float)rand() / RAND_MAX) * (g_joint_limits.max_pos[d] - g_joint_limits.min_pos[d]);
+                } else {
+                    rnd_state[d] = ((float)rand() / RAND_MAX) * 2.0f - 1.0f; // Assume normalized -1 to 1 space
+                }
             }
         }
 

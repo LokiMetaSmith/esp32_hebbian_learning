@@ -244,6 +244,18 @@ static BTStatus action_open_gripper(BTNode* node) {
     return BT_SUCCESS;
 }
 
+static BTStatus action_calibrate_workspace(BTNode* node) {
+    extern JointLimits_t g_joint_limits;
+    // If limits are already valid, return FAILURE so the RootSelector moves to the next behavior.
+    if (g_joint_limits.is_valid) return BT_FAILURE;
+
+    ESP_LOGI(TAG, "BT: Triggering autonomous workspace discovery...");
+    if (body_perform_homing_discovery(&g_joint_limits) == ESP_OK) {
+        return BT_SUCCESS; // Success will stop the root selector for one tick, which is fine at boot
+    }
+    return BT_FAILURE;
+}
+
 void behavior_task(void *pvParameters) {
     for (;;) {
         if (g_root_node) {
@@ -343,16 +355,19 @@ void behavior_init(void) {
     BTNode* collab_branch = bt_create_selector("SwarmLogic", collab_children, 2);
 
     // Root Selector
-    BTNode** root_children = malloc(sizeof(BTNode*) * 8);
+    BTNode* discovery_act = bt_create_action("DiscoverWorkspace", action_calibrate_workspace, NULL);
+
+    BTNode** root_children = malloc(sizeof(BTNode*) * 9);
     root_children[0] = safety_seq;
-    root_children[1] = phantom_seq; // Priority: Safety > Haptics > Calibration > Motivation
-    root_children[2] = cal_seq;
-    root_children[3] = homeo_seq;
-    root_children[4] = grab_seq;
-    root_children[5] = collab_branch;
-    root_children[6] = task_seq;
-    root_children[7] = idle_act;
-    g_root_node = bt_create_selector("RootSelector", root_children, 8);
+    root_children[1] = discovery_act; // Ensure we discover workspace bounds early
+    root_children[2] = phantom_seq;   // Haptic Discovery (from upstream)
+    root_children[3] = cal_seq;
+    root_children[4] = homeo_seq;
+    root_children[5] = grab_seq;
+    root_children[6] = collab_branch;
+    root_children[7] = task_seq;
+    root_children[8] = idle_act;
+    g_root_node = bt_create_selector("RootSelector", root_children, 9);
 
     xTaskCreate(behavior_task, "behavior_task", 4096, NULL, 5, &g_behavior_task_handle);
     ESP_LOGI(TAG, "Behavior system initialized and BT created.");

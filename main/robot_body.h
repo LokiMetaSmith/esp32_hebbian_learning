@@ -13,6 +13,19 @@ typedef struct {
     int num_actuators;
 } BodyConfig_t;
 
+#include "robot_config.h"
+#ifdef ROBOT_TYPE_ARM
+#define NUM_SERVOS_INTERNAL 6
+#else
+#define NUM_SERVOS_INTERNAL 0
+#endif
+
+typedef struct {
+    float min_pos[NUM_SERVOS_INTERNAL]; // Normalized -1..1
+    float max_pos[NUM_SERVOS_INTERNAL]; // Normalized -1..1
+    bool is_valid;
+} JointLimits_t;
+
 /**
  * @brief Initializes the body hardware (sensors, motors).
  */
@@ -42,5 +55,17 @@ void body_get_config(BodyConfig_t* config);
  * @param offset The offset correction (e.g., to overcome friction).
  */
 void body_set_actuator_params(float gain, float offset);
+
+/**
+ * @brief Performs a 1-second baseline calibration of sensors.
+ * @param out_accel_threshold Pointer to store the calculated accelerometer impulse threshold.
+ * @param out_current_thresholds Pointer to an array to store current thresholds for each servo.
+ */
+esp_err_t body_get_sensor_baseline(float* out_accel_threshold, float* out_current_thresholds);
+
+/**
+ * @brief Executes the autonomous workspace discovery routine.
+ */
+esp_err_t body_perform_homing_discovery(JointLimits_t* out_limits);
 
 #endif // ROBOT_BODY_H
