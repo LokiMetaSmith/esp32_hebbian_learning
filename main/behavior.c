@@ -136,6 +136,26 @@ static BTStatus action_request_calibration(BTNode* node) {
     return BT_SUCCESS;
 }
 
+static BTStatus action_map_haptic_obstacle(BTNode* node) {
+    if (synsense_get_classification() != 0) return BT_FAILURE; // If we see something, it's a known object, not a new obstacle
+
+    float current_angles[6];
+    float full_state[64];
+    body_sense(full_state);
+    #ifdef ROBOT_TYPE_ARM
+    for(int d=0; d<6; d++) current_angles[d] = full_state[NUM_ACCEL_GYRO_PARAMS + d * NUM_SERVO_FEEDBACK_PARAMS] * 2.0f - 1.0f;
+    #endif
+
+    Point3D joints[4];
+    kinematics_get_joint_positions(current_angles, joints);
+    Point3D ee = joints[3];
+
+    ESP_LOGW(TAG, "BT: Haptic obstacle detected at (%.2f, %.2f, %.2f). Mapping for avoidance.", ee.x, ee.y, ee.z);
+    planner_add_obstacle(ee.x, ee.y, ee.z, 0.05f); // 5cm phantom obstacle
+
+    return BT_SUCCESS;
+}
+
 static BTStatus condition_is_tired(BTNode* node) {
     return (g_drives.fatigue > 0.8f) ? BT_SUCCESS : BT_FAILURE;
 }
@@ -253,6 +273,14 @@ void behavior_init(void) {
     // Adaptive Calibration Branch
     BTNode* dissonance_cond = bt_create_condition("IsDissonant?", condition_model_dissonance, NULL);
     BTNode* cal_act = bt_create_action("RequestCalibration", action_request_calibration, NULL);
+
+    // Haptic Obstacle Discovery
+    BTNode* felt_obstacle = bt_create_condition("FeltObstacle?", condition_is_touching, NULL);
+    BTNode* add_phantom = bt_create_action("AddHapticObstacle", action_map_haptic_obstacle, NULL);
+    BTNode** phantom_children = malloc(sizeof(BTNode*) * 2);
+    phantom_children[0] = felt_obstacle; phantom_children[1] = add_phantom;
+    BTNode* phantom_seq = bt_create_sequence("HapticDiscovery", phantom_children, 2);
+
     BTNode** cal_children = malloc(sizeof(BTNode*) * 2);
     cal_children[0] = dissonance_cond; cal_children[1] = cal_act;
     BTNode* cal_seq = bt_create_sequence("CalibrationLogic", cal_children, 2);
@@ -315,15 +343,16 @@ void behavior_init(void) {
     BTNode* collab_branch = bt_create_selector("SwarmLogic", collab_children, 2);
 
     // Root Selector
-    BTNode** root_children = malloc(sizeof(BTNode*) * 7);
+    BTNode** root_children = malloc(sizeof(BTNode*) * 8);
     root_children[0] = safety_seq;
-    root_children[1] = cal_seq; // Priority: Safety > Calibration > Motivation
-    root_children[2] = homeo_seq;
-    root_children[3] = grab_seq;
-    root_children[4] = collab_branch;
-    root_children[5] = task_seq;
-    root_children[6] = idle_act;
-    g_root_node = bt_create_selector("RootSelector", root_children, 7);
+    root_children[1] = phantom_seq; // Priority: Safety > Haptics > Calibration > Motivation
+    root_children[2] = cal_seq;
+    root_children[3] = homeo_seq;
+    root_children[4] = grab_seq;
+    root_children[5] = collab_branch;
+    root_children[6] = task_seq;
+    root_children[7] = idle_act;
+    g_root_node = bt_create_selector("RootSelector", root_children, 8);
 
     xTaskCreate(behavior_task, "behavior_task", 4096, NULL, 5, &g_behavior_task_handle);
     ESP_LOGI(TAG, "Behavior system initialized and BT created.");
