@@ -710,11 +710,19 @@ void learning_loop_task(void *pvParameters) {
             led_indicator_set_color_from_fitness(correctness);
 
             static long snn_comm_counter = 0;
-            if (++snn_comm_counter % 500 == 0) { // Reduced NVS write frequency to 1/500 cycles (every ~100s)
+            if (++snn_comm_counter % 5000 == 0) { // Reduced NVS write frequency to 1/5000 cycles (every ~1000s)
                 save_snn_weights_to_nvs(&g_lsm);
             }
             if (snn_comm_counter % 50 == 0) {
-                inter_esp_send_status(g_lsm_stress_level, synsense_get_classification(), g_drives.curiosity, g_drives.fatigue);
+                Point3D current_ee = {0};
+                #ifdef ROBOT_TYPE_ARM
+                float current_angles[6];
+                for(int d=0; d<6; d++) current_angles[d] = combined_input[PRED_NEURONS + d];
+                Point3D joints[4];
+                kinematics_get_joint_positions(current_angles, joints);
+                current_ee = joints[3];
+                #endif
+                inter_esp_send_status(g_lsm_stress_level, synsense_get_classification(), g_drives.curiosity, g_drives.fatigue, current_ee);
             }
 
             // --- Neuromorphic Update (Pain/Stress) ---
@@ -773,6 +781,7 @@ void learning_loop_task(void *pvParameters) {
                     // Update best_fitness even if not saved, to track actual best
                     g_best_fitness_achieved = correctness;
                 }
+            }
 
             cycle++;
 
@@ -786,8 +795,6 @@ void learning_loop_task(void *pvParameters) {
     free(combined_input);
     free(state_t_plus_1);
     vTaskDelete(NULL); // Task should delete itself if it ever exits the loop.
-}
-
 }
 
 #ifdef ROBOT_TYPE_ARM

@@ -4,6 +4,7 @@
 #include "main.h"
 #include "behavior_tree.h"
 #include "kinematics.h"
+#include "inter_esp_comm.h"
 #include "snn_lsm.h"
 #include <string.h>
 
@@ -44,6 +45,16 @@ static esp_err_t stats_handler(httpd_req_t *req) {
     if (g_root_node) {
         cJSON_AddStringToObject(root, "bt_root_status", (g_root_node->last_status == BT_SUCCESS) ? "SUCCESS" :
                                                        (g_root_node->last_status == BT_RUNNING) ? "RUNNING" : "FAILURE");
+    }
+
+    // Peer Robot Status
+    if (g_peer_status.active) {
+        cJSON *peer = cJSON_AddObjectToObject(root, "peer");
+        cJSON_AddNumberToObject(peer, "stress", g_peer_status.stress_level);
+        cJSON *ee = cJSON_AddObjectToObject(peer, "end_effector");
+        cJSON_AddNumberToObject(ee, "x", g_peer_status.current_ee.x);
+        cJSON_AddNumberToObject(ee, "y", g_peer_status.current_ee.y);
+        cJSON_AddNumberToObject(ee, "z", g_peer_status.current_ee.z);
     }
 
     const char *sys_info = cJSON_Print(root);

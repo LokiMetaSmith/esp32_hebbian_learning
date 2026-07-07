@@ -3,6 +3,7 @@
 
 #include <stdint.h>
 #include "esp_err.h"
+#include "kinematics.h"
 
 // Define message types
 typedef enum {
@@ -24,6 +25,7 @@ typedef struct {
     // Status fields
     float stress_level;
     uint8_t vision_class;
+    Point3D current_ee;
 } InterEspMessage_t;
 
 typedef struct {
@@ -31,6 +33,7 @@ typedef struct {
     uint8_t vision_class;
     float curiosity;
     float fatigue;
+    Point3D current_ee;
     uint32_t last_seen_ms;
     bool active;
 } PeerStatus_t;
@@ -40,6 +43,6 @@ extern PeerStatus_t g_peer_status;
 // Function prototypes
 esp_err_t inter_esp_comm_init(void);
 esp_err_t inter_esp_send_goal(const float* embedding);
-esp_err_t inter_esp_send_status(float stress, uint8_t vision_class, float curiosity, float fatigue);
+esp_err_t inter_esp_send_status(float stress, uint8_t vision_class, float curiosity, float fatigue, Point3D current_ee);
 
 #endif // INTER_ESP_COMM_H

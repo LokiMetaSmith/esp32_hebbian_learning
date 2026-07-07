@@ -2,6 +2,7 @@
 #include "robot_body.h"
 #include "esp_log.h"
 #include "kinematics.h"
+#include "inter_esp_comm.h"
 #include <stdlib.h>
 #include <math.h>
 #include <string.h>
@@ -80,6 +81,21 @@ static bool check_collision(const float* state) {
         }
 
         // Ideally check segments between joints, but checking joints is a good start
+    }
+
+    // Check collision against peer robot (if active)
+    if (g_peer_status.active) {
+        for (int j = 0; j < 4; j++) {
+            float dx = joints[j].x - g_peer_status.current_ee.x;
+            float dy = joints[j].y - g_peer_status.current_ee.y;
+            float dz = joints[j].z - g_peer_status.current_ee.z;
+            float d2 = dx*dx + dy*dy + dz*dz;
+
+            // Assume peer has a "safety radius" of 10cm
+            if (d2 < (0.10f * 0.10f)) {
+                return false; // Collision with peer detected
+            }
+        }
     }
 
     return true; // No collision

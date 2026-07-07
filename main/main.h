@@ -174,6 +174,7 @@ extern uint8_t servo_ids[NUM_SERVOS];
 extern float g_best_fitness_achieved;
 extern float g_last_prediction_error;
 extern float g_lsm_stress_level;
+extern bool g_learning_loop_active;
 
 typedef struct {
     float curiosity;
