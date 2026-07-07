@@ -37,5 +37,7 @@ int cmd_set_vision_class(int argc, char **argv);
 int cmd_get_peer_stats(int argc, char **argv);
 int cmd_get_workspace_map(int argc, char **argv);
 int cmd_teach_gesture(int argc, char **argv);
+int cmd_start_record(int argc, char **argv);
+int cmd_stop_record(int argc, char **argv);
 
 #endif // COMMANDS_H

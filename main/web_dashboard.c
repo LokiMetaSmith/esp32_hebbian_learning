@@ -66,6 +66,46 @@ static esp_err_t stats_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t command_handler(httpd_req_t *req) {
+    char buf[128];
+    int ret, remaining = req->content_len;
+    if (remaining >= sizeof(buf)) return ESP_FAIL;
+
+    ret = httpd_req_recv(req, buf, remaining);
+    if (ret <= 0) return ESP_FAIL;
+    buf[ret] = '\0';
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) return ESP_FAIL;
+
+    cJSON *cmd = cJSON_GetObjectItem(root, "command");
+    if (cJSON_IsString(cmd)) {
+        if (strcmp(cmd->valuestring, "toggle_learning") == 0) {
+            g_learning_loop_active = !g_learning_loop_active;
+        } else if (strcmp(cmd->valuestring, "start_record") == 0) {
+            int id = cJSON_GetObjectItem(root, "id")->valueint;
+            g_gesture_graph.gesture_library[id].num_waypoints = 0;
+            planner_start_recording(id);
+        } else if (strcmp(cmd->valuestring, "stop_record") == 0) {
+            planner_stop_recording();
+        } else if (strcmp(cmd->valuestring, "ik_move") == 0) {
+            Point3D target = {
+                (float)cJSON_GetObjectItem(root, "x")->valuedouble,
+                (float)cJSON_GetObjectItem(root, "y")->valuedouble,
+                (float)cJSON_GetObjectItem(root, "z")->valuedouble
+            };
+            float start_angles[6] = {0}, goal_angles[6];
+            if (kinematics_inverse(target, start_angles, goal_angles)) {
+                planner_set_goal_joints(goal_angles);
+            }
+        }
+    }
+
+    cJSON_Delete(root);
+    httpd_resp_send(req, "OK", 2);
+    return ESP_OK;
+}
+
 static esp_err_t index_handler(httpd_req_t *req) {
     const char* html =
         "<!DOCTYPE html><html><head><title>Hebbian Robot Dashboard</title>"
@@ -84,6 +124,7 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "const chartD = new Chart(ctxD, {type:'line',data:{labels:[],datasets:["
         "{label:'Curiosity',data:[],borderColor:'blue'},"
         "{label:'Fatigue',data:[],borderColor:'orange'}]}});"
+        "async function sendCmd(o){await fetch('/api/command',{method:'POST',body:JSON.stringify(o)});}"
         "setInterval(async () => {"
         "  const r = await fetch('/api/stats'); const d = await r.json();"
         "  document.getElementById('status').innerText = d.bt_root_status;"
@@ -96,7 +137,18 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "  if(chartD.data.labels.length > 20) { chartD.data.labels.shift(); chartD.data.datasets[0].data.shift(); chartD.data.datasets[1].data.shift(); }"
         "  chartD.update();"
         "}, 500);"
-        "</script></body></html>";
+        "</script>"
+        "<div class='card'><h2>Controls</h2>"
+        "<button onclick='sendCmd({command:\"toggle_learning\"})'>Toggle Learning</button><br><br>"
+        "<input id='rec_id' type='number' value='0' style='width:40px'> "
+        "<button onclick='sendCmd({command:\"start_record\",id:parseInt(document.getElementById(\"rec_id\").value)})'>Start Record</button> "
+        "<button onclick='sendCmd({command:\"stop_record\"})'>Stop Record</button><br><br>"
+        "X:<input id='ik_x' type='number' step='0.1' value='0.3' style='width:50px'> "
+        "Y:<input id='ik_y' type='number' step='0.1' value='0.0' style='width:50px'> "
+        "Z:<input id='ik_z' type='number' step='0.1' value='0.3' style='width:50px'> "
+        "<button onclick='sendCmd({command:\"ik_move\",x:parseFloat(document.getElementById(\"ik_x\").value),y:parseFloat(document.getElementById(\"ik_y\").value),z:parseFloat(document.getElementById(\"ik_z\").value)})'>IK Move</button>"
+        "</div>"
+        "</body></html>";
     httpd_resp_send(req, html, strlen(html));
     return ESP_OK;
 }
@@ -115,6 +167,13 @@ static const httpd_uri_t stats_uri = {
     .user_ctx  = NULL
 };
 
+static const httpd_uri_t command_uri = {
+    .uri       = "/api/command",
+    .method    = HTTP_POST,
+    .handler   = command_handler,
+    .user_ctx  = NULL
+};
+
 void start_web_dashboard(void) {
     httpd_handle_t server = NULL;
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
@@ -124,5 +183,6 @@ void start_web_dashboard(void) {
     if (httpd_start(&server, &config) == ESP_OK) {
         httpd_register_uri_handler(server, &index_uri);
         httpd_register_uri_handler(server, &stats_uri);
+        httpd_register_uri_handler(server, &command_uri);
     }
 }

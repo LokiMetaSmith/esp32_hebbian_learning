@@ -101,6 +101,18 @@ static bool check_collision(const float* state) {
     return true; // No collision
 }
 
+static bool check_segment_safe(const float* s1, const float* s2) {
+    for (int s = 1; s <= 5; s++) {
+        float intermediate[ROBOT_DOF];
+        float frac = (float)s / 5.0f;
+        for (int d = 0; d < ROBOT_DOF; d++) {
+            intermediate[d] = s1[d] + (s2[d] - s1[d]) * frac;
+        }
+        if (!check_collision(intermediate)) return false;
+    }
+    return true;
+}
+
 bool run_rrt_search(const float* start_state, const float* goal_state, float** path_out, int* path_len) {
     g_node_count = 0;
     memcpy(g_node_list[g_node_count].state, start_state, sizeof(float) * ROBOT_DOF);
@@ -161,10 +173,37 @@ bool run_rrt_search(const float* start_state, const float* goal_state, float** p
                 }
 
                 curr = g_node_count;
+                float* temp_path = malloc(sizeof(float) * ROBOT_DOF * count);
                 for (int p = count - 1; p >= 0; p--) {
-                    memcpy((*path_out) + (p * ROBOT_DOF), g_node_list[curr].state, sizeof(float) * ROBOT_DOF);
+                    memcpy(temp_path + (p * ROBOT_DOF), g_node_list[curr].state, sizeof(float) * ROBOT_DOF);
                     curr = g_node_list[curr].parent_index;
                 }
+
+                // --- Path Pruning (Short-cutting) ---
+                int pruned_count = 0;
+                float* pruned_path = malloc(sizeof(float) * ROBOT_DOF * count);
+                memcpy(pruned_path, temp_path, sizeof(float) * ROBOT_DOF);
+                pruned_count = 1;
+
+                int i_curr = 0;
+                while (i_curr < count - 1) {
+                    int best_next = i_curr + 1;
+                    // Look forward from the end of the path
+                    for (int i_look = count - 1; i_look > i_curr + 1; i_look--) {
+                        if (check_segment_safe(temp_path + i_curr * ROBOT_DOF, temp_path + i_look * ROBOT_DOF)) {
+                            best_next = i_look;
+                            break;
+                        }
+                    }
+                    memcpy(pruned_path + pruned_count * ROBOT_DOF, temp_path + best_next * ROBOT_DOF, sizeof(float) * ROBOT_DOF);
+                    pruned_count++;
+                    i_curr = best_next;
+                }
+
+                free(temp_path);
+                *path_len = pruned_count;
+                *path_out = pruned_path;
+                ESP_LOGI(TAG, "Path pruned from %d to %d nodes.", count, pruned_count);
                 return true;
             }
             g_node_count++;
