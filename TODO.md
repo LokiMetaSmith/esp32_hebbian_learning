@@ -67,3 +67,12 @@ This phase focuses on extending the architecture to support a coordinated omni-d
 *   **[DONE] Sub-task: Implement Python-based Vision Processing**
     *   **Description:** Implement a Python script to configure the Synsense Speck camera for a specific task (e.g., edge detection) and read the output. This approach leverages the high-level `samna` and `sinabs` libraries, removing the need for a low-level C driver.
     *   **Status:** An `edge_detector.py` script has been created, which defines an SNN model, configures the chip, and includes a loop for real-time inference.
+
+## Phase 4: Monitoring & Visualization (Complete)
+
+*   **[DONE] Web Dashboard:** Implemented an on-device HTTP server with a graphical HTML/Javascript frontend for real-time brain and state visualization.
+
+## Phase 5: Cognitive Learning (Complete)
+
+*   **[DONE] Curiosity Engine:** Refactored motor babbling to use Active Inference, sampling actions to maximize novelty and state-space coverage.
+*   **[DONE] Teach Mode:** Added the ability to record physical poses as gesture tokens directly on the device.

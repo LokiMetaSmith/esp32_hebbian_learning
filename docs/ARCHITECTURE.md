@@ -82,3 +82,17 @@ The motion planner supports professional-grade robotic navigation and workspace 
 *   **Interpolation:** Hermite Cubic Splines ensure position and velocity continuity at 100Hz.
 *   **Pathfinding:** RRT (Rapidly-exploring Random Trees) provides a robust fallback for unstructured configuration spaces.
 *   **Obstacle Avoidance:** Artificial Potential Fields (APF) provide real-time reactive "nudges" around defined virtual obstacles.
+
+## 9. Cognitive Learning & Curiosity
+
+The robot actively seeks to minimize its epistemic uncertainty through a "Curiosity Engine."
+
+*   **Active Inference:** Instead of uniform random babbling, the learning loop samples candidate actions and uses the predictive network to estimate which action will lead to the most "interesting" or novel state relative to its known gesture centroids.
+*   **Teach Mode:** A human-in-the-loop mechanism allows manual pose recording, which are then integrated into the gesture graph as new planning waypoints.
+
+## 10. Real-time Monitoring Interface
+
+An on-device web server provides a transparent view into the robot's high-level state.
+
+*   **Technology:** ESP-IDF HTTP Server + Javascript (Chart.js).
+*   **Data:** Streams real-time SNN firing rates (stress), Behavior Tree status, and the learned 3D workspace map.

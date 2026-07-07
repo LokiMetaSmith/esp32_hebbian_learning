@@ -49,6 +49,38 @@ static esp_err_t stats_handler(httpd_req_t *req) {
     return ESP_OK;
 }
 
+static esp_err_t index_handler(httpd_req_t *req) {
+    const char* html =
+        "<!DOCTYPE html><html><head><title>Hebbian Robot Dashboard</title>"
+        "<script src='https://cdn.jsdelivr.net/npm/chart.js'></script>"
+        "<style>body{font-family:sans-serif;background:#111;color:#eee;text-align:center;}"
+        ".card{background:#222;border-radius:8px;padding:20px;margin:10px;display:inline-block;min-width:300px;}"
+        "canvas{max-width:400px;margin:auto;}</style></head><body>"
+        "<h1>Hebbian Robot live brain</h1>"
+        "<div class='card'><h2>SNN stress</h2><canvas id='stressChart'></canvas></div>"
+        "<div class='card'><h2>Status</h2><p id='status'>-</p></div>"
+        "<script>"
+        "const ctx = document.getElementById('stressChart').getContext('2d');"
+        "const chart = new Chart(ctx, {type:'line',data:{labels:[],datasets:[{label:'Stress',data:[],borderColor:'red'}]}});"
+        "setInterval(async () => {"
+        "  const r = await fetch('/api/stats'); const d = await r.json();"
+        "  document.getElementById('status').innerText = d.bt_root_status;"
+        "  chart.data.labels.push(''); chart.data.datasets[0].data.push(d.snn.stress);"
+        "  if(chart.data.labels.length > 20) { chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }"
+        "  chart.update();"
+        "}, 500);"
+        "</script></body></html>";
+    httpd_resp_send(req, html, strlen(html));
+    return ESP_OK;
+}
+
+static const httpd_uri_t index_uri = {
+    .uri       = "/",
+    .method    = HTTP_GET,
+    .handler   = index_handler,
+    .user_ctx  = NULL
+};
+
 static const httpd_uri_t stats_uri = {
     .uri       = "/api/stats",
     .method    = HTTP_GET,
@@ -63,6 +95,7 @@ void start_web_dashboard(void) {
 
     ESP_LOGI(TAG, "Starting Web Dashboard server on port: '%d'", config.server_port);
     if (httpd_start(&server, &config) == ESP_OK) {
+        httpd_register_uri_handler(server, &index_uri);
         httpd_register_uri_handler(server, &stats_uri);
     }
 }
