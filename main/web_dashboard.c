@@ -47,6 +47,20 @@ static esp_err_t stats_handler(httpd_req_t *req) {
                                                        (g_root_node->last_status == BT_RUNNING) ? "RUNNING" : "FAILURE");
     }
 
+    // End Effector Coordinates
+    float current_angles[6];
+    float full_state[64];
+    body_sense(full_state);
+    #ifdef ROBOT_TYPE_ARM
+    for(int d=0; d<6; d++) current_angles[d] = full_state[NUM_ACCEL_GYRO_PARAMS + d * NUM_SERVO_FEEDBACK_PARAMS] * 2.0f - 1.0f;
+    #endif
+    Point3D joints[4];
+    kinematics_get_joint_positions(current_angles, joints);
+    cJSON *local_ee = cJSON_AddObjectToObject(root, "local_ee");
+    cJSON_AddNumberToObject(local_ee, "x", joints[3].x);
+    cJSON_AddNumberToObject(local_ee, "y", joints[3].y);
+    cJSON_AddNumberToObject(local_ee, "z", joints[3].z);
+
     // Peer Robot Status
     if (g_peer_status.active) {
         cJSON *peer = cJSON_AddObjectToObject(root, "peer");
@@ -116,6 +130,7 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "<h1>Hebbian Robot live brain</h1>"
         "<div class='card'><h2>Internal Drives</h2><canvas id='driveChart'></canvas></div>"
         "<div class='card'><h2>SNN stress</h2><canvas id='stressChart'></canvas></div>"
+        "<div class='card'><h2>Trajectory Trail (XY)</h2><canvas id='trailChart'></canvas></div>"
         "<div class='card'><h2>Status</h2><p id='status'>-</p></div>"
         "<script>"
         "const ctxS = document.getElementById('stressChart').getContext('2d');"
@@ -124,6 +139,10 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "const chartD = new Chart(ctxD, {type:'line',data:{labels:[],datasets:["
         "{label:'Curiosity',data:[],borderColor:'blue'},"
         "{label:'Fatigue',data:[],borderColor:'orange'}]}});"
+        "const ctxT = document.getElementById('trailChart').getContext('2d');"
+        "const chartT = new Chart(ctxT, {type:'scatter',data:{datasets:["
+        "{label:'XY Path',data:[],borderColor:'green',showLine:true}]},"
+        "options:{scales:{x:{min:-0.5,max:0.5},y:{min:-0.5,max:0.5}}}});"
         "async function sendCmd(o){await fetch('/api/command',{method:'POST',body:JSON.stringify(o)});}"
         "setInterval(async () => {"
         "  const r = await fetch('/api/stats'); const d = await r.json();"
@@ -136,6 +155,9 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "  chartD.data.datasets[1].data.push(d.drives.fatigue);"
         "  if(chartD.data.labels.length > 20) { chartD.data.labels.shift(); chartD.data.datasets[0].data.shift(); chartD.data.datasets[1].data.shift(); }"
         "  chartD.update();"
+        "  chartT.data.datasets[0].data.push({x:d.local_ee.x, y:d.local_ee.y});"
+        "  if(chartT.data.datasets[0].data.length > 50) chartT.data.datasets[0].data.shift();"
+        "  chartT.update();"
         "}, 500);"
         "</script>"
         "<div class='card'><h2>Controls</h2>"

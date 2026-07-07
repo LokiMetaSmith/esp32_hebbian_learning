@@ -130,3 +130,24 @@ void kinematics_init_workspace(void) {
     // Attempt to load from NVS
     load_workspace_map_from_nvs(g_workspace_targets, WORKSPACE_SIZE);
 }
+
+bool kinematics_check_self_collision(const float* angles) {
+    Point3D joints[4];
+    kinematics_get_joint_positions(angles, joints);
+
+    // 1. Check if end-effector or joints are too low (hitting the table/base)
+    // Base is at z=0, but the robot has a physical footprint.
+    // Assume a 5cm safety margin above the base plate.
+    for (int i = 1; i < 4; i++) {
+        if (joints[i].z < -0.02f) return false; // Collision with table
+    }
+
+    // 2. Check if end-effector is too close to the central column (base)
+    // Simplified: Base is a cylinder at (0,0) with radius 7cm
+    for (int i = 2; i < 4; i++) {
+        float r2 = joints[i].x * joints[i].x + joints[i].y * joints[i].y;
+        if (joints[i].z < 0.10f && r2 < (0.07f * 0.07f)) return false;
+    }
+
+    return true; // No self-collision detected
+}

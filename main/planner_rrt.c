@@ -83,6 +83,9 @@ static bool check_collision(const float* state) {
         // Ideally check segments between joints, but checking joints is a good start
     }
 
+    // Check Self-Collision
+    if (!kinematics_check_self_collision(state)) return false;
+
     // Check collision against peer robot (if active)
     if (g_peer_status.active) {
         for (int j = 0; j < 4; j++) {

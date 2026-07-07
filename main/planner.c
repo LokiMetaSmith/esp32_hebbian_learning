@@ -329,10 +329,30 @@ void planner_task(void *pvParameters) {
                 float* rrt_path = NULL;
                 int rrt_path_len = 0;
                 if (run_rrt_search(start_state, g_goal_joints, &rrt_path, &rrt_path_len)) {
-                    ESP_LOGI(TAG, "RRT found path with %d points. Executing...", rrt_path_len);
+                    ESP_LOGI(TAG, "RRT found path with %d points. Executing with Spline Smoothing...", rrt_path_len);
+
+                    // Create a temporary gesture to reuse reconstruct_and_execute_path logic
+                    // Or simply implement a streamlined version here.
+                    float last_pos[ROBOT_DOF];
+                    memcpy(last_pos, start_state, sizeof(float)*ROBOT_DOF);
+                    float last_vel[ROBOT_DOF] = {0};
+
                     for (int k = 0; k < rrt_path_len; k++) {
-                        body_act(rrt_path + k * ROBOT_DOF);
-                        vTaskDelay(pdMS_TO_TICKS(50));
+                        float* next_pos = rrt_path + k * ROBOT_DOF;
+                        float next_vel[ROBOT_DOF] = {0}; // Assume zero velocity at nodes for simplicity
+
+                        for (int step = 1; step <= 5; step++) {
+                            float t = (float)step / 5.0f;
+                            float action[32] = {0};
+                            #ifdef ROBOT_TYPE_ARM
+                            for(int d=0; d<ROBOT_DOF; d++) {
+                                action[d] = calculate_hermite_spline(last_pos[d], last_vel[d], next_pos[d], next_vel[d], t, 0.050f);
+                            }
+                            #endif
+                            body_act(action);
+                            vTaskDelay(pdMS_TO_TICKS(10));
+                        }
+                        memcpy(last_pos, next_pos, sizeof(float)*ROBOT_DOF);
                     }
                     free(rrt_path);
                 }
@@ -373,10 +393,27 @@ void planner_task(void *pvParameters) {
                         float* rrt_path = NULL;
                         int rrt_path_len = 0;
                         if (run_rrt_search(start_state, goal_state, &rrt_path, &rrt_path_len)) {
-                            ESP_LOGI(TAG, "RRT found path with %d points. Executing...", rrt_path_len);
+                            ESP_LOGI(TAG, "RRT found path with %d points. Executing with Spline Smoothing...", rrt_path_len);
+                            float last_pos[ROBOT_DOF];
+                            memcpy(last_pos, start_state, sizeof(float)*ROBOT_DOF);
+                            float last_vel[ROBOT_DOF] = {0};
+
                             for (int k = 0; k < rrt_path_len; k++) {
-                                body_act(rrt_path + k * ROBOT_DOF);
-                                vTaskDelay(pdMS_TO_TICKS(50));
+                                float* next_pos = rrt_path + k * ROBOT_DOF;
+                                float next_vel[ROBOT_DOF] = {0};
+
+                                for (int step = 1; step <= 5; step++) {
+                                    float t = (float)step / 5.0f;
+                                    float action[32] = {0};
+                                    #ifdef ROBOT_TYPE_ARM
+                                    for(int d=0; d<ROBOT_DOF; d++) {
+                                        action[d] = calculate_hermite_spline(last_pos[d], last_vel[d], next_pos[d], next_vel[d], t, 0.050f);
+                                    }
+                                    #endif
+                                    body_act(action);
+                                    vTaskDelay(pdMS_TO_TICKS(10));
+                                }
+                                memcpy(last_pos, next_pos, sizeof(float)*ROBOT_DOF);
                             }
                             free(rrt_path);
                         }

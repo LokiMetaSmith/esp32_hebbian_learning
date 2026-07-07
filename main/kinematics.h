@@ -42,4 +42,11 @@ void kinematics_update_target(uint8_t class_idx, Point3D new_pos);
  */
 void kinematics_init_workspace(void);
 
+/**
+ * @brief Checks if a given set of joint angles results in a self-collision.
+ * @param angles Joint angles in normalized -1..1 space.
+ * @return true if safe, false if self-collision detected.
+ */
+bool kinematics_check_self_collision(const float* angles);
+
 #endif // KINEMATICS_H
