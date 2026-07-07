@@ -17,6 +17,12 @@ extern Point3D g_workspace_targets[5];
 static esp_err_t stats_handler(httpd_req_t *req) {
     cJSON *root = cJSON_CreateObject();
 
+    // Internal Drives
+    cJSON *drives = cJSON_AddObjectToObject(root, "drives");
+    cJSON_AddNumberToObject(drives, "curiosity", g_drives.curiosity);
+    cJSON_AddNumberToObject(drives, "fatigue", g_drives.fatigue);
+    cJSON_AddNumberToObject(drives, "safety", g_drives.safety);
+
     // SNN Stats
     cJSON *snn = cJSON_AddObjectToObject(root, "snn");
     cJSON_AddNumberToObject(snn, "stress", g_lsm_stress_level);
@@ -57,17 +63,27 @@ static esp_err_t index_handler(httpd_req_t *req) {
         ".card{background:#222;border-radius:8px;padding:20px;margin:10px;display:inline-block;min-width:300px;}"
         "canvas{max-width:400px;margin:auto;}</style></head><body>"
         "<h1>Hebbian Robot live brain</h1>"
+        "<div class='card'><h2>Internal Drives</h2><canvas id='driveChart'></canvas></div>"
         "<div class='card'><h2>SNN stress</h2><canvas id='stressChart'></canvas></div>"
         "<div class='card'><h2>Status</h2><p id='status'>-</p></div>"
         "<script>"
-        "const ctx = document.getElementById('stressChart').getContext('2d');"
-        "const chart = new Chart(ctx, {type:'line',data:{labels:[],datasets:[{label:'Stress',data:[],borderColor:'red'}]}});"
+        "const ctxS = document.getElementById('stressChart').getContext('2d');"
+        "const chartS = new Chart(ctxS, {type:'line',data:{labels:[],datasets:[{label:'Stress',data:[],borderColor:'red'}]}});"
+        "const ctxD = document.getElementById('driveChart').getContext('2d');"
+        "const chartD = new Chart(ctxD, {type:'line',data:{labels:[],datasets:["
+        "{label:'Curiosity',data:[],borderColor:'blue'},"
+        "{label:'Fatigue',data:[],borderColor:'orange'}]}});"
         "setInterval(async () => {"
         "  const r = await fetch('/api/stats'); const d = await r.json();"
         "  document.getElementById('status').innerText = d.bt_root_status;"
-        "  chart.data.labels.push(''); chart.data.datasets[0].data.push(d.snn.stress);"
-        "  if(chart.data.labels.length > 20) { chart.data.labels.shift(); chart.data.datasets[0].data.shift(); }"
-        "  chart.update();"
+        "  chartS.data.labels.push(''); chartS.data.datasets[0].data.push(d.snn.stress);"
+        "  if(chartS.data.labels.length > 20) { chartS.data.labels.shift(); chartS.data.datasets[0].data.shift(); }"
+        "  chartS.update();"
+        "  chartD.data.labels.push('');"
+        "  chartD.data.datasets[0].data.push(d.drives.curiosity);"
+        "  chartD.data.datasets[1].data.push(d.drives.fatigue);"
+        "  if(chartD.data.labels.length > 20) { chartD.data.labels.shift(); chartD.data.datasets[0].data.shift(); chartD.data.datasets[1].data.shift(); }"
+        "  chartD.update();"
         "}, 500);"
         "</script></body></html>";
     httpd_resp_send(req, html, strlen(html));

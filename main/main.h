@@ -175,6 +175,13 @@ extern float g_best_fitness_achieved;
 extern float g_last_prediction_error;
 extern float g_lsm_stress_level;
 
+typedef struct {
+    float curiosity;
+    float fatigue;
+    float safety;
+} DriveState_t;
+extern DriveState_t g_drives;
+
 void initialize_network(HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl);
 void random_walk_task_fn(void *pvParameters);
 void start_calibration_task(uint8_t servo_id);

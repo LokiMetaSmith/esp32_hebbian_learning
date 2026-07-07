@@ -72,9 +72,35 @@ static BTStatus action_execute_goal(BTNode* node) {
     return BT_RUNNING;
 }
 
+static BTStatus action_rest(BTNode* node) {
+    static bool move_started = false;
+    if (!move_started) {
+        ESP_LOGI(TAG, "BT: Fatigue high. Resting at home.");
+        float home[6] = {0};
+        planner_set_goal_joints(home);
+        move_started = true;
+        return BT_RUNNING;
+    }
+    if (planner_is_idle()) {
+        move_started = false;
+        g_drives.fatigue *= 0.5f; // Resting reduces fatigue
+        return BT_SUCCESS;
+    }
+    return BT_RUNNING;
+}
+
 static BTStatus action_idle_wander(BTNode* node) {
-    // Optional: Start motor babbling if idle too long
+    // Start learning loop if curious
+    if (g_drives.curiosity > 0.4f) {
+        g_learning_loop_active = true;
+    } else {
+        g_learning_loop_active = false;
+    }
     return BT_SUCCESS;
+}
+
+static BTStatus condition_is_tired(BTNode* node) {
+    return (g_drives.fatigue > 0.8f) ? BT_SUCCESS : BT_FAILURE;
 }
 
 static BTStatus condition_sees_object(BTNode* node) {
@@ -194,6 +220,13 @@ void behavior_init(void) {
     task_children[0] = task_cond; task_children[1] = task_act;
     BTNode* task_seq = bt_create_sequence("TaskSequence", task_children, 2);
 
+    // Homeostatic Branch
+    BTNode* tired_cond = bt_create_condition("IsTired?", condition_is_tired, NULL);
+    BTNode* rest_act = bt_create_action("Rest", action_rest, NULL);
+    BTNode** homeo_children = malloc(sizeof(BTNode*) * 2);
+    homeo_children[0] = tired_cond; homeo_children[1] = rest_act;
+    BTNode* homeo_seq = bt_create_sequence("Homeostasis", homeo_children, 2);
+
     // Idle Branch
     BTNode* idle_act = bt_create_action("IdleWander", action_idle_wander, NULL);
 
@@ -228,13 +261,14 @@ void behavior_init(void) {
     BTNode* collab_seq = bt_create_sequence("SwarmSync", collab_children, 2);
 
     // Root Selector
-    BTNode** root_children = malloc(sizeof(BTNode*) * 5);
+    BTNode** root_children = malloc(sizeof(BTNode*) * 6);
     root_children[0] = safety_seq;
-    root_children[1] = grab_seq;
-    root_children[2] = collab_seq;
-    root_children[3] = task_seq;
-    root_children[4] = idle_act;
-    g_root_node = bt_create_selector("RootSelector", root_children, 5);
+    root_children[1] = homeo_seq;
+    root_children[2] = grab_seq;
+    root_children[3] = collab_seq;
+    root_children[4] = task_seq;
+    root_children[5] = idle_act;
+    g_root_node = bt_create_selector("RootSelector", root_children, 6);
 
     xTaskCreate(behavior_task, "behavior_task", 4096, NULL, 5, &g_behavior_task_handle);
     ESP_LOGI(TAG, "Behavior system initialized and BT created.");

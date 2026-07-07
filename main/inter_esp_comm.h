@@ -29,6 +29,8 @@ typedef struct {
 typedef struct {
     float stress_level;
     uint8_t vision_class;
+    float curiosity;
+    float fatigue;
     uint32_t last_seen_ms;
     bool active;
 } PeerStatus_t;
@@ -38,6 +40,6 @@ extern PeerStatus_t g_peer_status;
 // Function prototypes
 esp_err_t inter_esp_comm_init(void);
 esp_err_t inter_esp_send_goal(const float* embedding);
-esp_err_t inter_esp_send_status(float stress, uint8_t vision_class);
+esp_err_t inter_esp_send_status(float stress, uint8_t vision_class, float curiosity, float fatigue);
 
 #endif // INTER_ESP_COMM_H
