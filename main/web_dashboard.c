@@ -61,6 +61,18 @@ static esp_err_t stats_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(local_ee, "y", joints[3].y);
     cJSON_AddNumberToObject(local_ee, "z", joints[3].z);
 
+    // Mental Repertoire (Gestures)
+    cJSON *gestures = cJSON_AddArrayToObject(root, "gestures");
+    for(int i=0; i<g_gesture_graph.num_tokens; i++) {
+        cJSON *g = cJSON_CreateObject();
+        // Plot the first waypoint of each gesture as its 'location' in repertoire
+        Point3D g_ee[4];
+        kinematics_get_joint_positions(g_gesture_graph.gesture_library[i].waypoints[0].positions, g_ee);
+        cJSON_AddNumberToObject(g, "x", g_ee[3].x);
+        cJSON_AddNumberToObject(g, "y", g_ee[3].y);
+        cJSON_AddItemToArray(gestures, g);
+    }
+
     // Obstacles for World Map
     cJSON *obstacles = cJSON_AddArrayToObject(root, "obstacles");
     for(int i=0; i<10; i++) {
@@ -155,7 +167,8 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "const chartT = new Chart(ctxT, {type:'scatter',data:{datasets:["
         "{label:'XY Path',data:[],borderColor:'green',showLine:true,pointRadius:0},"
         "{label:'Obstacles',data:[],backgroundColor:'rgba(255,0,0,0.5)',pointRadius:10},"
-        "{label:'Peer',data:[],backgroundColor:'blue',pointRadius:5}]},"
+        "{label:'Peer',data:[],backgroundColor:'blue',pointRadius:5},"
+        "{label:'Mental repertoire',data:[],backgroundColor:'rgba(255,255,255,0.2)',pointRadius:3}]},"
         "options:{animation:false,scales:{x:{min:-0.5,max:0.5},y:{min:-0.5,max:0.5}}}});"
         "async function sendCmd(o){await fetch('/api/command',{method:'POST',body:JSON.stringify(o)});}"
         "setInterval(async () => {"
@@ -173,6 +186,7 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "  if(chartT.data.datasets[0].data.length > 50) chartT.data.datasets[0].data.shift();"
         "  chartT.data.datasets[1].data = d.obstacles.map(o => ({x:o.x, y:o.y}));"
         "  chartT.data.datasets[2].data = d.peer ? [{x:d.peer.end_effector.x, y:d.peer.end_effector.y}] : [];"
+        "  chartT.data.datasets[3].data = d.gestures.map(g => ({x:g.x, y:g.y}));"
         "  chartT.update();"
         "}, 500);"
         "</script>"

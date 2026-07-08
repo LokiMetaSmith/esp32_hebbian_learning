@@ -1073,6 +1073,28 @@ int cmd_stop_record(int argc, char **argv) {
     return 0;
 }
 
+int cmd_get_full_status(int argc, char **argv) {
+    printf("\n--- Central Nervous System (CNS) Status ---\n");
+    printf(">> NEUROMORPHIC (SNN):\n");
+    printf("   Stress: %.4f (Pain Response)\n", g_lsm_stress_level);
+    printf("   Dissonance: %.4f (Prediction Error)\n", g_last_prediction_error);
+
+    printf(">> HOMEOSTATIC DRIVES:\n");
+    printf("   Curiosity: %.4f (Exploration Drive)\n", g_drives.curiosity);
+    printf("   Fatigue:   %.4f (Energy Drive)\n", g_drives.fatigue);
+    printf("   Safety:    %.4f (Pain Drive)\n", g_drives.safety);
+
+    printf(">> MOTION PLANNER:\n");
+    printf("   State: %s\n", planner_is_idle() ? "IDLE" : "EXECUTING_PATH");
+    printf("   Gesture Repertoire: %d tokens\n", g_gesture_graph.num_tokens);
+
+    printf(">> ENERGY & BUS:\n");
+    printf("   Avg Current: %.3f A\n", g_energy_stats.average_current_A);
+    printf("   Peak Current: %.3f A\n", g_energy_stats.peak_current_A);
+    printf("-------------------------------------------\n");
+    return 0;
+}
+
 int cmd_import_states(int argc, char **argv) {
     int nerrors = arg_parse(argc, argv, (void **)&import_states_args);
     if (nerrors != 0) {

@@ -445,6 +445,13 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&teach_gesture_cmd));
 
+    const esp_console_cmd_t get_full_status_cmd = {
+        .command = "get-full-status",
+        .help = "Unified CNS status: SNN + Drives + Planner + Energy",
+        .func = &cmd_get_full_status,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_full_status_cmd));
+
     const esp_console_cmd_t start_record_cmd = {
         .command = "start-record",
         .help = "Start kinesthetic path recording (start-record <id>)",
