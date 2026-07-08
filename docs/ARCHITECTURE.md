@@ -95,4 +95,21 @@ The robot actively seeks to minimize its epistemic uncertainty through a "Curios
 An on-device web server provides a transparent view into the robot's high-level state.
 
 *   **Technology:** ESP-IDF HTTP Server + Javascript (Chart.js).
-*   **Data:** Streams real-time SNN firing rates (stress), Behavior Tree status, and the learned 3D workspace map.
+*   **Data:** Streams real-time SNN firing rates (stress), internal drives (Curiosity/Fatigue), Behavior Tree status (active node tracing), XY trajectory trails, and joint-space gauges.
+
+## 11. Multi-Scale Motion Synthesis
+
+To achieve high-frequency fluid motion while maintaining safety and agency, the system implements a tiered control architecture:
+
+*   **10Hz Decision Layer:** The Behavior Tree orchestrates high-level mission goals and homeostatic cycles (e.g., Sleep/Rest).
+*   **100Hz Physical Layer:** The Spline Interpolator computes S-Curve (Trapezoidal) velocity profiles to ensure position and velocity continuity, preventing mechanical jerk.
+*   **Reflex Layer:** A high-speed fast-path stress check monitors the SNN firing rate directly in the spline loop, enabling sub-10ms recoil responses to physical impacts, bypassing the decision tree latency.
+*   **Dynamic Replanning:** A bridge between local reactive avoidance (APF) and global pathfinding (RRT). If the local reactive forces exceed a threshold (indicating a local trap), the planner autonomously aborts and triggers a fresh global search.
+
+## 12. Decentralized Swarm Agency
+
+Robots coordinate via a non-hierarchical peer-to-peer protocol over ESP-NOW.
+
+*   **Symmetric Empathy:** Agents share their internal stress (pain) and target vision classifications.
+*   **Priority Arbitration:** When on a collision course, robots negotiate right-of-way based on drive states. Lower-priority robots autonomously move to a 'Yield Pose' (retraction) to clear the shared workspace.
+*   **Task Negotiation:** To prevent swarm overlap, robots yield objects to peers with lower Fatigue levels, enabling autonomous division of labor.

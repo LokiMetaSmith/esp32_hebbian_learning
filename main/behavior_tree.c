@@ -67,6 +67,18 @@ void bt_reset(BTNode* node) {
     }
 }
 
+const char* bt_get_active_node_name(BTNode* node) {
+    if (!node) return "NULL";
+
+    if (node->type == BT_NODE_SEQUENCE || node->type == BT_NODE_SELECTOR) {
+        if (node->current_child_idx < node->num_children) {
+            return bt_get_active_node_name(node->children[node->current_child_idx]);
+        }
+    }
+
+    return node->name;
+}
+
 static BTNode* create_base_node(BTNodeType type, const char* name) {
     BTNode* node = (BTNode*)calloc(1, sizeof(BTNode));
     if (node) {

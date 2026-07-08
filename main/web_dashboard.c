@@ -47,6 +47,7 @@ static esp_err_t stats_handler(httpd_req_t *req) {
     if (g_root_node) {
         cJSON_AddStringToObject(root, "bt_root_status", (g_root_node->last_status == BT_SUCCESS) ? "SUCCESS" :
                                                        (g_root_node->last_status == BT_RUNNING) ? "RUNNING" : "FAILURE");
+        cJSON_AddStringToObject(root, "active_node", bt_get_active_node_name(g_root_node));
     }
 
     // Central Nervous System Status
@@ -64,6 +65,11 @@ static esp_err_t stats_handler(httpd_req_t *req) {
     #endif
     Point3D joints[4];
     kinematics_get_joint_positions(current_angles, joints);
+
+    // Joint angles for Gauge
+    cJSON *joints_json = cJSON_AddArrayToObject(root, "joints");
+    for(int i=0; i<6; i++) cJSON_AddItemToArray(joints_json, cJSON_CreateNumber(current_angles[i]));
+
     cJSON *local_ee = cJSON_AddObjectToObject(root, "local_ee");
     cJSON_AddNumberToObject(local_ee, "x", joints[3].x);
     cJSON_AddNumberToObject(local_ee, "y", joints[3].y);
@@ -163,6 +169,7 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "<div class='card'><h2>Internal Drives</h2><canvas id='driveChart'></canvas></div>"
         "<div class='card'><h2>SNN stress</h2><canvas id='stressChart'></canvas></div>"
         "<div class='card'><h2>Trajectory Trail (XY)</h2><canvas id='trailChart'></canvas></div>"
+        "<div class='card'><h2>Joint Angles (-1..1)</h2><p id='joint_readout' style='font-family:monospace;color:#0ff;'></p></div>"
         "<div class='card'><h2>Status</h2><p id='status'>-</p><p id='cns_text' style='font-family:monospace;color:#0f0;'></p></div>"
         "<script>"
         "const ctxS = document.getElementById('stressChart').getContext('2d');"
@@ -177,12 +184,13 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "{label:'Obstacles',data:[],backgroundColor:'rgba(255,0,0,0.5)',pointRadius:10},"
         "{label:'Peer',data:[],backgroundColor:'blue',pointRadius:5},"
         "{label:'Mental repertoire',data:[],backgroundColor:'rgba(255,255,255,0.2)',pointRadius:3}]},"
-        "options:{animation:false,scales:{x:{min:-0.5,max:0.5},y:{min:-0.5,max:0.5}}}});"
+        "options:{animation:false,scales:{x:{min:-0.5,max:0.5},y:{min:-0.5,max:0.5}},"
+        "onClick:(e,el)=>{const x=chartT.scales.x.getValueForPixel(e.x);const y=chartT.scales.y.getValueForPixel(e.y);sendCmd({command:\"ik_move\",x:x,y:y,z:0.2});}});"
         "async function sendCmd(o){await fetch('/api/command',{method:'POST',body:JSON.stringify(o)});}"
         "setInterval(async () => {"
         "  const r = await fetch('/api/stats'); const d = await r.json();"
-        "  document.getElementById('status').innerText = d.bt_root_status + (d.is_recording ? ' [RECORDING]' : '');"
-        "  document.getElementById('cns_text').innerText = 'Stress: ' + d.stress.toFixed(2) + ' | Cur: ' + d.curiosity.toFixed(2) + ' | Fat: ' + d.fatigue.toFixed(2);"
+        "  document.getElementById('status').innerText = d.bt_root_status + (d.is_recording ? ' [RECORDING]' : '') + ' : ' + (d.active_node || '-');"
+        "  document.getElementById('cns_text').innerText = `Stress: \${d.stress.toFixed(2)} | Cur: \${d.curiosity.toFixed(2)} | Fat: \${d.fatigue.toFixed(2)}`;"
         "  chartS.data.labels.push(''); chartS.data.datasets[0].data.push(d.snn.stress);"
         "  if(chartS.data.labels.length > 20) { chartS.data.labels.shift(); chartS.data.datasets[0].data.shift(); }"
         "  chartS.update();"
@@ -197,6 +205,7 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "  chartT.data.datasets[2].data = d.peer ? [{x:d.peer.end_effector.x, y:d.peer.end_effector.y}] : [];"
         "  chartT.data.datasets[3].data = d.gestures.map(g => ({x:g.x, y:g.y}));"
         "  chartT.update();"
+        "  document.getElementById('joint_readout').innerText = d.joints.map(j => j.toFixed(2)).join(' | ');"
         "}, 500);"
         "</script>"
         "<div class='card'><h2>Controls</h2>"

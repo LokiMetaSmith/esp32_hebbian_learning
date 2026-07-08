@@ -28,11 +28,12 @@ The project is currently in a stable state. The bus manager has been implemented
 ## Features
 
 * **Real-Time On-Device Learning:** All learning happens directly on the ESP32-S3 with no need for a PC.
-* **Cognitive Decision Making (Behavior Trees):** A modular on-device BT engine for complex, hierarchical task execution and safety.
-* **Neuromorphic Safety ("Pain Response"):** Real-time monitoring of SNN stress levels to trigger immediate safety protocols and "brace" for anomalies.
-* **Advanced Motion Planning:** Smooth 100Hz execution using Hermite Cubic Splines, IK for Cartesian control, and RRT for global pathfinding.
-* **Visual-Spatial Haptic Learning:** A closed-loop system where the robot learns object positions through vision and physical contact.
-* **Distributed sensory Fusion:** Multi-robot coordination via ESP-NOW, sharing vision and stress signals across the network.
+* **Cognitive Architecture (Behavior Trees):** A modular on-device BT engine for hierarchical task execution, homeostatic 'Sleep' cycles, and decentralized swarm negotiation.
+* **Neuromorphic Reflexes:** A 100Hz "Pain Response" layer that triggers instant recoil on impact, bypassing high-level decision tree latency.
+* **Advanced Motion Engine:** Professional-grade planning using Global RRT (with greedy pruning), Local Reactive APF (with dynamic replanning), and universal 100Hz Splines with S-Curve (Trapezoidal) velocity profiling.
+* **Environmental Spatial Agency:** The robot protects itself from self-collision and autonomously maps 'phantom' obstacles discovered through haptic touch.
+* **Interactive Live Dashboard:** Real-time web visualization of the robot's 'Mental Map' (World View), trajectory XY trails, internal drives, and central nervous system (CNS) telemetry.
+* **Distributed Swarm Intelligence:** Multi-robot coordination via ESP-NOW, sharing vision, stress signals, and negotiating right-of-way via safety-retract 'Yield Poses'.
 * **Feetech Slave Interface:** Controlled by high-level frameworks like **LeRobot** over USB.
 
 ## Hardware Required
