@@ -36,6 +36,11 @@ typedef struct BTNode {
 } BTNode;
 
 /**
+ * @brief Traverses the tree to find the currently active (running) leaf node.
+ */
+const char* bt_get_active_node_name(BTNode* node);
+
+/**
  * @brief Ticks the behavior tree node.
  */
 BTStatus bt_tick(BTNode* node);
