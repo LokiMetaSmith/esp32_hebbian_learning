@@ -183,6 +183,7 @@ typedef struct {
     float curiosity;
     float fatigue;
     float safety;
+    float satisfaction;
 } DriveState_t;
 extern DriveState_t g_drives;
 

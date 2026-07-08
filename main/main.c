@@ -77,7 +77,7 @@ bool g_random_walk_active = false;
 // --- Neuromorphic State ---
 snn_lsm_t g_lsm;
 float g_lsm_stress_level = 0.0f;
-DriveState_t g_drives = {0.5f, 0.0f, 0.0f};
+DriveState_t g_drives = {0.5f, 0.0f, 0.0f, 0.0f};
 
 // --- Energy Statistics ---
 EnergyStats g_energy_stats = {0};
@@ -712,7 +712,7 @@ void learning_loop_task(void *pvParameters) {
             }
             
             update_weights_hebbian(combined_input, correctness, current_draw, g_hl, g_ol, g_pl);
-            led_indicator_set_color_from_fitness(correctness);
+            led_indicator_update_emotional_state();
 
             // --- Breakthrough-based NVS Persistence ---
             // Save brain state when we achieve a major breakthrough in performance
@@ -778,9 +778,14 @@ void learning_loop_task(void *pvParameters) {
 
             // --- Homeostatic Drive Update ---
             g_drives.safety = g_lsm_stress_level;
-            g_drives.fatigue = fminf(1.0f, g_drives.fatigue + 0.01f); // Fatigue increases per cycle
-            if (correctness > 0.3f) g_drives.curiosity *= 0.95f; // Knowledge satisfies curiosity
-            else g_drives.curiosity = fminf(1.0f, g_drives.curiosity + 0.02f); // Boredom increases curiosity
+            g_drives.fatigue = fminf(1.0f, g_drives.fatigue + 0.005f); // Slower fatigue increase
+            if (correctness > 0.3f) {
+                g_drives.curiosity *= 0.95f; // Knowledge satisfies curiosity
+                g_drives.satisfaction = fminf(1.0f, g_drives.satisfaction + 0.05f); // Boost reward
+            } else {
+                g_drives.curiosity = fminf(1.0f, g_drives.curiosity + 0.01f); // Boredom increases curiosity
+                g_drives.satisfaction *= 0.98f; // Reward decay
+            }
 
             if (g_network_weights_updated) {
                 if (correctness > g_best_fitness_achieved + MIN_FITNESS_IMPROVEMENT_TO_SAVE) {

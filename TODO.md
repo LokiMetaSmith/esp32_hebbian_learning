@@ -77,6 +77,9 @@ This phase focuses on extending the architecture to support a coordinated omni-d
 *   **[DONE] Curiosity Engine:** Refactored motor babbling to use Active Inference, sampling actions to maximize novelty and state-space coverage.
 *   **[DONE] Teach Mode:** Added the ability to record physical poses and multi-waypoint paths as gesture tokens directly on the device.
 *   **[DONE] Spatial Awareness:** Implemented self-collision avoidance and autonomous haptic obstacle discovery/mapping.
+*   **[DONE] Expressive Interaction:** Implemented dopaminergic 'Satisfaction' reward loops and emotional LED blending (Stress/Curiosity/Fatigue/Satisfaction).
+*   **[DONE] Meta-Learning:** Implemented autonomous SNN hyperparameter mutation triggered by critical model dissonance.
+*   **[DONE] Interactive Teleoperation:** Enhanced Web Dashboard with click-to-move spatial navigation and live BT node tracing.
 
 ## Phase 6: Future Potential Tasks (Upcoming)
 
