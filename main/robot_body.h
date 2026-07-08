@@ -1,6 +1,7 @@
 #ifndef ROBOT_BODY_H
 #define ROBOT_BODY_H
 
+#include <stdbool.h>
 #include "esp_err.h"
 
 // Interface for a generic robot body

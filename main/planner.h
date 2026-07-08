@@ -135,5 +135,8 @@ void planner_signal_idle(void);
 /** @brief Takes the semaphore to wait for the planner to become idle. */
 void planner_wait_for_idle(void);
 
+/** @brief Checks if the planner is currently idle. */
+bool planner_is_idle(void);
+
 
 #endif // PLANNER_H
