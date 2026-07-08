@@ -86,3 +86,7 @@ This phase focuses on extending the architecture to support a coordinated omni-d
 *   **[ ] Decentralized Swarm Consensus:** Move beyond symmetric broadcasting to a consensus-based protocol where robots negotiate shared goals or workspace partitions via ESP-NOW.
 *   **[ ] On-Device 3D Visualization:** Upgrade the Web Dashboard to use Three.js for a full 3D rendering of the robot arm and detected obstacles.
 *   **[ ] Natural Language Gesture Mapping:** Use an external LLM to map natural language commands to specific gesture embeddings or latent space coordinates.
+*   **[ ] Dynamic SNN Pruning:** Implement synaptic scaling and pruning to remove redundant connections in the LSM reservoir, optimizing memory and compute.
+*   **[ ] Haptic Surface Profiling:** Use the end-effector to "feel" and map the topography and textures of the physical workspace beyond simple obstacle detection.
+*   **[ ] Variable Compliance Control:** Implement a software-defined "soft" mode where joint torque is modulated based on SNN stress to allow for safe human-robot interaction.
+*   **[ ] Visual Ego-Motion (SLAM Lite):** Utilize Synsense DVS event streams to estimate robot movement and update the global map without external sensors.
