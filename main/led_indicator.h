@@ -26,4 +26,9 @@ void led_indicator_initialize();
  */
 void led_indicator_set_color_from_fitness(float fitness);
 
+/**
+ * @brief Updates the LED to reflect the robot's blended emotional/drive state.
+ */
+void led_indicator_update_emotional_state(void);
+
 #endif // LED_INDICATOR_H

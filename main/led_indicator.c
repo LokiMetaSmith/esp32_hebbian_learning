@@ -99,3 +99,29 @@ void led_indicator_set_color_from_fitness(float fitness) {
     // Refresh the strip to apply the new color
     led_strip_refresh(g_led_strip);
 }
+
+void led_indicator_update_emotional_state(void) {
+    // Blend colors based on internal drives:
+    // RED    = Stress / Pain
+    // BLUE   = Curiosity / Exploration
+    // ORANGE = Fatigue / Sleepiness
+    // GREEN  = Satisfaction / Reward
+
+    float r = g_lsm_stress_level;
+    float b = g_drives.curiosity;
+    float o = g_drives.fatigue;
+    float g = g_drives.satisfaction;
+
+    // Normalize and blend
+    uint8_t final_r = (uint8_t)(r * 255.0f + o * 150.0f); // Orange adds red
+    uint8_t final_g = (uint8_t)(g * 255.0f + o * 50.0f);  // Orange adds some green
+    uint8_t final_b = (uint8_t)(b * 255.0f);
+
+    // Limit to max brightness
+    if (final_r > 255) final_r = 255;
+    if (final_g > 255) final_g = 255;
+    if (final_b > 255) final_b = 255;
+
+    led_strip_set_pixel(g_led_strip, 0, final_r, final_g, final_b);
+    led_strip_refresh(g_led_strip);
+}

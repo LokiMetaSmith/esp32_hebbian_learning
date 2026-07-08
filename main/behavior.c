@@ -136,6 +136,17 @@ static BTStatus action_request_calibration(BTNode* node) {
     return BT_SUCCESS;
 }
 
+static BTStatus condition_is_meta_dissonant(BTNode* node) {
+    // If dissonance is VERY high, calibration might not be enough; we need to mutate
+    return (g_last_prediction_error > 0.7f) ? BT_SUCCESS : BT_FAILURE;
+}
+
+static BTStatus action_mutate_snn(BTNode* node) {
+    ESP_LOGW(TAG, "BT: Dissonance CRITICAL. Mutating SNN hyperparameters.");
+    snn_lsm_mutate_hyperparams(&g_lsm, -1, -1, -1); // Random mutation
+    return BT_SUCCESS;
+}
+
 static BTStatus action_sleep(BTNode* node) {
     static bool sleep_started = false;
     if (!sleep_started) {
@@ -148,6 +159,7 @@ static BTStatus action_sleep(BTNode* node) {
     if (planner_is_idle()) {
         // Consolidated learned weights during sleep
         g_drives.fatigue *= 0.1f; // Sleep significantly reduces fatigue
+        g_drives.satisfaction = fminf(1.0f, g_drives.satisfaction + 0.3f); // Rest is satisfying
         save_network_to_nvs(g_hl, g_ol, g_pl); // Persist during sleep
         sleep_started = false;
         ESP_LOGI(TAG, "BT: Sleep cycle complete. Robot is refreshed.");
@@ -358,9 +370,18 @@ void behavior_init(void) {
     phantom_children[0] = felt_obstacle; phantom_children[1] = add_phantom;
     BTNode* phantom_seq = bt_create_sequence("HapticDiscovery", phantom_children, 2);
 
-    BTNode** cal_children = malloc(sizeof(BTNode*) * 2);
-    cal_children[0] = dissonance_cond; cal_children[1] = cal_act;
-    BTNode* cal_seq = bt_create_sequence("CalibrationLogic", cal_children, 2);
+    // Meta-Optimization sub-branch
+    BTNode* meta_cond = bt_create_condition("IsMetaDissonant?", condition_is_meta_dissonant, NULL);
+    BTNode* mutate_act = bt_create_action("MutateSNN", action_mutate_snn, NULL);
+    BTNode** meta_children = malloc(sizeof(BTNode*) * 2);
+    meta_children[0] = meta_cond; meta_children[1] = mutate_act;
+    BTNode* meta_seq = bt_create_sequence("MetaOptimization", meta_children, 2);
+
+    BTNode** cal_children = malloc(sizeof(BTNode*) * 3);
+    cal_children[0] = meta_seq; // Priority: Mutation > Re-calibration
+    cal_children[1] = dissonance_cond;
+    cal_children[2] = cal_act;
+    BTNode* cal_branch = bt_create_selector("CalibrationLogic", cal_children, 3);
 
     // Task Branch
     BTNode* task_cond = bt_create_condition("HasGoal?", condition_has_goal, NULL);
@@ -438,7 +459,7 @@ void behavior_init(void) {
     root_children[0] = safety_seq;
     root_children[1] = discovery_act; // Ensure we discover workspace bounds early
     root_children[2] = phantom_seq;   // Haptic Discovery (from upstream)
-    root_children[3] = cal_seq;
+    root_children[3] = cal_branch;
     root_children[4] = motivation_branch;
     root_children[5] = grab_seq;
     root_children[6] = collab_branch;
