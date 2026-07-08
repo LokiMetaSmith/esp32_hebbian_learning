@@ -182,7 +182,7 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "setInterval(async () => {"
         "  const r = await fetch('/api/stats'); const d = await r.json();"
         "  document.getElementById('status').innerText = d.bt_root_status + (d.is_recording ? ' [RECORDING]' : '');"
-        "  document.getElementById('cns_text').innerText = `Stress: \${d.stress.toFixed(2)} | Cur: \${d.curiosity.toFixed(2)} | Fat: \${d.fatigue.toFixed(2)}`;"
+        "  document.getElementById('cns_text').innerText = 'Stress: ' + d.stress.toFixed(2) + ' | Cur: ' + d.curiosity.toFixed(2) + ' | Fat: ' + d.fatigue.toFixed(2);"
         "  chartS.data.labels.push(''); chartS.data.datasets[0].data.push(d.snn.stress);"
         "  if(chartS.data.labels.length > 20) { chartS.data.labels.shift(); chartS.data.datasets[0].data.shift(); }"
         "  chartS.update();"
