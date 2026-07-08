@@ -136,6 +136,30 @@ static BTStatus action_request_calibration(BTNode* node) {
     return BT_SUCCESS;
 }
 
+static BTStatus action_sleep(BTNode* node) {
+    static bool sleep_started = false;
+    if (!sleep_started) {
+        ESP_LOGI(TAG, "BT: Fatigue CRITICAL. Entering Sleep/Consolidation cycle.");
+        float sleep_pose[6] = {0, 0.7f, -0.7f, 0, 0, 0}; // Tucked home position
+        planner_set_goal_joints(sleep_pose);
+        sleep_started = true;
+        return BT_RUNNING;
+    }
+    if (planner_is_idle()) {
+        // Consolidated learned weights during sleep
+        g_drives.fatigue *= 0.1f; // Sleep significantly reduces fatigue
+        save_network_to_nvs(g_hl, g_ol, g_pl); // Persist during sleep
+        sleep_started = false;
+        ESP_LOGI(TAG, "BT: Sleep cycle complete. Robot is refreshed.");
+        return BT_SUCCESS;
+    }
+    return BT_RUNNING;
+}
+
+static BTStatus condition_is_exhausted(BTNode* node) {
+    return (g_drives.fatigue > 0.95f) ? BT_SUCCESS : BT_FAILURE;
+}
+
 static BTStatus action_map_haptic_obstacle(BTNode* node) {
     if (synsense_get_classification() != 0) return BT_FAILURE; // If we see something, it's a known object, not a new obstacle
 
@@ -176,6 +200,16 @@ static BTStatus condition_peer_sees_object(BTNode* node) {
 
 static BTStatus action_track_object(BTNode* node) {
     uint8_t current_class = synsense_get_classification();
+
+    // Decentralized Task Negotiation
+    if (g_peer_status.active && g_peer_status.vision_class == current_class) {
+        // Peer is already tracking this object. If I have higher fatigue, I defer.
+        if (g_drives.fatigue > g_peer_status.fatigue) {
+            ESP_LOGI(TAG, "BT: Peer is already tracking class %d. Deferring task.", current_class);
+            return BT_FAILURE;
+        }
+    }
+
     Point3D target_pos;
     if (kinematics_get_target_from_vision(current_class, &target_pos)) {
         ESP_LOGI(TAG, "BT: Tracking object class %d at (%.2f, %.2f, %.2f)", current_class, target_pos.x, target_pos.y, target_pos.z);
@@ -304,12 +338,22 @@ void behavior_init(void) {
     task_children[0] = task_cond; task_children[1] = task_act;
     BTNode* task_seq = bt_create_sequence("TaskSequence", task_children, 2);
 
-    // Homeostatic Branch
+    // Homeostatic Branch (Sleep and Rest)
+    BTNode* exhausted_cond = bt_create_condition("IsExhausted?", condition_is_exhausted, NULL);
+    BTNode* sleep_act = bt_create_action("SleepCycle", action_sleep, NULL);
+    BTNode** sleep_children = malloc(sizeof(BTNode*) * 2);
+    sleep_children[0] = exhausted_cond; sleep_children[1] = sleep_act;
+    BTNode* sleep_seq = bt_create_sequence("SleepLogic", sleep_children, 2);
+
     BTNode* tired_cond = bt_create_condition("IsTired?", condition_is_tired, NULL);
     BTNode* rest_act = bt_create_action("Rest", action_rest, NULL);
     BTNode** homeo_children = malloc(sizeof(BTNode*) * 2);
     homeo_children[0] = tired_cond; homeo_children[1] = rest_act;
-    BTNode* homeo_seq = bt_create_sequence("Homeostasis", homeo_children, 2);
+    BTNode* homeo_seq = bt_create_sequence("RestLogic", homeo_children, 2);
+
+    BTNode** motivation_children = malloc(sizeof(BTNode*) * 2);
+    motivation_children[0] = sleep_seq; motivation_children[1] = homeo_seq;
+    BTNode* motivation_branch = bt_create_selector("Homeostasis", motivation_children, 2);
 
     // Idle Branch
     BTNode* idle_act = bt_create_action("IdleWander", action_idle_wander, NULL);
@@ -362,7 +406,7 @@ void behavior_init(void) {
     root_children[1] = discovery_act; // Ensure we discover workspace bounds early
     root_children[2] = phantom_seq;   // Haptic Discovery (from upstream)
     root_children[3] = cal_seq;
-    root_children[4] = homeo_seq;
+    root_children[4] = motivation_branch;
     root_children[5] = grab_seq;
     root_children[6] = collab_branch;
     root_children[7] = task_seq;
