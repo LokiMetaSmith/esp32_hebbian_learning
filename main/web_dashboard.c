@@ -3,6 +3,7 @@
 #include "cJSON.h"
 #include "main.h"
 #include "behavior_tree.h"
+#include "planner.h"
 #include "kinematics.h"
 #include "inter_esp_comm.h"
 #include "snn_lsm.h"

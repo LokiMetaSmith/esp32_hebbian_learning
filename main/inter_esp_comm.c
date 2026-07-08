@@ -13,7 +13,7 @@ PeerStatus_t g_peer_status = {0};
 // Broadcast address
 static uint8_t broadcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
 
-static void on_data_sent(const uint8_t *mac_addr, esp_now_send_status_t status) {
+static void on_data_sent(const esp_now_send_info_t *tx_info, esp_now_send_status_t status) {
     ESP_LOGD(TAG, "Last Packet Send Status: %s", status == ESP_NOW_SEND_SUCCESS ? "Delivery Success" : "Delivery Fail");
 }
 

@@ -22,7 +22,7 @@ For more detailed information, please refer to the [Technical Report](https://gi
 
 ## Software Architecture
 
-*   **Framework:** ESP-IDF v5.4
+*   **Framework:** ESP-IDF v5.5 (pinned managed components)
 *   **Language:** C
 *   **Key Libraries/Components:**
     *   `espressif/esp-dsp`: For hardware-accelerated dot product calculations in the neural network.

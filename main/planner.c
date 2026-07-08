@@ -1,5 +1,7 @@
 #include "planner.h"
 #include "robot_body.h"
+#include "nvs_storage.h"
+#include "feetech_protocol.h"
 #include "inter_esp_comm.h"
 #include "kinematics.h"
 #include "esp_log.h"

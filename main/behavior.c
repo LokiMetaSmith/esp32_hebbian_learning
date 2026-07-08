@@ -3,6 +3,7 @@
 #include "esp_log.h"
 #include "main.h"
 #include "planner.h"
+#include "nvs_storage.h"
 #include "kinematics.h"
 #include "synsense_driver.h"
 #include "inter_esp_comm.h"

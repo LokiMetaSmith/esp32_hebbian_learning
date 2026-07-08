@@ -14,6 +14,9 @@
 #include "config.h"
 #include "planner.h"
 #include "behavior.h"
+#include "behavior_tree.h"
+#include "web_dashboard.h"
+#include "nvs_storage.h"
 #include "synsense_driver.h"
 #include "esp_dsp.h"
 

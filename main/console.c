@@ -1239,7 +1239,7 @@ int cmd_plan_move(int argc, char **argv) {
     target_pose[4] = (float)plan_move_args.p5->ival[0] / SERVO_POS_MAX;
     target_pose[5] = (float)plan_move_args.p6->ival[0] / SERVO_POS_MAX;
 
-    planner_set_goal(target_pose);
+    planner_set_goal_internal(target_pose);
 
     return 0;
 }
