@@ -160,6 +160,37 @@ static BTStatus condition_is_exhausted(BTNode* node) {
     return (g_drives.fatigue > 0.95f) ? BT_SUCCESS : BT_FAILURE;
 }
 
+static BTStatus action_spiral_search(BTNode* node) {
+    static int spiral_step = 0;
+    static Point3D base_pos;
+    uint8_t class = (uint8_t)(uintptr_t)node->context;
+
+    if (spiral_step == 0) {
+        kinematics_get_target_from_vision(class, &base_pos);
+        ESP_LOGI(TAG, "BT: No contact at target. Starting Spiral Search for class %d.", class);
+    }
+
+    float angle = 0.5f * spiral_step;
+    float radius = 0.01f * spiral_step;
+    Point3D search_pos = {
+        base_pos.x + radius * cosf(angle),
+        base_pos.y + radius * sinf(angle),
+        base_pos.z
+    };
+
+    float start_angles[6] = {0}, goal_angles[6];
+    if (kinematics_inverse(search_pos, start_angles, goal_angles)) {
+        planner_set_goal_joints(goal_angles);
+    }
+
+    spiral_step++;
+    if (g_lsm_stress_level > 0.15f || spiral_step > 20) {
+        spiral_step = 0;
+        return (g_lsm_stress_level > 0.15f) ? BT_SUCCESS : BT_FAILURE;
+    }
+    return BT_RUNNING;
+}
+
 static BTStatus action_map_haptic_obstacle(BTNode* node) {
     if (synsense_get_classification() != 0) return BT_FAILURE; // If we see something, it's a known object, not a new obstacle
 
@@ -362,6 +393,7 @@ void behavior_init(void) {
     BTNode* sees_red = bt_create_condition("SeesRedBlock?", condition_sees_object, (void*)1);
     BTNode* open_g = bt_create_action("OpenGripper", action_open_gripper, NULL);
     BTNode* track_red = bt_create_action("TrackRed", action_track_object, NULL);
+    BTNode* search_red = bt_create_action("SpiralSearchRed", action_spiral_search, (void*)1);
 
     // Adaptive mapping sub-branch
     BTNode* is_touching = bt_create_condition("IsTouching?", condition_is_touching, NULL);
@@ -372,13 +404,14 @@ void behavior_init(void) {
 
     BTNode* close_g = bt_create_action("CloseGripper", action_close_gripper, NULL);
 
-    BTNode** grab_children = malloc(sizeof(BTNode*) * 5);
+    BTNode** grab_children = malloc(sizeof(BTNode*) * 6);
     grab_children[0] = sees_red;
     grab_children[1] = open_g;
     grab_children[2] = track_red;
-    grab_children[3] = haptic_seq; // Ensure we are touching before closing or update if we felt it
-    grab_children[4] = close_g;
-    BTNode* grab_seq = bt_create_sequence("GrabRedBlockSequence", grab_children, 5);
+    grab_children[3] = search_red;
+    grab_children[4] = haptic_seq; // Ensure we are touching before closing or update if we felt it
+    grab_children[5] = close_g;
+    BTNode* grab_seq = bt_create_sequence("GrabRedBlockSequence", grab_children, 6);
 
     // Collaborative Branch
     BTNode* peer_sees_blue = bt_create_condition("PeerSeesBlue?", condition_peer_sees_object, (void*)2);
