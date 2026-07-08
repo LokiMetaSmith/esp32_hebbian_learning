@@ -123,6 +123,9 @@ void planner_start_recording(int gesture_id);
 /** @brief Stops recording and saves the gesture. */
 void planner_stop_recording(void);
 
+/** @brief Checks if kinesthetic recording is currently active. */
+bool planner_is_recording(void);
+
 /** @brief Initializes a semaphore used to signal when the planner is idle. */
 void planner_init_sync(void);
 

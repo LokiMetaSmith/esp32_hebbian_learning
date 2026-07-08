@@ -985,6 +985,16 @@ static int json_to_argv(const cJSON *args_json, char **argv, int max_args) {
 /**
  * @brief Public function to initialize the MCP server.
  */
+void mcp_server_trigger_autocal(void) {
+    ESP_LOGI(TAG, "Autonomous re-calibration triggered by Behavior Tree.");
+    cJSON *args = cJSON_CreateObject();
+    cJSON_AddStringToObject(args, "url", "http://nanobot.local/api/sync"); // Default URL
+    cJSON_AddStringToObject(args, "mode", "sync");
+    cJSON *resp = handle_nanobot_tool(args);
+    if (resp) cJSON_Delete(resp);
+    cJSON_Delete(args);
+}
+
 void mcp_server_init(void) {
     // Note: The main.c already calls nvs_storage_initialize(),
     // which calls nvs_flash_init(). It's safe to call it again.

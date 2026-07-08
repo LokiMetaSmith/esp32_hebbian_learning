@@ -14,4 +14,9 @@
 
 void mcp_server_init(void);
 
+/**
+ * @brief Triggers an autonomous re-calibration request to the nanobot server.
+ */
+void mcp_server_trigger_autocal(void);
+
 #endif // MCP_SERVER_H

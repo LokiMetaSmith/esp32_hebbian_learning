@@ -444,10 +444,15 @@ void planner_task(void *pvParameters) {
             // (Real implementation would use FK of current action_vector)
 
             if (my_drive < peer_drive - 0.1f) {
-                // Check for potential collision course (Simplified)
-                // If I am moving and the peer is nearby, I yield.
-                ESP_LOGW(TAG, "Peer has higher priority drive. YIELDING.");
-                vTaskDelay(pdMS_TO_TICKS(500)); // Yield 0.5s
+                // Peer has priority.
+                ESP_LOGW(TAG, "Peer has higher priority drive. YIELDING with retraction.");
+
+                // Move to a 'Yield Pose' (slightly retracted)
+                float yield_pose[6] = {0, 0.4f, -0.4f, 0, 0, 0};
+                body_act(yield_pose);
+
+                vTaskDelay(pdMS_TO_TICKS(1000)); // Wait 1s for peer to clear
+                g_new_goal_set = true; // Re-plan after yielding to avoid old path collision
             }
         }
 
@@ -516,6 +521,10 @@ void planner_stop_recording(void) {
     save_gestures_to_nvs(&g_gesture_graph);
     ESP_LOGI(TAG, "Kinesthetic Recording STOPPED and saved to NVS. Recorded %d waypoints for gesture %d.",
              g_gesture_graph.gesture_library[g_recording_gesture_id].num_waypoints, g_recording_gesture_id);
+}
+
+bool planner_is_recording(void) {
+    return g_is_recording;
 }
 
 void planner_init(void) {

@@ -27,6 +27,7 @@ static esp_err_t stats_handler(httpd_req_t *req) {
     // SNN Stats
     cJSON *snn = cJSON_AddObjectToObject(root, "snn");
     cJSON_AddNumberToObject(snn, "stress", g_lsm_stress_level);
+    cJSON_AddNumberToObject(snn, "dissonance", g_last_prediction_error);
     cJSON *firing = cJSON_AddArrayToObject(snn, "output_firing");
     for(int i=0; i<N_OUTPUT; i++) cJSON_AddItemToArray(firing, cJSON_CreateNumber(g_lsm.spk_out[i]));
 
@@ -46,6 +47,12 @@ static esp_err_t stats_handler(httpd_req_t *req) {
         cJSON_AddStringToObject(root, "bt_root_status", (g_root_node->last_status == BT_SUCCESS) ? "SUCCESS" :
                                                        (g_root_node->last_status == BT_RUNNING) ? "RUNNING" : "FAILURE");
     }
+
+    // Central Nervous System Status
+    cJSON_AddNumberToObject(root, "stress", g_lsm_stress_level);
+    cJSON_AddNumberToObject(root, "curiosity", g_drives.curiosity);
+    cJSON_AddNumberToObject(root, "fatigue", g_drives.fatigue);
+    cJSON_AddBoolToObject(root, "is_recording", planner_is_recording());
 
     // End Effector Coordinates
     float current_angles[6];
@@ -155,7 +162,7 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "<div class='card'><h2>Internal Drives</h2><canvas id='driveChart'></canvas></div>"
         "<div class='card'><h2>SNN stress</h2><canvas id='stressChart'></canvas></div>"
         "<div class='card'><h2>Trajectory Trail (XY)</h2><canvas id='trailChart'></canvas></div>"
-        "<div class='card'><h2>Status</h2><p id='status'>-</p></div>"
+        "<div class='card'><h2>Status</h2><p id='status'>-</p><p id='cns_text' style='font-family:monospace;color:#0f0;'></p></div>"
         "<script>"
         "const ctxS = document.getElementById('stressChart').getContext('2d');"
         "const chartS = new Chart(ctxS, {type:'line',data:{labels:[],datasets:[{label:'Stress',data:[],borderColor:'red'}]}});"
@@ -173,7 +180,8 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "async function sendCmd(o){await fetch('/api/command',{method:'POST',body:JSON.stringify(o)});}"
         "setInterval(async () => {"
         "  const r = await fetch('/api/stats'); const d = await r.json();"
-        "  document.getElementById('status').innerText = d.bt_root_status;"
+        "  document.getElementById('status').innerText = d.bt_root_status + (d.is_recording ? ' [RECORDING]' : '');"
+        "  document.getElementById('cns_text').innerText = `Stress: \${d.stress.toFixed(2)} | Cur: \${d.curiosity.toFixed(2)} | Fat: \${d.fatigue.toFixed(2)}`;"
         "  chartS.data.labels.push(''); chartS.data.datasets[0].data.push(d.snn.stress);"
         "  if(chartS.data.labels.length > 20) { chartS.data.labels.shift(); chartS.data.datasets[0].data.shift(); }"
         "  chartS.update();"
