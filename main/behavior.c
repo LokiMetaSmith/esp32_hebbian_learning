@@ -6,6 +6,7 @@
 #include "kinematics.h"
 #include "synsense_driver.h"
 #include "inter_esp_comm.h"
+#include "mcp_server.h"
 #include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -130,8 +131,7 @@ static BTStatus condition_model_dissonance(BTNode* node) {
 
 static BTStatus action_request_calibration(BTNode* node) {
     ESP_LOGW(TAG, "BT: Model dissonance detected! Requesting server-side re-calibration.");
-    // In a real scenario, this would trigger a nanobot server request
-    // For now, we signal it via the SNN Stress (Neuromorphic Pain) to get attention
+    mcp_server_trigger_autocal();
     g_lsm_stress_level += 0.2f;
     return BT_SUCCESS;
 }
