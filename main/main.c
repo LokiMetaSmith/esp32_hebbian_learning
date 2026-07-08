@@ -711,8 +711,18 @@ void learning_loop_task(void *pvParameters) {
             update_weights_hebbian(combined_input, correctness, current_draw, g_hl, g_ol, g_pl);
             led_indicator_set_color_from_fitness(correctness);
 
+            // --- Breakthrough-based NVS Persistence ---
+            // Save brain state when we achieve a major breakthrough in performance
+            static float last_saved_fitness = 0.0f;
+            if (correctness > last_saved_fitness + 0.15f) {
+                ESP_LOGI(TAG, "Learning Breakthrough (%.2f -> %.2f). Persisting brain to NVS.", last_saved_fitness, correctness);
+                save_network_to_nvs(g_hl, g_ol, g_pl);
+                save_snn_weights_to_nvs(&g_lsm);
+                last_saved_fitness = correctness;
+            }
+
             static long snn_comm_counter = 0;
-            if (++snn_comm_counter % 5000 == 0) { // Reduced NVS write frequency to 1/5000 cycles (every ~1000s)
+            if (++snn_comm_counter % 10000 == 0) { // Keep background save at very low frequency
                 save_snn_weights_to_nvs(&g_lsm);
             }
             if (snn_comm_counter % 50 == 0) {

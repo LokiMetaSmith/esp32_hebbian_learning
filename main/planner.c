@@ -153,8 +153,13 @@ extern Obstacle g_obstacles[10]; // Shared with planner_rrt.c
  */
 static void calculate_repulsive_force(const Point3D ee, float* nudge_x, float* nudge_y, float* nudge_z) {
     *nudge_x = 0; *nudge_y = 0; *nudge_z = 0;
-    const float k_rep = 0.05f; // Repulsion gain
-    const float d_limit = 0.15f; // Max distance for influence
+
+    // --- Drive-Modulated Reactive Field (Personality) ---
+    // High safety increases repulsion distance (cautious).
+    // High curiosity decreases it (brave/exploratory).
+    const float k_rep = 0.05f;
+    float d_limit = 0.15f + (g_drives.safety * 0.10f) - (g_drives.curiosity * 0.05f);
+    if (d_limit < 0.05f) d_limit = 0.05f; // Minimum physical safety margin
 
     for (int i = 0; i < 10; i++) {
         if (!g_obstacles[i].active) continue;
@@ -219,6 +224,15 @@ static void reconstruct_and_execute_path(int came_from[], int current_token_id) 
             GestureWaypoint* wp = &token->waypoints[j];
 
             for (int step = 1; step <= num_sub_steps; step++) {
+                // --- 100Hz High-Frequency Reflex Layer ---
+                if (g_lsm_stress_level > 0.8f) {
+                    ESP_LOGW(TAG, "REFLEX: Critical stress detected (%.3f). Instant recoil!", g_lsm_stress_level);
+                    float recoil[6] = {0, 0.4f, -0.4f, 0, 0, 0};
+                    body_act(recoil);
+                    g_new_goal_set = true; // Signal abort/replan
+                    return;
+                }
+
                 float t_linear = (float)step / (float)num_sub_steps;
                 // Simple Trapezoidal (S-Curve) smoothing: t = 3t^2 - 2t^3
                 float t = t_linear * t_linear * (3.0f - 2.0f * t_linear);
@@ -350,6 +364,7 @@ void planner_task(void *pvParameters) {
                         float next_vel[ROBOT_DOF] = {0}; // Assume zero velocity at nodes for simplicity
 
                         for (int step = 1; step <= 5; step++) {
+                            if (g_lsm_stress_level > 0.8f) { g_new_goal_set = true; return; }
                             float t_linear = (float)step / 5.0f;
                             float t = t_linear * t_linear * (3.0f - 2.0f * t_linear);
                             float action[32] = {0};
@@ -412,6 +427,7 @@ void planner_task(void *pvParameters) {
                                 float next_vel[ROBOT_DOF] = {0};
 
                                 for (int step = 1; step <= 5; step++) {
+                                    if (g_lsm_stress_level > 0.8f) { g_new_goal_set = true; return; }
                                     float t_linear = (float)step / 5.0f;
                                     float t = t_linear * t_linear * (3.0f - 2.0f * t_linear);
                                     float action[32] = {0};
