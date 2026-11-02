@@ -1,0 +1,53 @@
+## Archived: 2026-11-02
+
+* A `condition_peer_sees_object` Behavior Tree node and a `SwarmSync` sequence in `main/behavior.c` facilitate collaborative behaviors between robots by reacting to vision detections shared over the air.
+* The kinematics engine in `main/kinematics.c` includes `kinematics_check_self_collision` to prevent the arm from intersecting with the base plate or central column during motion planning.
+* The `TODO.md` file contains a 'Phase 6: Future Potential Tasks' roadmap including RL readout integration, multi-modal fusion, autonomous sleep cycles, Dynamic SNN Pruning, and Haptic Surface Profiling.
+* To set up the development environment on Linux, install `libusb-1.0-0`, clone ESP-IDF v5.5, run `./install.sh all`, and source `export.sh` before building with `idf.py build`.
+* The Behavior Tree in `main/behavior.c` includes a 'MotivationalBranch' that prioritizes 'Rest' at the home position when Fatigue is high and triggers Curiosity-based learning when boredom (low curiosity) is detected.
+* The robot includes a neuromorphic safety layer where a Spiking Neural Network (LSM) processes real-time dynamics (prediction error, current draw, peer stress, and proximity signals) to compute a 'stress level' (`g_lsm_stress_level`). If stress exceeds 0.5, the Behavior Tree engine triggers an emergency abort maneuver.
+* The project uses `nvs_storage.c/h` to persist neural network weights, SNN readout weights, servo correction maps, state tokens, visual workspace maps, joint limits, the gesture library graph, and learned actuator calibration parameters (gain and offset) across reboots.
+* NVS persistence for neural weights is triggered by learning 'Breakthroughs' (fitness improvement > 0.15) or as a background throttle every 5000 cycles (~250s) to protect flash endurance.
+* The robot's decision-making logic in `main/behavior.c` utilizes a Behavior Tree to manage Safety (neuromorphic stress response), Motivation (Curiosity/Fatigue drives), Task (goal execution), and Idle (learning/wandering) states.
+* The `teach-gesture <id>` console command enables "Teach Mode" for a single pose, while `start-record <id>` and `stop-record` facilitate multi-waypoint kinesthetic path recording at 2Hz.
+* Joint-space limits (min/max angles) are enforced by the RRT planner in `main/planner_rrt.c` by constraining random state sampling to the discovered bounds stored in `g_joint_limits`.
+* The Web Dashboard includes Live BT Node Tracing via `bt_get_active_node_name` (implemented in `main/behavior_tree.c`), displaying the currently executing leaf node in the status panel.
+* The `main/web_dashboard.c` module implements an HTTP server providing a graphical dashboard with a real-time World Map XY plot that supports click-to-move teleoperation via the `ik_move` command.
+* Adaptive workspace calibration in `main/behavior.c` and `main/kinematics.c` allows the robot to update its 3D visual workspace map in NVS by detecting physical contact via motor load or SNN stress.
+* The motion planner utilizes S-Curve (Trapezoidal) velocity profiling using a cubic polynomial (`t = 3t^2 - 2t^3`) during spline interpolation to ensure smooth acceleration and deceleration at segment boundaries.
+* The `main/main.c` learning loop implements a "Curiosity Engine" that uses Active Inference to select candidate actions based on predicted novelty (dissonance) relative to known state centroids.
+* The robot implements a Homeostatic Drive System (Curiosity, Fatigue, Safety, Satisfaction) in `main/main.c` where 'Satisfaction' spikes on task success, resetting curiosity and accelerating fatigue recovery.
+* A 100Hz 'Reflex Layer' in `main/planner.c` monitors `g_lsm_stress_level` and triggers instant arm recoil and global path replanning if stress exceeds 0.8 (critical collision).
+* The Artificial Potential Field (APF) repulsion radius is dynamically modulated by robot personality drives: high 'Safety' increases caution (wider radius), while high 'Curiosity' reduces the radius to allow tighter exploratory paths.
+* The `inter_esp_comm` module enables symmetric synchronization and distributed sensory fusion between ESP32 units using ESP-NOW, sharing goal embeddings, stress levels, vision classifications, and internal drives (Curiosity/Fatigue).
+* The RRT planner in `main/planner_rrt.c` includes a post-processing pruning step that short-cuts collision-free segments between non-adjacent nodes to improve trajectory smoothness. It verifies safety along path segments by checking five intermediate sub-steps between nodes.
+* The `get-workspace-map` console command allows inspection of the learned Cartesian coordinates for vision-classified objects.
+* Shared system states, including workspace targets, SNN instance (`g_lsm`), stress level (`g_lsm_stress_level`), the Behavior Tree root node, `g_gesture_graph`, and `g_learning_loop_active`, utilize external linkage defined in `main.h` and `planner.h` to facilitate cross-module access and diagnostic monitoring.
+* The MCP Server (`main/mcp_server.c`) includes specialized robotics tools (`ik_move`, `get_bt_status`, `add_obstacle`, and `get_full_status`) to expose the Behavior Tree state, Cartesian Inverse Kinematics, and the obstacle world model to remote LLMs or supervisors over TCP.
+* The Web Dashboard status card displays live CNS telemetry (Stress, Curiosity, Fatigue) and provides a '[RECORDING]' visual indicator when kinesthetic teaching is active.
+* The `get-full-status` command and JSON API provide a Unified CNS Diagnostic Interface aggregating SNN stress/dissonance, homeostatic drives, motion planner state, and energy statistics.
+* The autonomous workspace discovery routine (`body_perform_homing_discovery`) performs joint-wise sweeps using auto-calibrated 3-sigma thresholds for accelerometer jitter and servo current to detect and map physical boundaries.
+* Behavior Tree construction in `main/behavior.c` requires dynamic allocation (malloc) for node children arrays to ensure memory safety across function scopes and prevent dangling pointers.
+* The project's Python tools and unit tests require `numpy`, `scikit-learn`, `matplotlib`, `pyserial`, and `minisom` for full functionality.
+* The Web Dashboard JSON API provides real-time joint positions normalized between -1 and 1, rendered in a dedicated "Joint Angles" panel for configuration-space monitoring.
+* Managed components in `main/idf_component.yml` are pinned to compatible versions: `esp-dsp` (1.7.0), `esp_tinyusb` (1.7.6~1), `led_strip` (3.0.1~1), and `tinyusb` (0.18.0~2).
+* The TinyUSB CDC driver must be explicitly enabled in `sdkconfig` (`CONFIG_TINYUSB_CDC_ENABLED=y`) and requires the older API function `tusb_cdc_acm_init` for compatibility with pinned versions.
+* The Behavior Tree in `main/behavior.c` features a `HapticDiscovery` branch that autonomously adds virtual obstacles to the map when physical resistance (SNN stress) is detected without a corresponding visual object classification.
+* The system implements Peer Priority Arbitration via ESP-NOW; lower-priority robots autonomously move to a retracted 'Yield Pose' for 1 second when on a collision course with a higher-priority peer.
+* The Web Dashboard HTTP server provides a real-time 'World Map' scatter plot that visualizes the robot's XY trajectory trail, discovered virtual obstacles, and the relative coordinates of peer robots.
+* The motion planner in `main/planner.c` implements dynamic replanning; if the Artificial Potential Field (APF) repulsive force exceeds a 0.05 magnitude threshold, the current execution is aborted to trigger a fresh global RRT search.
+* Virtual obstacles in the motion planner implement Haptic Memory Decay, where a 'persistence' value is decremented every 10 seconds in the `planner_task`, causing transient obstructions to be 'forgotten' when the value reaches zero.
+* The project requires a custom partition table (`partitions.csv`) with a 2MB factory partition and 1MB storage partition to accommodate the application size and NVS storage needs.
+* A Homeostatic 'Sleep' Cycle in `main/behavior.c` enables the robot to autonomously return to a tucked home pose, save network weights to NVS for consolidation, and reset fatigue levels when Fatigue exceeds 0.95.
+* The Behavior Tree includes a 'MetaOptimization' branch that autonomously triggers random SNN hyperparameter mutation using `snn_lsm_mutate_hyperparams` when model dissonance exceeds a critical 0.7 threshold.
+* The Web Dashboard visualizes the robot's 'Mental Repertoire' by plotting the Cartesian XY coordinates of learned gesture embeddings as static points on the World Map.
+* Architectural decisions, including Robot Body Abstraction, Physics Simulation, Symmetric Coherence, Adaptive Mapping, Behavior Trees, and Kinematics, are documented in `docs/ARCHITECTURE.md`.
+* The RGB LED indicator in `main/led_indicator.c` implements emotional expression via drive-blending and a heartbeat 'breathe' effect; color reflects the mix of internal drives (Red/Blue/Orange/Green), pulse rate is driven by Stress, and brightness is scaled by Satisfaction.
+* `action_spiral_search` in `main/behavior.c` implements active haptic search, performing a broadening 3D spiral pattern when a vision-targeted reach fails to make physical contact.
+* The project depends on `esp_http_client` for the 'nanobot' functionality, `esp_now` (within `esp_wifi`) for inter-ESP communication, and `esp_http_server` for the dashboard.
+* The Behavior Tree includes 'CalibrationLogic' that monitors `g_last_prediction_error` (model dissonance) and autonomously triggers server-side re-calibration via `mcp_server_trigger_autocal` in `main/mcp_server.c` when error thresholds are exceeded.
+* Behavior Tree actions in `main/behavior.c` are implemented as non-blocking functions that utilize the `planner_is_idle()` status to manage state transitions, ensuring the system remains responsive to safety interrupts (e.g., SNN stress) during multi-step tasks.
+* The project is verified to build on ESP-IDF v5.5 for the ESP32-S3 target; avoid using the master branch (v6.x) as it introduces API breaking changes in components like TinyUSB.
+* The `action_calibrate_workspace` Behavior Tree node returns `BT_FAILURE` if valid joint limits already exist, allowing the `RootSelector` to advance to subsequent tasks in the hierarchy.
+* The user requires a 'Deep Planning Mode' before execution, where the assistant must ask clarifying questions and confirm all assumptions before creating a plan for approval.
+* Decentralized Task Negotiation in the Behavior Tree (`main/behavior.c`) utilizes ESP-NOW to prevent swarm-level task overlap by comparing Fatigue levels when multiple robots target the same vision classification class.
