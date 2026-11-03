@@ -18,6 +18,7 @@ typedef struct {
     Point3D center;
     float radius;
     bool active;
+    int persistence; // Haptic memory decay: cycles remaining until forgotten
 } Obstacle;
 
 // --- Gesture Token Definition ---
@@ -88,6 +89,11 @@ void planner_add_obstacle(float x, float y, float z, float radius);
  * @brief Clears all obstacles from the registry.
  */
 void planner_clear_obstacles(void);
+
+/**
+ * @brief Ticks the decay logic for virtual haptic obstacles.
+ */
+void planner_haptic_decay_tick(int* decay_tick);
 
 /** @brief The main FreeRTOS task for the motion planner. */
 void planner_task(void *pvParameters);

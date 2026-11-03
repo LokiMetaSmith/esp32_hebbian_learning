@@ -72,4 +72,11 @@ void snn_lsm_stdp_update(snn_lsm_t *lsm);
  */
 void snn_lsm_mutate_hyperparams(snn_lsm_t *lsm, float new_beta, float new_v_th, float new_lr);
 
+/**
+ * @brief Prune weights below a given threshold to reduce memory and compute overhead.
+ * @param lsm Pointer to the LSM structure.
+ * @param threshold Absolute weight value below which a connection is pruned (set to zero).
+ */
+void snn_lsm_prune_weights(snn_lsm_t *lsm, float threshold);
+
 #endif // SNN_LSM_H
