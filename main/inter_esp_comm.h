@@ -11,7 +11,8 @@ typedef enum {
     MSG_TYPE_GOAL_EMBEDDING,
     MSG_TYPE_CURRENT_STATE,
     MSG_TYPE_CONTROL_CMD,
-    MSG_TYPE_STATUS_UPDATE
+    MSG_TYPE_STATUS_UPDATE,
+    MSG_TYPE_WEIGHT_PATCH
 } InterEspMsgType_t;
 
 #define INTER_ESP_MAX_PAYLOAD_FLOATS 32
@@ -44,5 +45,6 @@ extern PeerStatus_t g_peer_status;
 esp_err_t inter_esp_comm_init(void);
 esp_err_t inter_esp_send_goal(const float* embedding);
 esp_err_t inter_esp_send_status(float stress, uint8_t vision_class, float curiosity, float fatigue, Point3D current_ee);
+esp_err_t inter_esp_broadcast_weight_patch(uint8_t post_idx, uint8_t pre_idx, float new_w, float new_eta);
 
 #endif // INTER_ESP_COMM_H

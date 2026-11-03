@@ -148,6 +148,25 @@ static BTStatus action_mutate_snn(BTNode* node) {
     return BT_SUCCESS;
 }
 
+static BTStatus condition_needs_llm_surgery(BTNode* node) {
+    // Persistent high prediction error or multiple dead nodes
+    int dead_count = 0;
+    for (int i = 0; i < N_RES; i++) {
+        if (g_lsm.mean_act_res[i] < 0.01f || g_lsm.mean_act_res[i] > 0.85f) {
+            dead_count++;
+        }
+    }
+    return (g_last_prediction_error > 0.65f || dead_count >= 5) ? BT_SUCCESS : BT_FAILURE;
+}
+
+static BTStatus action_request_llm_surgery(BTNode* node) {
+    ESP_LOGW(TAG, "BT: Triggering Autonomous LLM Weight-Space Surgery Request.");
+    printf("@JSON:{\"event\":\"llm_surgery_needed\",\"active_bank\":%d,\"stress\":%.4f,\"dissonance\":%.4f}\n",
+           g_lsm.active_bank, g_lsm_stress_level, g_last_prediction_error);
+    fflush(stdout);
+    return BT_SUCCESS;
+}
+
 static BTStatus action_sleep(BTNode* node) {
     static bool sleep_started = false;
     if (!sleep_started) {
@@ -383,11 +402,19 @@ void behavior_init(void) {
     meta_children[0] = meta_cond; meta_children[1] = mutate_act;
     BTNode* meta_seq = bt_create_sequence("MetaOptimization", meta_children, 2);
 
-    BTNode** cal_children = malloc(sizeof(BTNode*) * 3);
-    cal_children[0] = meta_seq; // Priority: Mutation > Re-calibration
-    cal_children[1] = dissonance_cond;
-    cal_children[2] = cal_act;
-    BTNode* cal_branch = bt_create_selector("CalibrationLogic", cal_children, 3);
+    // LLM Weight Surgery sub-branch
+    BTNode* surgery_cond = bt_create_condition("NeedsLLMSurgery?", condition_needs_llm_surgery, NULL);
+    BTNode* surgery_act = bt_create_action("RequestLLMSurgery", action_request_llm_surgery, NULL);
+    BTNode** surgery_children = malloc(sizeof(BTNode*) * 2);
+    surgery_children[0] = surgery_cond; surgery_children[1] = surgery_act;
+    BTNode* surgery_seq = bt_create_sequence("LLMSurgeryBranch", surgery_children, 2);
+
+    BTNode** cal_children = malloc(sizeof(BTNode*) * 4);
+    cal_children[0] = surgery_seq; // Priority: LLM Surgery > Mutation > Re-calibration
+    cal_children[1] = meta_seq;
+    cal_children[2] = dissonance_cond;
+    cal_children[3] = cal_act;
+    BTNode* cal_branch = bt_create_selector("CalibrationLogic", cal_children, 4);
 
     // Task Branch
     BTNode* task_cond = bt_create_condition("HasGoal?", condition_has_goal, NULL);

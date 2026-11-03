@@ -182,12 +182,18 @@ esp_err_t save_snn_weights_to_nvs(const snn_lsm_t *lsm) {
     const snn_weight_bank_t *active = &lsm->banks[lsm->active_bank];
     err = nvs_set_blob(nvs_handle, "snn_wout", active->w_out, sizeof(active->w_out));
     if (err == ESP_OK) {
+        err = nvs_set_blob(nvs_handle, "snn_eta_out", active->eta_out, sizeof(active->eta_out));
+    }
+    if (err == ESP_OK) {
+        err = nvs_set_u8(nvs_handle, "snn_act_bank", lsm->active_bank);
+    }
+    if (err == ESP_OK) {
         err = nvs_commit(nvs_handle);
     }
 
     nvs_close(nvs_handle);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "SNN readout weights saved to NVS.");
+        ESP_LOGI(TAG, "SNN readout weights and plasticity mask saved to NVS.");
     }
     return err;
 }
@@ -197,17 +203,25 @@ esp_err_t load_snn_weights_from_nvs(snn_lsm_t *lsm) {
     esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READONLY, &nvs_handle);
     if (err != ESP_OK) return err;
 
+    uint8_t saved_bank = 0;
+    if (nvs_get_u8(nvs_handle, "snn_act_bank", &saved_bank) == ESP_OK && saved_bank < 2) {
+        lsm->active_bank = saved_bank;
+    }
+
     snn_weight_bank_t *active = &lsm->banks[lsm->active_bank];
     size_t required_size = sizeof(active->w_out);
     err = nvs_get_blob(nvs_handle, "snn_wout", active->w_out, &required_size);
     if (err == ESP_OK) {
-        // Also copy into inactive bank
-        memcpy(&lsm->banks[lsm->active_bank ^ 1].w_out, active->w_out, sizeof(active->w_out));
+        required_size = sizeof(active->eta_out);
+        nvs_get_blob(nvs_handle, "snn_eta_out", active->eta_out, &required_size);
+
+        // Synchronize both banks from persistent storage
+        memcpy(&lsm->banks[lsm->active_bank ^ 1], active, sizeof(snn_weight_bank_t));
     }
 
     nvs_close(nvs_handle);
     if (err == ESP_OK) {
-        ESP_LOGI(TAG, "SNN readout weights loaded from NVS.");
+        ESP_LOGI(TAG, "SNN readout weights and plasticity mask loaded from NVS into bank %d.", lsm->active_bank);
     }
     return err;
 }

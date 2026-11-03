@@ -25,10 +25,21 @@ static esp_err_t stats_handler(httpd_req_t *req) {
     cJSON_AddNumberToObject(drives, "fatigue", g_drives.fatigue);
     cJSON_AddNumberToObject(drives, "safety", g_drives.safety);
 
-    // SNN Stats
+    // SNN Stats & Weight-Space Connectome Status
     cJSON *snn = cJSON_AddObjectToObject(root, "snn");
     cJSON_AddNumberToObject(snn, "stress", g_lsm_stress_level);
     cJSON_AddNumberToObject(snn, "dissonance", g_last_prediction_error);
+    cJSON_AddNumberToObject(snn, "active_bank", g_lsm.active_bank);
+    cJSON_AddBoolToObject(snn, "ab_eval_active", g_lsm.ab_eval_active);
+    cJSON_AddNumberToObject(snn, "eval_ticks", g_lsm.ab_eval_ticks_remaining);
+    cJSON_AddNumberToObject(snn, "modulator", g_lsm.modulator);
+
+    int dead_count = 0;
+    for(int i=0; i<N_RES; i++) {
+        if(g_lsm.mean_act_res[i] < 0.01f || g_lsm.mean_act_res[i] > 0.85f) dead_count++;
+    }
+    cJSON_AddNumberToObject(snn, "dead_nodes", dead_count);
+
     cJSON *firing = cJSON_AddArrayToObject(snn, "output_firing");
     for(int i=0; i<N_OUTPUT; i++) cJSON_AddItemToArray(firing, cJSON_CreateNumber(g_lsm.spk_out[i]));
 
@@ -134,6 +145,10 @@ static esp_err_t command_handler(httpd_req_t *req) {
     if (cJSON_IsString(cmd)) {
         if (strcmp(cmd->valuestring, "toggle_learning") == 0) {
             g_learning_loop_active = !g_learning_loop_active;
+        } else if (strcmp(cmd->valuestring, "commit_ab") == 0) {
+            snn_lsm_commit_active_bank(&g_lsm);
+        } else if (strcmp(cmd->valuestring, "rollback_ab") == 0) {
+            snn_lsm_rollback_active_bank(&g_lsm);
         } else if (strcmp(cmd->valuestring, "start_record") == 0) {
             int id = cJSON_GetObjectItem(root, "id")->valueint;
             g_gesture_graph.gesture_library[id].num_waypoints = 0;
@@ -171,6 +186,11 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "<div class='card'><h2>Trajectory Trail (XY)</h2><canvas id='trailChart'></canvas></div>"
         "<div class='card'><h2>Joint Angles (-1..1)</h2><p id='joint_readout' style='font-family:monospace;color:#0ff;'></p></div>"
         "<div class='card'><h2>Status</h2><p id='status'>-</p><p id='cns_text' style='font-family:monospace;color:#0f0;'></p></div>"
+        "<div class='card'><h2>A/B Connectome Surgery</h2>"
+        "<p id='ab_text' style='font-family:monospace;color:#ff0;'>Bank: - | Eval: -</p>"
+        "<button onclick='sendCmd({command:\"commit_ab\"})'>Commit Bank</button> "
+        "<button onclick='sendCmd({command:\"rollback_ab\"})'>Rollback Bank</button>"
+        "</div>"
         "<script>"
         "const ctxS = document.getElementById('stressChart').getContext('2d');"
         "const chartS = new Chart(ctxS, {type:'line',data:{labels:[],datasets:[{label:'Stress',data:[],borderColor:'red'}]}});"
@@ -191,6 +211,7 @@ static esp_err_t index_handler(httpd_req_t *req) {
         "  const r = await fetch('/api/stats'); const d = await r.json();"
         "  document.getElementById('status').innerText = d.bt_root_status + (d.is_recording ? ' [RECORDING]' : '') + ' : ' + (d.active_node || '-');"
         "  document.getElementById('cns_text').innerText = `Stress: \${d.stress.toFixed(2)} | Cur: \${d.curiosity.toFixed(2)} | Fat: \${d.fatigue.toFixed(2)}`;"
+        "  document.getElementById('ab_text').innerText = `Active Bank: \${d.snn.active_bank} | Eval: \${d.snn.ab_eval_active ? d.snn.eval_ticks + ' ticks' : 'IDLE'} | Dead/Sat: \${d.snn.dead_nodes} | M(t): \${d.snn.modulator.toFixed(2)}`;"
         "  chartS.data.labels.push(''); chartS.data.datasets[0].data.push(d.snn.stress);"
         "  if(chartS.data.labels.length > 20) { chartS.data.labels.shift(); chartS.data.datasets[0].data.shift(); }"
         "  chartS.update();"
