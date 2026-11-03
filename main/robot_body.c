@@ -247,9 +247,13 @@ void body_act(const float* action_vector) {
         request.value = commanded_accel;
         xQueueSend(g_bus_request_queues[arm_id], &request, portMAX_DELAY);
 
-        // Torque
+        // Torque - Variable Compliance Control
+        extern float g_lsm_stress_level;
         float norm_torque = use_action[NUM_SERVOS * 2 + i];
-        uint16_t commanded_torque = (uint16_t)(((norm_torque + 1.0f) / 2.0f) * 1000.0f);
+        float compliance_factor = 1.0f - (g_lsm_stress_level * 0.8f); // High stress (e.g. 0.8) -> 36% torque
+        if (compliance_factor < 0.1f) compliance_factor = 0.1f; // Minimum holding torque
+
+        uint16_t commanded_torque = (uint16_t)(((norm_torque + 1.0f) / 2.0f) * 1000.0f * compliance_factor);
         if (commanded_torque > g_max_torque_limit) commanded_torque = g_max_torque_limit;
 
         request.command = CMD_REG_WRITE_WORD;

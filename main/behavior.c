@@ -161,6 +161,11 @@ static BTStatus action_sleep(BTNode* node) {
         // Consolidated learned weights during sleep
         g_drives.fatigue *= 0.1f; // Sleep significantly reduces fatigue
         g_drives.satisfaction = fminf(1.0f, g_drives.satisfaction + 0.3f); // Rest is satisfying
+
+        // Prune SNN weights to reduce redundancy and optimize memory/compute
+        ESP_LOGI(TAG, "BT: Pruning SNN weights...");
+        snn_lsm_prune_weights(&g_lsm, 0.01f); // Remove weak connections < 0.01
+
         save_network_to_nvs(g_hl, g_ol, g_pl); // Persist during sleep
         sleep_started = false;
         ESP_LOGI(TAG, "BT: Sleep cycle complete. Robot is refreshed.");

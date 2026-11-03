@@ -474,6 +474,10 @@ void planner_task(void *pvParameters) {
             }
         }
 
+        // --- Haptic Memory Decay ---
+        static int decay_tick = 0;
+        planner_haptic_decay_tick(&decay_tick);
+
         // --- Kinesthetic Recording Loop ---
         if (g_is_recording) {
             if (g_recording_tick % 5 == 0) { // Record at 2Hz (every 500ms since delay is 100ms)

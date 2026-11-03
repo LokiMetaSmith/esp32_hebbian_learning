@@ -152,3 +152,23 @@ void snn_lsm_mutate_hyperparams(snn_lsm_t *lsm, float new_beta, float new_v_th, 
     if (new_v_th > 0.0f) lsm->v_th = new_v_th;
     if (new_lr > 0.0f) lsm->learning_rate = new_lr;
 }
+
+void snn_lsm_prune_weights(snn_lsm_t *lsm, float threshold) {
+    // Prune readout weights
+    for (int i = 0; i < N_OUTPUT; i++) {
+        for (int j = 0; j < N_RES; j++) {
+            if (fabsf(lsm->w_out[i][j]) < threshold) {
+                lsm->w_out[i][j] = 0.0f;
+            }
+        }
+    }
+
+    // Prune recurrent weights
+    for (int i = 0; i < N_RES; i++) {
+        for (int j = 0; j < N_RES; j++) {
+            if (fabsf(lsm->w_rec[i][j]) < threshold) {
+                lsm->w_rec[i][j] = 0.0f;
+            }
+        }
+    }
+}

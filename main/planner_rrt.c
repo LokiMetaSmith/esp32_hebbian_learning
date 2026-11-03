@@ -229,6 +229,7 @@ void planner_add_obstacle(float x, float y, float z, float radius) {
             g_obstacles[i].center = (Point3D){x, y, z};
             g_obstacles[i].radius = radius;
             g_obstacles[i].active = true;
+            g_obstacles[i].persistence = 3; // Start with 3 decay cycles (30s total)
             ESP_LOGI(TAG, "Obstacle added at (%.2f, %.2f, %.2f) R=%.2f", x, y, z, radius);
             return;
         }
@@ -241,4 +242,20 @@ void planner_clear_obstacles(void) {
         g_obstacles[i].active = false;
     }
     ESP_LOGI(TAG, "All obstacles cleared.");
+}
+
+void planner_haptic_decay_tick(int* decay_tick) {
+    (*decay_tick)++;
+    if (*decay_tick >= 100) { // Every 10 seconds (100 ticks * 100ms)
+        *decay_tick = 0;
+        for (int i = 0; i < MAX_OBSTACLES; i++) {
+            if (g_obstacles[i].active) {
+                g_obstacles[i].persistence--;
+                if (g_obstacles[i].persistence <= 0) {
+                    g_obstacles[i].active = false;
+                    ESP_LOGI(TAG, "Virtual obstacle %d decayed and was forgotten.", i);
+                }
+            }
+        }
+    }
 }
