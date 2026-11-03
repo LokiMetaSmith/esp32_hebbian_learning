@@ -66,3 +66,113 @@ def test_snn_pruning_logic():
 
     assert snn.w_out == [[0.5, 0.0, 0.0, -0.1]]
     assert snn.w_rec == [[0.8, 0.0, 0.0, -0.5]]
+
+
+def test_ab_shadow_banking_and_plasticity_mask_logic():
+    class WeightBank:
+        def __init__(self, n_out=4, n_res=64):
+            self.w_out = [[0.1 for _ in range(n_res)] for _ in range(n_out)]
+            self.eta_out = [[1.0 for _ in range(n_res)] for _ in range(n_out)]
+
+    class LSMDoubleBuffer:
+        def __init__(self):
+            self.banks = [WeightBank(), WeightBank()]
+            self.active_bank = 0
+            self.ab_eval_active = False
+
+        def prepare_shadow(self):
+            shadow = self.active_bank ^ 1
+            for i in range(4):
+                for j in range(64):
+                    self.banks[shadow].w_out[i][j] = self.banks[self.active_bank].w_out[i][j]
+                    self.banks[shadow].eta_out[i][j] = self.banks[self.active_bank].eta_out[i][j]
+            return shadow
+
+        def patch_synapse(self, post_idx, pre_idx, new_w, new_eta):
+            shadow = self.prepare_shadow()
+            self.banks[shadow].w_out[post_idx][pre_idx] = new_w
+            self.banks[shadow].eta_out[post_idx][pre_idx] = new_eta
+            self.active_bank ^= 1
+            self.ab_eval_active = True
+
+        def commit(self):
+            inactive = self.active_bank ^ 1
+            for i in range(4):
+                for j in range(64):
+                    self.banks[inactive].w_out[i][j] = self.banks[self.active_bank].w_out[i][j]
+                    self.banks[inactive].eta_out[i][j] = self.banks[self.active_bank].eta_out[i][j]
+            self.ab_eval_active = False
+
+        def rollback(self):
+            self.active_bank ^= 1
+            self.ab_eval_active = False
+
+    lsm = LSMDoubleBuffer()
+    assert lsm.active_bank == 0
+    assert lsm.banks[0].w_out[0][5] == 0.1
+
+    # Stage patch: freeze synapse (eta = 0.0) with new weight 0.85
+    lsm.patch_synapse(0, 5, 0.85, 0.0)
+    assert lsm.active_bank == 1
+    assert lsm.banks[1].w_out[0][5] == 0.85
+    assert lsm.banks[1].eta_out[0][5] == 0.0
+    # Original baseline in bank 0 remains untouched during shadow eval
+    assert lsm.banks[0].w_out[0][5] == 0.1
+    assert lsm.banks[0].eta_out[0][5] == 1.0
+
+    # Test rollback
+    lsm.rollback()
+    assert lsm.active_bank == 0
+    assert lsm.banks[lsm.active_bank].w_out[0][5] == 0.1
+
+    # Test patch and commit
+    lsm.patch_synapse(1, 10, -0.40, 2.5)
+    assert lsm.active_bank == 1
+    lsm.commit()
+    assert lsm.active_bank == 1
+    assert not lsm.ab_eval_active
+    assert lsm.banks[0].w_out[1][10] == -0.40
+    assert lsm.banks[1].w_out[1][10] == -0.40
+
+
+def test_emergency_rollback_logic():
+    MAX_SAFE_ACCEL_JERK = 2.5
+    active_bank = 1
+    ab_eval_active = True
+    stress_high_ticks = 0
+
+    def check_emergency_rollback(current_jerk, stress_level):
+        nonlocal active_bank, ab_eval_active, stress_high_ticks
+        if not ab_eval_active:
+            return False
+        jerk_exceeded = (current_jerk > MAX_SAFE_ACCEL_JERK)
+        if stress_level > 0.85:
+            stress_high_ticks += 1
+        else:
+            stress_high_ticks = 0
+        stress_exceeded = (stress_high_ticks >= 3)
+        if jerk_exceeded or stress_exceeded:
+            active_bank ^= 1
+            ab_eval_active = False
+            return True
+        return False
+
+    # Safe step
+    assert not check_emergency_rollback(0.8, 0.4)
+    assert active_bank == 1
+    assert ab_eval_active
+
+    # Jerk spike -> immediate rollback
+    assert check_emergency_rollback(3.2, 0.4)
+    assert active_bank == 0
+    assert not ab_eval_active
+
+    # Test stress high ticks trigger
+    active_bank = 1
+    ab_eval_active = True
+    stress_high_ticks = 0
+    assert not check_emergency_rollback(0.2, 0.90)  # tick 1
+    assert not check_emergency_rollback(0.2, 0.90)  # tick 2
+    assert check_emergency_rollback(0.2, 0.90)      # tick 3 -> rollback!
+    assert active_bank == 0
+    assert not ab_eval_active

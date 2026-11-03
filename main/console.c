@@ -466,6 +466,42 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&stop_record_cmd));
 
+    // Bicameral Weight-Space Programming commands
+    const esp_console_cmd_t dump_weights_cmd = {
+        .command = "dump-weights",
+        .help = "Dump sparse weights and SNN telemetry in JSON format",
+        .func = &cmd_dump_weights,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&dump_weights_cmd));
+
+    const esp_console_cmd_t patch_ab_cmd = {
+        .command = "patch-ab",
+        .help = "Stage sparse weight edits to shadow bank: patch-ab <json_payload>",
+        .func = &cmd_patch_ab,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&patch_ab_cmd));
+
+    const esp_console_cmd_t commit_ab_cmd = {
+        .command = "commit-ab",
+        .help = "Commit active shadow bank",
+        .func = &cmd_commit_ab,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&commit_ab_cmd));
+
+    const esp_console_cmd_t rollback_ab_cmd = {
+        .command = "rollback-ab",
+        .help = "Roll back active bank to baseline",
+        .func = &cmd_rollback_ab,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&rollback_ab_cmd));
+
+    const esp_console_cmd_t modulate_cmd = {
+        .command = "modulate",
+        .help = "Set 3rd-factor neuromodulator M(t): modulate <scalar>",
+        .func = &cmd_modulate,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&modulate_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");
@@ -1097,6 +1133,146 @@ int cmd_get_energy_stats(int argc, char **argv) {
     printf("Average Current (A): %.3f\n", g_energy_stats.average_current_A);
     printf("Total Samples: %ld\n", g_energy_stats.num_samples);
     printf("-------------------------------------\n");
+    return 0;
+}
+
+int cmd_dump_weights(int argc, char **argv) {
+    extern snn_lsm_t g_lsm;
+    snn_weight_bank_t *active = &g_lsm.banks[g_lsm.active_bank];
+
+    printf("@JSON:{\"event\":\"weights_dump\",\"active_bank\":%d,\"modulator\":%.4f,\"ab_eval_active\":%s,\"eval_ticks_remaining\":%lu,\"stress\":%.4f,\"dissonance\":%.4f,\"dead_nodes\":[",
+           g_lsm.active_bank, g_lsm.modulator, g_lsm.ab_eval_active ? "true" : "false",
+           (unsigned long)g_lsm.ab_eval_ticks_remaining, g_lsm_stress_level, g_last_prediction_error);
+
+    bool first_dead = true;
+    for (int i = 0; i < N_RES; i++) {
+        if (g_lsm.mean_act_res[i] < 0.01f || g_lsm.mean_act_res[i] > 0.85f) {
+            printf("%s{\"node\":%d,\"mean_act\":%.4f}", first_dead ? "" : ",", i, g_lsm.mean_act_res[i]);
+            first_dead = false;
+        }
+    }
+    printf("],\"edits\":[");
+
+    bool first_edit = true;
+    for (int i = 0; i < N_OUTPUT; i++) {
+        for (int j = 0; j < N_RES; j++) {
+            if (fabsf(active->w_out[i][j]) > 0.001f || active->eta_out[i][j] > 0.001f) {
+                printf("%s[\"lsm_out\",%d,%d,%.4f,%.4f]", first_edit ? "" : ",", i, j, active->w_out[i][j], active->eta_out[i][j]);
+                first_edit = false;
+            }
+        }
+    }
+    printf("]}\n");
+    fflush(stdout);
+    return 0;
+}
+
+int cmd_patch_ab(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: patch-ab <json_payload>\n");
+        return 1;
+    }
+
+    extern snn_lsm_t g_lsm;
+
+    // Join all arguments into one single string if payload was separated by spaces
+    char payload_buf[2048] = {0};
+    int offset = 0;
+    for (int i = 1; i < argc; i++) {
+        int len = snprintf(payload_buf + offset, sizeof(payload_buf) - offset, "%s%s", (i > 1 ? " " : ""), argv[i]);
+        if (len < 0 || offset + len >= sizeof(payload_buf)) break;
+        offset += len;
+    }
+
+    cJSON *root = cJSON_Parse(payload_buf);
+    if (!root) {
+        printf("@JSON:{\"event\":\"patch_ab_error\",\"error\":\"Invalid JSON\"}\n");
+        return 1;
+    }
+
+    uint8_t shadow_bank = snn_lsm_prepare_shadow_bank(&g_lsm);
+    uint32_t eval_ticks = 500;
+    cJSON *ticks_item = cJSON_GetObjectItem(root, "eval_ticks");
+    if (cJSON_IsNumber(ticks_item) && ticks_item->valueint > 0) {
+        eval_ticks = (uint32_t)ticks_item->valueint;
+    }
+
+    cJSON *mod_item = cJSON_GetObjectItem(root, "modulator");
+    if (cJSON_IsNumber(mod_item)) {
+        snn_lsm_set_modulator(&g_lsm, (float)mod_item->valuedouble);
+    }
+
+    cJSON *edits = cJSON_GetObjectItem(root, "edits");
+    int count = 0;
+    if (cJSON_IsArray(edits)) {
+        int n = cJSON_GetArraySize(edits);
+        for (int k = 0; k < n; k++) {
+            cJSON *edit = cJSON_GetArrayItem(edits, k);
+            if (cJSON_IsArray(edit)) {
+                int edit_len = cJSON_GetArraySize(edit);
+                const char *layer = "lsm_out";
+                int post_idx = 0;
+                int pre_idx = 0;
+                float new_w = 0.0f;
+                float new_eta = 1.0f;
+
+                if (edit_len == 4) {
+                    // [post, pre, w, eta]
+                    post_idx = cJSON_GetArrayItem(edit, 0)->valueint;
+                    pre_idx = cJSON_GetArrayItem(edit, 1)->valueint;
+                    new_w = (float)cJSON_GetArrayItem(edit, 2)->valuedouble;
+                    new_eta = (float)cJSON_GetArrayItem(edit, 3)->valuedouble;
+                } else if (edit_len == 5) {
+                    // [layer, post, pre, w, eta]
+                    layer = cJSON_GetArrayItem(edit, 0)->valuestring;
+                    post_idx = cJSON_GetArrayItem(edit, 1)->valueint;
+                    pre_idx = cJSON_GetArrayItem(edit, 2)->valueint;
+                    new_w = (float)cJSON_GetArrayItem(edit, 3)->valuedouble;
+                    new_eta = (float)cJSON_GetArrayItem(edit, 4)->valuedouble;
+                }
+
+                if (snn_lsm_patch_synapse(&g_lsm, shadow_bank, layer, post_idx, pre_idx, new_w, new_eta)) {
+                    count++;
+                }
+            }
+        }
+    }
+
+    snn_lsm_activate_shadow_bank(&g_lsm, eval_ticks);
+    printf("@JSON:{\"event\":\"patch_ab_success\",\"active_bank\":%d,\"applied_edits\":%d,\"eval_ticks\":%lu}\n",
+           g_lsm.active_bank, count, (unsigned long)eval_ticks);
+    fflush(stdout);
+
+    cJSON_Delete(root);
+    return 0;
+}
+
+int cmd_commit_ab(int argc, char **argv) {
+    extern snn_lsm_t g_lsm;
+    snn_lsm_commit_active_bank(&g_lsm);
+    printf("@JSON:{\"event\":\"commit_ab_success\",\"active_bank\":%d}\n", g_lsm.active_bank);
+    fflush(stdout);
+    return 0;
+}
+
+int cmd_rollback_ab(int argc, char **argv) {
+    extern snn_lsm_t g_lsm;
+    snn_lsm_rollback_active_bank(&g_lsm);
+    printf("@JSON:{\"event\":\"rollback_ab_success\",\"active_bank\":%d}\n", g_lsm.active_bank);
+    fflush(stdout);
+    return 0;
+}
+
+int cmd_modulate(int argc, char **argv) {
+    if (argc < 2) {
+        printf("Usage: modulate <scalar>\n");
+        return 1;
+    }
+    extern snn_lsm_t g_lsm;
+    float m = (float)atof(argv[1]);
+    snn_lsm_set_modulator(&g_lsm, m);
+    printf("@JSON:{\"event\":\"modulate_success\",\"modulator\":%.4f}\n", g_lsm.modulator);
+    fflush(stdout);
     return 0;
 }
 

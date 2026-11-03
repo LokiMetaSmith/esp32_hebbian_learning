@@ -776,6 +776,36 @@ void learning_loop_task(void *pvParameters) {
             current_firing /= N_OUTPUT;
             g_lsm_stress_level = 0.9f * g_lsm_stress_level + 0.1f * current_firing;
 
+            // --- Accelerometer Jerk & A/B Shadow Safety / Completion Checks ---
+            static float last_ax = 0.0f, last_ay = 0.0f, last_az = 0.0f;
+            float current_jerk = 0.0f;
+            if (cycle > 0) {
+                float djx = combined_input[0] - last_ax;
+                float djy = combined_input[1] - last_ay;
+                float djz = combined_input[2] - last_az;
+                current_jerk = sqrtf(djx * djx + djy * djy + djz * djz);
+            }
+            last_ax = combined_input[0];
+            last_ay = combined_input[1];
+            last_az = combined_input[2];
+
+            if (g_lsm.ab_eval_active) {
+                // On-device Emergency Rollback Check
+                snn_lsm_check_emergency_rollback(&g_lsm, current_jerk, g_lsm_stress_level);
+
+                if (g_lsm.ab_eval_active) {
+                    if (g_lsm.ab_eval_ticks_remaining > 0) {
+                        g_lsm.ab_eval_ticks_remaining--;
+                        if (g_lsm.ab_eval_ticks_remaining == 0) {
+                            g_lsm.ab_eval_active = false;
+                            printf("@JSON:{\"event\":\"ab_window_complete\",\"bank\":%d,\"jerk\":%.4f,\"stress\":%.4f,\"pred_error\":%.4f}\n",
+                                   g_lsm.active_bank, current_jerk, g_lsm_stress_level, g_last_prediction_error);
+                            fflush(stdout);
+                        }
+                    }
+                }
+            }
+
             // --- Homeostatic Drive Update ---
             g_drives.safety = g_lsm_stress_level;
             g_drives.fatigue = fminf(1.0f, g_drives.fatigue + 0.005f); // Slower fatigue increase

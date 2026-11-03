@@ -27,9 +27,7 @@
 #include "kinematics.h"
 #include "snn_lsm.h"
 
-// --- SNN Instance ---
-static snn_lsm_t g_lsm;
-static bool g_lsm_initialized = false;
+extern snn_lsm_t g_lsm;
 
 // --- Forward Declarations ---
 static cJSON* handle_snn_call_tool(const char *tool_name, const cJSON *arguments_json);
@@ -461,6 +459,83 @@ static cJSON* handle_call_tool(const cJSON *request_json) {
         #endif
 
         cJSON_AddItemToObject(response, "result", result);
+    } else if (strcmp(tool_name, "dump_weights") == 0) {
+        cJSON *result = cJSON_CreateObject();
+        snn_weight_bank_t *active = &g_lsm.banks[g_lsm.active_bank];
+        cJSON_AddNumberToObject(result, "active_bank", g_lsm.active_bank);
+        cJSON_AddNumberToObject(result, "modulator", g_lsm.modulator);
+        cJSON_AddBoolToObject(result, "ab_eval_active", g_lsm.ab_eval_active);
+        cJSON_AddNumberToObject(result, "eval_ticks_remaining", g_lsm.ab_eval_ticks_remaining);
+        cJSON_AddNumberToObject(result, "stress_level", g_lsm_stress_level);
+        cJSON_AddNumberToObject(result, "last_pred_error", g_last_prediction_error);
+
+        cJSON *edits_array = cJSON_CreateArray();
+        for (int i = 0; i < N_OUTPUT; i++) {
+            for (int j = 0; j < N_RES; j++) {
+                if (fabsf(active->w_out[i][j]) > 0.001f || active->eta_out[i][j] > 0.001f) {
+                    cJSON *tuple = cJSON_CreateArray();
+                    cJSON_AddItemToArray(tuple, cJSON_CreateString("lsm_out"));
+                    cJSON_AddItemToArray(tuple, cJSON_CreateNumber(i));
+                    cJSON_AddItemToArray(tuple, cJSON_CreateNumber(j));
+                    cJSON_AddItemToArray(tuple, cJSON_CreateNumber(active->w_out[i][j]));
+                    cJSON_AddItemToArray(tuple, cJSON_CreateNumber(active->eta_out[i][j]));
+                    cJSON_AddItemToArray(edits_array, tuple);
+                }
+            }
+        }
+        cJSON_AddItemToObject(result, "sparse_weights", edits_array);
+        cJSON_AddItemToObject(response, "result", result);
+    } else if (strcmp(tool_name, "patch_ab") == 0) {
+        uint8_t shadow_bank = snn_lsm_prepare_shadow_bank(&g_lsm);
+        uint32_t eval_ticks = 500;
+        cJSON *ticks_item = cJSON_GetObjectItem(arguments_json, "eval_ticks");
+        if (cJSON_IsNumber(ticks_item) && ticks_item->valueint > 0) {
+            eval_ticks = (uint32_t)ticks_item->valueint;
+        }
+
+        cJSON *mod_item = cJSON_GetObjectItem(arguments_json, "modulator");
+        if (cJSON_IsNumber(mod_item)) {
+            snn_lsm_set_modulator(&g_lsm, (float)mod_item->valuedouble);
+        }
+
+        cJSON *edits_json = cJSON_GetObjectItem(arguments_json, "edits");
+        int count = 0;
+        if (cJSON_IsArray(edits_json)) {
+            int num_edits = cJSON_GetArraySize(edits_json);
+            for (int k = 0; k < num_edits; k++) {
+                cJSON *edit = cJSON_GetArrayItem(edits_json, k);
+                if (cJSON_IsArray(edit) && cJSON_GetArraySize(edit) == 4) {
+                    int post_idx = cJSON_GetArrayItem(edit, 0)->valueint;
+                    int pre_idx = cJSON_GetArrayItem(edit, 1)->valueint;
+                    float new_w = (float)cJSON_GetArrayItem(edit, 2)->valuedouble;
+                    float new_eta = (float)cJSON_GetArrayItem(edit, 3)->valuedouble;
+                    if (snn_lsm_patch_synapse(&g_lsm, shadow_bank, "lsm_out", post_idx, pre_idx, new_w, new_eta)) {
+                        count++;
+                    }
+                }
+            }
+        }
+        snn_lsm_activate_shadow_bank(&g_lsm, eval_ticks);
+        cJSON_AddStringToObject(response, "status", "OK");
+        cJSON_AddNumberToObject(response, "applied_edits", count);
+        cJSON_AddNumberToObject(response, "active_bank", g_lsm.active_bank);
+    } else if (strcmp(tool_name, "commit_ab") == 0) {
+        snn_lsm_commit_active_bank(&g_lsm);
+        cJSON_AddStringToObject(response, "status", "OK");
+        cJSON_AddNumberToObject(response, "active_bank", g_lsm.active_bank);
+    } else if (strcmp(tool_name, "rollback_ab") == 0) {
+        snn_lsm_rollback_active_bank(&g_lsm);
+        cJSON_AddStringToObject(response, "status", "OK");
+        cJSON_AddNumberToObject(response, "active_bank", g_lsm.active_bank);
+    } else if (strcmp(tool_name, "modulate") == 0) {
+        cJSON *m_item = cJSON_GetObjectItem(arguments_json, "modulator");
+        if (cJSON_IsNumber(m_item)) {
+            snn_lsm_set_modulator(&g_lsm, (float)m_item->valuedouble);
+            cJSON_AddStringToObject(response, "status", "OK");
+            cJSON_AddNumberToObject(response, "modulator", g_lsm.modulator);
+        } else {
+            cJSON_AddStringToObject(response, "status", "Invalid modulator argument");
+        }
     } else if (strcmp(tool_name, "add_obstacle") == 0) {
         cJSON *x_json = cJSON_GetObjectItem(arguments_json, "x");
         cJSON *y_json = cJSON_GetObjectItem(arguments_json, "y");
@@ -897,6 +972,36 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(get_full_status_tool, "description", "Returns a unified status of SNN, BT, and Kinematics.");
     cJSON_AddItemToArray(tools, get_full_status_tool);
 
+    // Tool: dump_weights
+    cJSON *dump_weights_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(dump_weights_tool, "name", "dump_weights");
+    cJSON_AddStringToObject(dump_weights_tool, "description", "Dumps sparse connectome weights, plasticity masks, and EMA firing telemetry.");
+    cJSON_AddItemToArray(tools, dump_weights_tool);
+
+    // Tool: patch_ab
+    cJSON *patch_ab_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(patch_ab_tool, "name", "patch_ab");
+    cJSON_AddStringToObject(patch_ab_tool, "description", "Stages sparse weight and plasticity edits into shadow bank and switches atomically.");
+    cJSON_AddItemToArray(tools, patch_ab_tool);
+
+    // Tool: commit_ab
+    cJSON *commit_ab_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(commit_ab_tool, "name", "commit_ab");
+    cJSON_AddStringToObject(commit_ab_tool, "description", "Commits active shadow bank permanently.");
+    cJSON_AddItemToArray(tools, commit_ab_tool);
+
+    // Tool: rollback_ab
+    cJSON *rollback_ab_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(rollback_ab_tool, "name", "rollback_ab");
+    cJSON_AddStringToObject(rollback_ab_tool, "description", "Reverts active bank back to baseline immediately.");
+    cJSON_AddItemToArray(tools, rollback_ab_tool);
+
+    // Tool: modulate
+    cJSON *modulate_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(modulate_tool, "name", "modulate");
+    cJSON_AddStringToObject(modulate_tool, "description", "Sets 3rd-factor neuromodulator M(t).");
+    cJSON_AddItemToArray(tools, modulate_tool);
+
     return root;
 }
 
@@ -910,11 +1015,6 @@ static cJSON* handle_snn_call_tool(const char *tool_name, const cJSON *arguments
 
     // SNN specific tools
     if (strcmp(tool_name, "snn_export_state") == 0) {
-        if (!g_lsm_initialized) {
-            snn_lsm_init(&g_lsm);
-            g_lsm_initialized = true;
-        }
-
         cJSON *result = cJSON_CreateObject();
         cJSON *spk_res_array = cJSON_CreateArray();
         for (int i = 0; i < N_RES; i++) {
@@ -932,11 +1032,6 @@ static cJSON* handle_snn_call_tool(const char *tool_name, const cJSON *arguments
         return response;
 
     } else if (strcmp(tool_name, "snn_mutate_hyperparams") == 0) {
-        if (!g_lsm_initialized) {
-            snn_lsm_init(&g_lsm);
-            g_lsm_initialized = true;
-        }
-
         float new_beta = -1.0f;
         float new_v_th = -1.0f;
         float new_lr = -1.0f;

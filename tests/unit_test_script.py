@@ -171,6 +171,19 @@ def run_mcp_tests(host, port, use_mock=False):
         assert response and response.get("status") == "OK", "MCP Test 11 Failed: nanobot."
         print("  [MCP] Test 11 (Nanobot): PASSED")
 
+        # Test 12: Bicameral Weight Space Programming MCP Tools
+        response = client.call_tool("dump_weights")
+        assert response and response.get("status") == "OK", "MCP Test 12 Failed: dump_weights."
+        response = client.call_tool("patch_ab", {"edits": [[0, 1, 0.5, 1.0]], "eval_ticks": 500})
+        assert response and response.get("status") == "OK", "MCP Test 12 Failed: patch_ab."
+        response = client.call_tool("commit_ab")
+        assert response and response.get("status") == "OK", "MCP Test 12 Failed: commit_ab."
+        response = client.call_tool("rollback_ab")
+        assert response and response.get("status") == "OK", "MCP Test 12 Failed: rollback_ab."
+        response = client.call_tool("modulate", {"modulator": 1.5})
+        assert response and response.get("status") == "OK", "MCP Test 12 Failed: modulate."
+        print("  [MCP] Test 12 (Weight Space Surgery Tools): PASSED")
+
     except AssertionError as e:
         print(f"  [MCP] !!! TEST FAILED: {e}")
         return False
@@ -356,6 +369,19 @@ def run_console_tests(port, use_mock=False):
         assert "Average Current (A)" in output, "Console Test 12 Failed: 'get-energy-stats' output incorrect."
         assert "Total Samples" in output, "Console Test 12 Failed: 'get-energy-stats' output incorrect."
         print("  [CONSOLE] Test 12 (get-energy-stats): PASSED")
+
+        # Test 13: Weight Space Programming Commands
+        output = client.send_command("dump-weights")
+        assert "@JSON:" in output and "weights_dump" in output, "Console Test 13 Failed: dump-weights."
+        output = client.send_command('patch-ab {"eval_ticks":500,"edits":[[0,1,0.5,1.0]]}')
+        assert "@JSON:" in output and "patch_ab_success" in output, "Console Test 13 Failed: patch-ab."
+        output = client.send_command("commit-ab")
+        assert "@JSON:" in output and "commit_ab_success" in output, "Console Test 13 Failed: commit-ab."
+        output = client.send_command("rollback-ab")
+        assert "@JSON:" in output and "rollback_ab_success" in output, "Console Test 13 Failed: rollback-ab."
+        output = client.send_command("modulate 1.5")
+        assert "@JSON:" in output and "modulate_success" in output, "Console Test 13 Failed: modulate."
+        print("  [CONSOLE] Test 13 (Weight Space Programming Commands): PASSED")
 
         # Test 9: State Learning Loop Moves Servos
         if not use_mock: # This test requires real hardware interaction

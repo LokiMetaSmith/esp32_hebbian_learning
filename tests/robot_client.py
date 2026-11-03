@@ -25,7 +25,10 @@ class MockMCPServer(threading.Thread):
             {"name": "import_nn"}, {"name": "import_nn_json"},
             {"name": "calibrate_servo"}, {"name": "set_pos"}, {"name": "get_pos"},
             {"name": "move_towards_goal_embedding"}, {"name": "set_goal_embedding"},
-            {"name": "execute_behavior"}, {"name": "nanobot"}
+            {"name": "execute_behavior"}, {"name": "nanobot"},
+            {"name": "dump_weights"}, {"name": "patch_ab"},
+            {"name": "commit_ab"}, {"name": "rollback_ab"},
+            {"name": "modulate"}
         ]
 
     def handle_client(self, conn, addr):
@@ -75,6 +78,16 @@ class MockMCPServer(threading.Thread):
                                 response = {"status": "OK"}
                             elif tool_name == "nanobot":
                                 response = {"status": "OK", "action_taken": "Goal Set"}
+                            elif tool_name == "dump_weights":
+                                response = {"status": "OK", "result": {"active_bank": 0, "modulator": 1.0}}
+                            elif tool_name == "patch_ab":
+                                response = {"status": "OK", "applied_edits": 2, "active_bank": 1}
+                            elif tool_name == "commit_ab":
+                                response = {"status": "OK", "active_bank": 1}
+                            elif tool_name == "rollback_ab":
+                                response = {"status": "OK", "active_bank": 0}
+                            elif tool_name == "modulate":
+                                response = {"status": "OK", "modulator": 1.5}
 
                         conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
                 except (socket.timeout, ConnectionResetError, json.JSONDecodeError):
@@ -222,6 +235,16 @@ class MockSerial:
             self._in_buffer += b"--- BEGIN STATE EXPORT ---\n0.1,0.2,0.3\n--- END STATE EXPORT ---\nrobot>"
         elif b"get-energy-stats" in data:
             self._in_buffer += b"--- Energy Consumption Statistics ---\nPeak Current (A): 1.234\nAverage Current (A): 0.567\nTotal Samples: 100\n-------------------------------------\nrobot>"
+        elif b"dump-weights" in data:
+            self._in_buffer += b"@JSON:{\"event\":\"weights_dump\",\"active_bank\":0,\"modulator\":1.0,\"ab_eval_active\":false,\"eval_ticks_remaining\":0,\"stress\":0.1,\"dissonance\":0.05,\"dead_nodes\":[],\"edits\":[]}\nrobot>"
+        elif b"patch-ab" in data:
+            self._in_buffer += b"@JSON:{\"event\":\"patch_ab_success\",\"active_bank\":1,\"applied_edits\":2,\"eval_ticks\":500}\nrobot>"
+        elif b"commit-ab" in data:
+            self._in_buffer += b"@JSON:{\"event\":\"commit_ab_success\",\"active_bank\":1}\nrobot>"
+        elif b"rollback-ab" in data:
+            self._in_buffer += b"@JSON:{\"event\":\"rollback_ab_success\",\"active_bank\":0}\nrobot>"
+        elif b"modulate 1.5" in data:
+            self._in_buffer += b"@JSON:{\"event\":\"modulate_success\",\"modulator\":1.5}\nrobot>"
         elif b"this_is_not_a_command" in data:
             self._in_buffer += b"Unknown command\nrobot>"
 
