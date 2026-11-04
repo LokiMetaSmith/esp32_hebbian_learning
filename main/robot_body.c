@@ -533,3 +533,61 @@ esp_err_t body_perform_homing_discovery(JointLimits_t* out_limits) {
     }
     return ESP_OK;
 }
+
+HapticSurfaceProfile_t g_last_surface_profile = { .is_valid = false };
+
+esp_err_t body_profile_surface(HapticSurfaceProfile_t* out_profile) {
+    if (!out_profile) return ESP_ERR_INVALID_ARG;
+
+    const int num_samples = 25;
+    float ax_samples[num_samples], ay_samples[num_samples], az_samples[num_samples];
+    float ax_mean = 0, ay_mean = 0, az_mean = 0;
+
+    for (int i = 0; i < num_samples; i++) {
+        float ax, ay, az;
+        if (bma400_read_acceleration(&ax, &ay, &az) != ESP_OK) {
+            ax = 0; ay = 0; az = 1.0f;
+        }
+        ax_samples[i] = ax;
+        ay_samples[i] = ay;
+        az_samples[i] = az;
+        ax_mean += ax;
+        ay_mean += ay;
+        az_mean += az;
+        vTaskDelay(pdMS_TO_TICKS(10)); // 100Hz micro-vibration sampling
+    }
+
+    ax_mean /= num_samples;
+    ay_mean /= num_samples;
+    az_mean /= num_samples;
+
+    // Calculate high-frequency micro-vibration variance (Roughness metric)
+    float variance = 0.0f;
+    for (int i = 0; i < num_samples; i++) {
+        float dx = ax_samples[i] - ax_mean;
+        float dy = ay_samples[i] - ay_mean;
+        float dz = az_samples[i] - az_mean;
+        variance += (dx * dx + dy * dy + dz * dz);
+    }
+    variance /= num_samples;
+
+    // Orientation of contact surface (pitch and roll from mean gravity vector)
+    float pitch = atan2f(ax_mean, sqrtf(ay_mean * ay_mean + az_mean * az_mean));
+    float roll = atan2f(ay_mean, az_mean);
+
+    // Stiffness metric: inverse variance damping under steady contact
+    float stiffness = 1.0f / (1.0f + 50.0f * variance);
+
+    out_profile->roughness = sqrtf(variance);
+    out_profile->stiffness = stiffness;
+    out_profile->surface_pitch = pitch;
+    out_profile->surface_roll = roll;
+    out_profile->is_valid = true;
+
+    g_last_surface_profile = *out_profile;
+
+    ESP_LOGI(TAG, "Haptic Surface Profile: Roughness=%.4f, Stiffness=%.4f, Pitch=%.2f rad, Roll=%.2f rad",
+             out_profile->roughness, out_profile->stiffness, pitch, roll);
+
+    return ESP_OK;
+}

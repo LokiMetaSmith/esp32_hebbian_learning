@@ -1002,6 +1002,12 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(modulate_tool, "description", "Sets 3rd-factor neuromodulator M(t).");
     cJSON_AddItemToArray(tools, modulate_tool);
 
+    // Tool: get_surface_profile
+    cJSON *surface_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(surface_tool, "name", "get_surface_profile");
+    cJSON_AddStringToObject(surface_tool, "description", "Profiles contact surface roughness, stiffness, and orientation.");
+    cJSON_AddItemToArray(tools, surface_tool);
+
     return root;
 }
 

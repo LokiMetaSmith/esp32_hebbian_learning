@@ -28,7 +28,7 @@ class MockMCPServer(threading.Thread):
             {"name": "execute_behavior"}, {"name": "nanobot"},
             {"name": "dump_weights"}, {"name": "patch_ab"},
             {"name": "commit_ab"}, {"name": "rollback_ab"},
-            {"name": "modulate"}
+            {"name": "modulate"}, {"name": "get_surface_profile"}
         ]
 
     def handle_client(self, conn, addr):
@@ -88,6 +88,8 @@ class MockMCPServer(threading.Thread):
                                 response = {"status": "OK", "active_bank": 0}
                             elif tool_name == "modulate":
                                 response = {"status": "OK", "modulator": 1.5}
+                            elif tool_name == "get_surface_profile":
+                                response = {"status": "OK", "result": {"roughness": 0.05, "stiffness": 0.8}}
 
                         conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
                 except (socket.timeout, ConnectionResetError, json.JSONDecodeError):
@@ -245,6 +247,8 @@ class MockSerial:
             self._in_buffer += b"@JSON:{\"event\":\"rollback_ab_success\",\"active_bank\":0}\nrobot>"
         elif b"modulate 1.5" in data:
             self._in_buffer += b"@JSON:{\"event\":\"modulate_success\",\"modulator\":1.5}\nrobot>"
+        elif b"get-surface-profile" in data:
+            self._in_buffer += b"@JSON:{\"event\":\"surface_profile\",\"roughness\":0.05,\"stiffness\":0.8,\"pitch\":0.01,\"roll\":0.02}\nrobot>"
         elif b"this_is_not_a_command" in data:
             self._in_buffer += b"Unknown command\nrobot>"
 

@@ -502,6 +502,13 @@ void initialize_console(void) {
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&modulate_cmd));
 
+    const esp_console_cmd_t get_surface_profile_cmd = {
+        .command = "get-surface-profile",
+        .help = "Profiles surface roughness, stiffness, and contact orientation",
+        .func = &cmd_get_surface_profile,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_surface_profile_cmd));
+
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
     printf("\n ===================================\n");
@@ -1163,6 +1170,18 @@ int cmd_dump_weights(int argc, char **argv) {
         }
     }
     printf("]}\n");
+    fflush(stdout);
+    return 0;
+}
+
+int cmd_get_surface_profile(int argc, char **argv) {
+    HapticSurfaceProfile_t profile;
+    if (body_profile_surface(&profile) == ESP_OK) {
+        printf("@JSON:{\"event\":\"surface_profile\",\"roughness\":%.4f,\"stiffness\":%.4f,\"pitch\":%.4f,\"roll\":%.4f}\n",
+               profile.roughness, profile.stiffness, profile.surface_pitch, profile.surface_roll);
+    } else {
+        printf("@JSON:{\"event\":\"surface_profile_error\",\"error\":\"Failed to profile surface\"}\n");
+    }
     fflush(stdout);
     return 0;
 }
