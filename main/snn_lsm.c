@@ -3,6 +3,7 @@
 #include <string.h>
 #include <math.h>
 #include "esp_log.h"
+#include "main.h"
 
 static const char *TAG = "SNN_LSM";
 
@@ -272,6 +273,18 @@ bool snn_lsm_patch_synapse(snn_lsm_t *lsm, uint8_t bank, const char *layer, int 
         target_bank->w_rec[post_idx][pre_idx] = new_w;
         target_bank->eta_rec[post_idx][pre_idx] = new_eta;
         return true;
+    } else if (strcmp(layer, "pred_coding") == 0) {
+        // Secondary bridge: patch Predictive Coding Network in main.c
+        extern HiddenLayer* g_hl;
+        extern OutputLayer* g_ol;
+        if (post_idx >= 0 && post_idx < HIDDEN_NEURONS && pre_idx >= 0 && pre_idx < INPUT_NEURONS && g_hl) {
+            g_hl->weights[post_idx][pre_idx] = new_w;
+            return true;
+        } else if (post_idx >= 0 && post_idx < OUTPUT_NEURONS && pre_idx >= 0 && pre_idx < HIDDEN_NEURONS && g_ol) {
+            g_ol->weights[post_idx][pre_idx] = new_w;
+            return true;
+        }
+        return false;
     }
 
     return false;

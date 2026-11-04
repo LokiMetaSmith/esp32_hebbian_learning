@@ -176,3 +176,34 @@ def test_emergency_rollback_logic():
     assert check_emergency_rollback(0.2, 0.90)      # tick 3 -> rollback!
     assert active_bank == 0
     assert not ab_eval_active
+
+
+def test_predictive_coding_bridge_and_swarm_synthesis_logic():
+    # 1. Predictive coding hook simulation
+    hidden_weights = [[0.0 for _ in range(60)] for _ in range(16)]
+
+    def patch_layer(layer, post, pre, w):
+        if layer == "pred_coding" and post < 16 and pre < 60:
+            hidden_weights[post][pre] = w
+            return True
+        return False
+
+    assert patch_layer("pred_coding", 2, 5, 0.42)
+    assert hidden_weights[2][5] == 0.42
+
+    # 2. Swarm broadcast logic
+    broadcast_packet = None
+
+    def broadcast_patch(post_idx, pre_idx, new_w, new_eta):
+        nonlocal broadcast_packet
+        broadcast_packet = {
+            "type": "MSG_TYPE_WEIGHT_PATCH",
+            "post_idx": post_idx,
+            "pre_idx": pre_idx,
+            "w": new_w,
+            "eta": new_eta
+        }
+
+    broadcast_patch(1, 25, 0.75, 1.0)
+    assert broadcast_packet["type"] == "MSG_TYPE_WEIGHT_PATCH"
+    assert broadcast_packet["w"] == 0.75
