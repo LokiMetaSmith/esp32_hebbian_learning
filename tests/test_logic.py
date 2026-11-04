@@ -228,3 +228,33 @@ def test_dreaming_consolidation_and_surface_profiling_logic():
     variance = 0.002
     stiffness = 1.0 / (1.0 + 50.0 * variance)
     assert abs(stiffness - 1.0 / 1.1) < 1e-4
+
+
+def test_som_multimodal_fusion_and_optical_flow_slip_logic():
+    # 1. SOM BMU selection logic
+    weights = [
+        [[0.1, 0.2], [0.8, 0.9]],
+        [[0.3, 0.4], [0.5, 0.6]]
+    ]
+    sample = [0.75, 0.85]
+    best_x, best_y, min_dist = 0, 0, 1e9
+    for x in range(2):
+        for y in range(2):
+            d = (sample[0] - weights[x][y][0])**2 + (sample[1] - weights[x][y][1])**2
+            if d < min_dist:
+                min_dist = d
+                best_x, best_y = x, y
+    assert best_x == 0 and best_y == 1
+
+    # 2. Optical flow slip detection logic
+    expected_vx, expected_vy = 0.2, 0.0
+    measured_flow_dx, measured_flow_dy = 0.02, 0.0
+    squal = 120
+
+    diff_x = expected_vx - measured_flow_dx
+    diff_y = expected_vy - measured_flow_dy
+    discrepancy = (diff_x**2 + diff_y**2)**0.5
+    slip_detected = discrepancy > 0.15 and squal > 50
+
+    assert slip_detected
+    assert discrepancy > 0.17

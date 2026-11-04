@@ -184,6 +184,12 @@ def run_mcp_tests(host, port, use_mock=False):
         assert response and response.get("status") == "OK", "MCP Test 12 Failed: modulate."
         response = client.call_tool("get_surface_profile")
         assert response and response.get("status") == "OK", "MCP Test 12 Failed: get_surface_profile."
+        response = client.call_tool("get_fusion_state")
+        assert response and response.get("status") == "OK", "MCP Test 12 Failed: get_fusion_state."
+        response = client.call_tool("get_optical_flow")
+        assert response and response.get("status") == "OK", "MCP Test 12 Failed: get_optical_flow."
+        response = client.call_tool("get_swarm_consensus")
+        assert response and response.get("status") == "OK", "MCP Test 12 Failed: get_swarm_consensus."
         print("  [MCP] Test 12 (Weight Space Surgery Tools): PASSED")
 
     except AssertionError as e:
@@ -385,6 +391,12 @@ def run_console_tests(port, use_mock=False):
         assert "@JSON:" in output and "modulate_success" in output, "Console Test 13 Failed: modulate."
         output = client.send_command("get-surface-profile")
         assert "@JSON:" in output and "surface_profile" in output, "Console Test 13 Failed: get-surface-profile."
+        output = client.send_command("get-fusion-state")
+        assert "@JSON:" in output and "fusion_state" in output, "Console Test 13 Failed: get-fusion-state."
+        output = client.send_command("get-optical-flow")
+        assert "@JSON:" in output and "optical_flow" in output, "Console Test 13 Failed: get-optical-flow."
+        output = client.send_command("get-swarm-consensus")
+        assert "@JSON:" in output and "swarm_consensus" in output, "Console Test 13 Failed: get-swarm-consensus."
         print("  [CONSOLE] Test 13 (Weight Space Programming Commands): PASSED")
 
         # Test 9: State Learning Loop Moves Servos

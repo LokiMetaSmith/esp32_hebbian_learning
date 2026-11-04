@@ -28,7 +28,9 @@ class MockMCPServer(threading.Thread):
             {"name": "execute_behavior"}, {"name": "nanobot"},
             {"name": "dump_weights"}, {"name": "patch_ab"},
             {"name": "commit_ab"}, {"name": "rollback_ab"},
-            {"name": "modulate"}, {"name": "get_surface_profile"}
+            {"name": "modulate"}, {"name": "get_surface_profile"},
+            {"name": "get_fusion_state"}, {"name": "get_optical_flow"},
+            {"name": "get_swarm_consensus"}
         ]
 
     def handle_client(self, conn, addr):
@@ -90,6 +92,12 @@ class MockMCPServer(threading.Thread):
                                 response = {"status": "OK", "modulator": 1.5}
                             elif tool_name == "get_surface_profile":
                                 response = {"status": "OK", "result": {"roughness": 0.05, "stiffness": 0.8}}
+                            elif tool_name == "get_fusion_state":
+                                response = {"status": "OK", "result": {"bmu_x": 3, "bmu_y": 4, "anomaly": 0.12}}
+                            elif tool_name == "get_optical_flow":
+                                response = {"status": "OK", "result": {"dx": 0.0, "dy": 0.0, "squal": 180, "slip": False}}
+                            elif tool_name == "get_swarm_consensus":
+                                response = {"status": "OK", "result": [{"sector": 0, "active": True, "owner": 1}]}
 
                         conn.sendall((json.dumps(response) + '\n').encode('utf-8'))
                 except (socket.timeout, ConnectionResetError, json.JSONDecodeError):
@@ -249,6 +257,12 @@ class MockSerial:
             self._in_buffer += b"@JSON:{\"event\":\"modulate_success\",\"modulator\":1.5}\nrobot>"
         elif b"get-surface-profile" in data:
             self._in_buffer += b"@JSON:{\"event\":\"surface_profile\",\"roughness\":0.05,\"stiffness\":0.8,\"pitch\":0.01,\"roll\":0.02}\nrobot>"
+        elif b"get-fusion-state" in data:
+            self._in_buffer += b"@JSON:{\"event\":\"fusion_state\",\"bmu_x\":3,\"bmu_y\":4,\"u\":0.42,\"v\":0.57,\"anomaly\":0.12,\"samples\":100}\nrobot>"
+        elif b"get-optical-flow" in data:
+            self._in_buffer += b"@JSON:{\"event\":\"optical_flow\",\"dx\":0.01,\"dy\":0.02,\"accum_x_m\":0.15,\"accum_y_m\":0.20,\"squal\":180,\"slip\":false}\nrobot>"
+        elif b"get-swarm-consensus" in data:
+            self._in_buffer += b"@JSON:{\"event\":\"swarm_consensus\",\"sectors\":[{\"sector\":0,\"active\":true,\"owner\":1,\"bid\":0.9}]}\nrobot>"
         elif b"this_is_not_a_command" in data:
             self._in_buffer += b"Unknown command\nrobot>"
 

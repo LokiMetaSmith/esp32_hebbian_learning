@@ -26,6 +26,9 @@
 #include "behavior_tree.h"
 #include "kinematics.h"
 #include "snn_lsm.h"
+#include "sensory_fusion.h"
+#include "optical_flow.h"
+#include "inter_esp_comm.h"
 
 extern snn_lsm_t g_lsm;
 
@@ -1007,6 +1010,24 @@ static cJSON* handle_list_tools(void) {
     cJSON_AddStringToObject(surface_tool, "name", "get_surface_profile");
     cJSON_AddStringToObject(surface_tool, "description", "Profiles contact surface roughness, stiffness, and orientation.");
     cJSON_AddItemToArray(tools, surface_tool);
+
+    // Tool: get_fusion_state
+    cJSON *fusion_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(fusion_tool, "name", "get_fusion_state");
+    cJSON_AddStringToObject(fusion_tool, "description", "Queries Multi-Modal SOM fusion BMU coordinates and anomaly score.");
+    cJSON_AddItemToArray(tools, fusion_tool);
+
+    // Tool: get_optical_flow
+    cJSON *flow_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(flow_tool, "name", "get_optical_flow");
+    cJSON_AddStringToObject(flow_tool, "description", "Queries optical flow velocity, dead-reckoning displacement, and slip.");
+    cJSON_AddItemToArray(tools, flow_tool);
+
+    // Tool: get_swarm_consensus
+    cJSON *consensus_tool = cJSON_CreateObject();
+    cJSON_AddStringToObject(consensus_tool, "name", "get_swarm_consensus");
+    cJSON_AddStringToObject(consensus_tool, "description", "Queries decentralized swarm workspace sector ownership.");
+    cJSON_AddItemToArray(tools, consensus_tool);
 
     return root;
 }

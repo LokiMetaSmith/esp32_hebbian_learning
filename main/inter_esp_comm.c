@@ -10,6 +10,7 @@
 static const char *TAG = "INTER_ESP";
 
 PeerStatus_t g_peer_status = {0};
+SwarmSectorClaim_t g_swarm_sectors[SWARM_MAX_SECTORS] = {0};
 
 // Broadcast address
 static uint8_t broadcast_mac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
@@ -62,6 +63,31 @@ static void on_data_recv(const esp_now_recv_info_t * info, const uint8_t *data, 
             g_peer_status.active = true;
             ESP_LOGD(TAG, "Received peer status: Stress=%.2f, Vision=%d", msg->stress_level, msg->vision_class);
             break;
+        case MSG_TYPE_SECTOR_CLAIM: {
+            uint8_t sector = (uint8_t)msg->data[0];
+            float bid = msg->data[1];
+            if (sector < SWARM_MAX_SECTORS) {
+                // If unclaimed or peer has higher bid score (e.g. less fatigue), award claim
+                if (!g_swarm_sectors[sector].active || bid > g_swarm_sectors[sector].owner_bid_score) {
+                    g_swarm_sectors[sector].sector_id = sector;
+                    g_swarm_sectors[sector].owner_robot_id = msg->source_id;
+                    g_swarm_sectors[sector].owner_bid_score = bid;
+                    g_swarm_sectors[sector].lease_timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                    g_swarm_sectors[sector].active = true;
+                    ESP_LOGI(TAG, "Swarm Consensus: Peer %d claimed sector %d (bid: %.2f)",
+                             msg->source_id, sector, bid);
+                }
+            }
+            break;
+        }
+        case MSG_TYPE_SECTOR_RELEASE: {
+            uint8_t sector = (uint8_t)msg->data[0];
+            if (sector < SWARM_MAX_SECTORS && g_swarm_sectors[sector].owner_robot_id == msg->source_id) {
+                g_swarm_sectors[sector].active = false;
+                ESP_LOGI(TAG, "Swarm Consensus: Peer %d released sector %d", msg->source_id, sector);
+            }
+            break;
+        }
         default:
             break;
     }
@@ -118,6 +144,57 @@ esp_err_t inter_esp_broadcast_weight_patch(uint8_t post_idx, uint8_t pre_idx, fl
     msg.data[3] = new_eta;
 
     return esp_now_send(broadcast_mac, (uint8_t *)&msg, sizeof(msg));
+}
+
+esp_err_t inter_esp_claim_sector(uint8_t sector_id, float priority_score) {
+    if (sector_id >= SWARM_MAX_SECTORS) return ESP_ERR_INVALID_ARG;
+
+    InterEspMessage_t msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.type = MSG_TYPE_SECTOR_CLAIM;
+    msg.source_id = 1; // Local robot ID
+    msg.data_len = 2;
+    msg.data[0] = (float)sector_id;
+    msg.data[1] = priority_score;
+
+    g_swarm_sectors[sector_id].sector_id = sector_id;
+    g_swarm_sectors[sector_id].owner_robot_id = 1;
+    g_swarm_sectors[sector_id].owner_bid_score = priority_score;
+    g_swarm_sectors[sector_id].lease_timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    g_swarm_sectors[sector_id].active = true;
+
+    return esp_now_send(broadcast_mac, (uint8_t *)&msg, sizeof(msg));
+}
+
+esp_err_t inter_esp_release_sector(uint8_t sector_id) {
+    if (sector_id >= SWARM_MAX_SECTORS) return ESP_ERR_INVALID_ARG;
+
+    InterEspMessage_t msg;
+    memset(&msg, 0, sizeof(msg));
+    msg.type = MSG_TYPE_SECTOR_RELEASE;
+    msg.source_id = 1;
+    msg.data_len = 1;
+    msg.data[0] = (float)sector_id;
+
+    if (g_swarm_sectors[sector_id].owner_robot_id == 1) {
+        g_swarm_sectors[sector_id].active = false;
+    }
+
+    return esp_now_send(broadcast_mac, (uint8_t *)&msg, sizeof(msg));
+}
+
+bool swarm_is_sector_available(uint8_t sector_id, float my_priority_score) {
+    if (sector_id >= SWARM_MAX_SECTORS) return false;
+
+    // Check lease timeout (5 seconds)
+    uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    if (g_swarm_sectors[sector_id].active && (now_ms - g_swarm_sectors[sector_id].lease_timestamp_ms > 5000)) {
+        g_swarm_sectors[sector_id].active = false; // Expired
+    }
+
+    if (!g_swarm_sectors[sector_id].active) return true;
+    if (g_swarm_sectors[sector_id].owner_robot_id == 1) return true; // Owned by us
+    return (my_priority_score > g_swarm_sectors[sector_id].owner_bid_score);
 }
 
 esp_err_t inter_esp_send_status(float stress, uint8_t vision_class, float curiosity, float fatigue, Point3D current_ee) {
