@@ -24,6 +24,9 @@
 #include "esp_log.h"
 #include "freertos/task.h"
 #include "esp_wifi.h"
+#include "sensory_fusion.h"
+#include "optical_flow.h"
+#include "inter_esp_comm.h"
 
 static const char *TAG = "CONSOLE";
 
@@ -508,6 +511,27 @@ void initialize_console(void) {
         .func = &cmd_get_surface_profile,
     };
     ESP_ERROR_CHECK(esp_console_cmd_register(&get_surface_profile_cmd));
+
+    const esp_console_cmd_t get_fusion_cmd = {
+        .command = "get-fusion-state",
+        .help = "Query Multi-Modal SOM fusion BMU coordinates and anomaly score",
+        .func = &cmd_get_fusion_state,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_fusion_cmd));
+
+    const esp_console_cmd_t get_flow_cmd = {
+        .command = "get-optical-flow",
+        .help = "Query optical flow velocity, dead-reckoning displacement, and slip",
+        .func = &cmd_get_optical_flow,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_flow_cmd));
+
+    const esp_console_cmd_t get_consensus_cmd = {
+        .command = "get-swarm-consensus",
+        .help = "Query decentralized swarm workspace sector ownership",
+        .func = &cmd_get_swarm_consensus,
+    };
+    ESP_ERROR_CHECK(esp_console_cmd_register(&get_consensus_cmd));
 
     ESP_ERROR_CHECK(esp_console_register_help_command());
 
@@ -1168,6 +1192,36 @@ int cmd_dump_weights(int argc, char **argv) {
                 first_edit = false;
             }
         }
+    }
+    printf("]}\n");
+    fflush(stdout);
+    return 0;
+}
+
+int cmd_get_fusion_state(int argc, char **argv) {
+    float u = 0, v = 0;
+    sensory_fusion_get_bmu_coords(&u, &v);
+    printf("@JSON:{\"event\":\"fusion_state\",\"bmu_x\":%d,\"bmu_y\":%d,\"u\":%.4f,\"v\":%.4f,\"anomaly\":%.4f,\"samples\":%lu}\n",
+           g_som_fusion.bmu_x, g_som_fusion.bmu_y, u, v, g_som_fusion.anomaly_score,
+           (unsigned long)g_som_fusion.total_samples_fused);
+    fflush(stdout);
+    return 0;
+}
+
+int cmd_get_optical_flow(int argc, char **argv) {
+    printf("@JSON:{\"event\":\"optical_flow\",\"dx\":%.4f,\"dy\":%.4f,\"accum_x_m\":%.4f,\"accum_y_m\":%.4f,\"squal\":%d,\"slip\":%s}\n",
+           g_optical_flow.delta_x, g_optical_flow.delta_y, g_optical_flow.accum_x_m, g_optical_flow.accum_y_m,
+           g_optical_flow.surface_quality, g_optical_flow.slip_detected ? "true" : "false");
+    fflush(stdout);
+    return 0;
+}
+
+int cmd_get_swarm_consensus(int argc, char **argv) {
+    printf("@JSON:{\"event\":\"swarm_consensus\",\"sectors\":[");
+    for (int s = 0; s < SWARM_MAX_SECTORS; s++) {
+        printf("%s{\"sector\":%d,\"active\":%s,\"owner\":%d,\"bid\":%.2f}",
+               (s == 0 ? "" : ","), s, g_swarm_sectors[s].active ? "true" : "false",
+               g_swarm_sectors[s].owner_robot_id, g_swarm_sectors[s].owner_bid_score);
     }
     printf("]}\n");
     fflush(stdout);

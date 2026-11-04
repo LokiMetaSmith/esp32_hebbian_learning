@@ -48,5 +48,8 @@ int cmd_commit_ab(int argc, char **argv);
 int cmd_rollback_ab(int argc, char **argv);
 int cmd_modulate(int argc, char **argv);
 int cmd_get_surface_profile(int argc, char **argv);
+int cmd_get_fusion_state(int argc, char **argv);
+int cmd_get_optical_flow(int argc, char **argv);
+int cmd_get_swarm_consensus(int argc, char **argv);
 
 #endif // COMMANDS_H

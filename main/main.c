@@ -40,6 +40,8 @@ const unsigned char dummy_synsense_config[] = {0xDE, 0xAD, 0xBE, 0xEF};
 #include "omni_base.h"
 #include "robot_body.h"
 #include "snn_lsm.h"
+#include "sensory_fusion.h"
+#include "optical_flow.h"
 
 // --- Application Configuration ---
 
@@ -1363,6 +1365,8 @@ void app_main(void) {
     mcp_server_init();
     inter_esp_comm_init();
     snn_lsm_init(&g_lsm);
+    sensory_fusion_init();
+    optical_flow_init(FLOW_SENSOR_PMW3901);
     load_snn_weights_from_nvs(&g_lsm);
     
     planner_init();

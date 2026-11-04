@@ -81,15 +81,19 @@ This phase focuses on extending the architecture to support a coordinated omni-d
 *   **[DONE] Meta-Learning:** Implemented autonomous SNN hyperparameter mutation triggered by critical model dissonance.
 *   **[DONE] Interactive Teleoperation:** Enhanced Web Dashboard with click-to-move spatial navigation and live BT node tracing.
 
-## Phase 6: Future Potential Tasks (Upcoming)
+## Phase 6: Cognitive & Neuromorphic Capabilities (Complete / Active)
 
-*   **[ ] Reinforcement Learning (RL) Readout:** Transition the plastic SNN readout layer from unsupervised Hebbian to a supervised/reward-based RL rule (e.g., R-STDP) for goal-oriented skill refinement.
-*   **[ ] Multi-Modal Sensory Fusion:** Integrate the BMA400 accelerometer, motor current, and vision data into a single unified latent representation using a Multimodal SOM or VAE.
-*   **[ ] Sleep/Consolidation Cycles:** Implement an "Offline" mode where the robot "dreams" by replaying high-error trajectories from NVS to further refine the neural weights without physical motion.
-*   **[ ] Decentralized Swarm Consensus:** Move beyond symmetric broadcasting to a consensus-based protocol where robots negotiate shared goals or workspace partitions via ESP-NOW.
-*   **[ ] On-Device 3D Visualization:** Upgrade the Web Dashboard to use Three.js for a full 3D rendering of the robot arm and detected obstacles.
-*   **[ ] Natural Language Gesture Mapping:** Use an external LLM to map natural language commands to specific gesture embeddings or latent space coordinates.
-*   **[ ] Dynamic SNN Pruning:** Implement synaptic scaling and pruning to remove redundant connections in the LSM reservoir, optimizing memory and compute.
-*   **[ ] Haptic Surface Profiling:** Use the end-effector to "feel" and map the topography and textures of the physical workspace beyond simple obstacle detection.
-*   **[ ] Variable Compliance Control:** Implement a software-defined "soft" mode where joint torque is modulated based on SNN stress to allow for safe human-robot interaction.
-*   **[ ] Visual Ego-Motion (SLAM Lite):** Utilize Synsense DVS event streams to estimate robot movement and update the global map without external sensors.
+*   **[DONE] Bicameral Weight-Space Programming:** Zero-stall A/B shadow weight banking on ESP32-S3 with per-synapse plasticity masks, dual on-device emergency rollback, and Strix Halo GBNF JSON Schema LLM surgery.
+*   **[DONE] Multi-Modal Sensory Fusion:** On-device 2D Self-Organizing Map (SOM) lattice fusing BMA400 accelerometer, Feetech servo load/current, and optical flow into a unified somatotopic manifold with online Kohonen learning.
+*   **[DONE] Sleep/Consolidation Cycles:** Autonomous offline "dreaming" consolidation replaying high-dissonance waking experiences with motor torque disengaged to prevent mechanical wear.
+*   **[DONE] Decentralized Swarm Consensus:** ESP-NOW lease-based workspace sector partitioning and priority bid negotiation between peer robots.
+*   **[DONE] Visual Ego-Motion (SLAM Lite):** Generic optical flow abstraction supporting PMW3901, mouse ADNS sensors, and event streams with slip/stall detection.
+*   **[DONE] Haptic Surface Profiling:** Micro-vibration variance, contact stiffness, and surface orientation estimation via 100Hz BMA400 sampling.
+*   **[DONE] Natural Language Gesture & Surgery CLI:** Optional host-side conversational interface (`tools/cortex_chat.py`) mapping natural language intent into structured robotics actions.
+*   **[DONE] Dynamic SNN Pruning:** Synaptic pruning of weak readout and recurrent connections during sleep consolidation.
+*   **[DONE] Variable Compliance Control:** Software-defined torque scaling dynamically modulated by LSM stress levels.
+
+## Phase 7: Future Potential Tasks (Upcoming)
+
+*   **[ ] Reinforcement Learning (RL) Readout:** Transition the plastic SNN readout layer from unsupervised Hebbian to a reward-modulated R-STDP rule for goal-oriented skill refinement.
+*   **[ ] Host-Side 3D Digital Twin:** Standalone WebGL / Three.js 3D visualizer running on the host PC to mirror physical robot kinematics without adding flash bloat to the ESP32.
