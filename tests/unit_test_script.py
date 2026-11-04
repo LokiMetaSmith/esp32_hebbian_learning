@@ -182,6 +182,8 @@ def run_mcp_tests(host, port, use_mock=False):
         assert response and response.get("status") == "OK", "MCP Test 12 Failed: rollback_ab."
         response = client.call_tool("modulate", {"modulator": 1.5})
         assert response and response.get("status") == "OK", "MCP Test 12 Failed: modulate."
+        response = client.call_tool("get_surface_profile")
+        assert response and response.get("status") == "OK", "MCP Test 12 Failed: get_surface_profile."
         print("  [MCP] Test 12 (Weight Space Surgery Tools): PASSED")
 
     except AssertionError as e:
@@ -381,6 +383,8 @@ def run_console_tests(port, use_mock=False):
         assert "@JSON:" in output and "rollback_ab_success" in output, "Console Test 13 Failed: rollback-ab."
         output = client.send_command("modulate 1.5")
         assert "@JSON:" in output and "modulate_success" in output, "Console Test 13 Failed: modulate."
+        output = client.send_command("get-surface-profile")
+        assert "@JSON:" in output and "surface_profile" in output, "Console Test 13 Failed: get-surface-profile."
         print("  [CONSOLE] Test 13 (Weight Space Programming Commands): PASSED")
 
         # Test 9: State Learning Loop Moves Servos

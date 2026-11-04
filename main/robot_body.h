@@ -69,4 +69,22 @@ esp_err_t body_get_sensor_baseline(float* out_accel_threshold, float* out_curren
  */
 esp_err_t body_perform_homing_discovery(JointLimits_t* out_limits);
 
+// --- Haptic Surface & Micro-Vibration Profiling ---
+typedef struct {
+    float roughness;     // High-frequency vibration variance
+    float stiffness;     // Deceleration impulse magnitude
+    float surface_pitch; // Surface normal orientation pitch (radians)
+    float surface_roll;  // Surface normal orientation roll (radians)
+    bool is_valid;
+} HapticSurfaceProfile_t;
+
+extern HapticSurfaceProfile_t g_last_surface_profile;
+
+/**
+ * @brief Profiles surface properties at current contact point using BMA400 micro-vibrations.
+ * @param out_profile Destination struct for surface roughness, stiffness, and orientation.
+ * @return ESP_OK on success, ESP_FAIL on sensor read error.
+ */
+esp_err_t body_profile_surface(HapticSurfaceProfile_t* out_profile);
+
 #endif // ROBOT_BODY_H

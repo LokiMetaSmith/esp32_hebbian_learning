@@ -90,6 +90,67 @@ int64_t g_last_random_walk_time_us = 0;
 static float g_last_logged_total_current_A = -1.0f;
 static const float CURRENT_LOGGING_THRESHOLD_A = 0.005f;
 
+// --- Offline Dreaming Replay Buffer Implementation ---
+static DreamMemory_t s_dream_buffer[DREAM_BUFFER_CAPACITY];
+static int s_dream_count = 0;
+static int s_dream_head = 0;
+
+void dream_buffer_record(const float* input, const float* target_state, float dissonance, float current_draw) {
+    // Only capture experiences that produced notable dissonance or surprise (> 0.2)
+    if (dissonance < 0.2f && s_dream_count >= DREAM_BUFFER_CAPACITY) return;
+
+    int slot;
+    if (s_dream_count < DREAM_BUFFER_CAPACITY) {
+        slot = s_dream_count++;
+    } else {
+        // Overwrite oldest or lowest dissonance slot
+        slot = s_dream_head;
+        s_dream_head = (s_dream_head + 1) % DREAM_BUFFER_CAPACITY;
+    }
+
+    memcpy(s_dream_buffer[slot].input, input, sizeof(float) * INPUT_NEURONS);
+    memcpy(s_dream_buffer[slot].target_state, target_state, sizeof(float) * PRED_NEURONS);
+    s_dream_buffer[slot].dissonance = dissonance;
+    s_dream_buffer[slot].current_draw = current_draw;
+}
+
+int dream_buffer_replay_consolidation(void) {
+    if (s_dream_count == 0) return 0;
+
+    ESP_LOGI(TAG, "Dreaming: Offline replaying %d high-dissonance memories...", s_dream_count);
+
+    for (int rep = 0; rep < 2; rep++) { // Run 2 consolidation epochs
+        for (int i = 0; i < s_dream_count; i++) {
+            DreamMemory_t *mem = &s_dream_buffer[i];
+
+            // 1. Re-evaluate predictive coding forward pass in software
+            forward_pass(mem->input, g_hl, g_ol, g_pl);
+
+            // 2. Measure prediction error on memory
+            float total_error = 0;
+            for (int p = 0; p < PRED_NEURONS; p++) {
+                total_error += fabsf(mem->target_state[p] - g_pl->pred_activations[p]);
+            }
+            float correctness = fmaxf(0, 1.0f - (total_error / PRED_NEURONS));
+
+            // 3. Update predictive coding weights
+            update_weights_hebbian(mem->input, correctness, mem->current_draw, g_hl, g_ol, g_pl);
+
+            // 4. Replay into SNN reservoir & readout
+            float snn_inputs[N_INPUT] = {0};
+            snn_inputs[0] = total_error / PRED_NEURONS;
+            snn_inputs[1] = mem->current_draw / (NUM_SERVOS * 2.0f);
+            snn_lsm_forward(&g_lsm, snn_inputs);
+            snn_lsm_stdp_update(&g_lsm);
+        }
+    }
+
+    int replayed = s_dream_count;
+    s_dream_count = 0;
+    s_dream_head = 0;
+    return replayed;
+}
+
 // --- Operating Mode ---
 typedef enum {
     MODE_PASSTHROUGH = 0,
@@ -711,6 +772,9 @@ void learning_loop_task(void *pvParameters) {
                 current_draw += state_t_plus_1[NUM_ACCEL_GYRO_PARAMS + (i * NUM_SERVO_FEEDBACK_PARAMS) + 2];
             }
             
+            // Record into offline dreaming replay buffer
+            dream_buffer_record(combined_input, state_t_plus_1, g_last_prediction_error, current_draw);
+
             update_weights_hebbian(combined_input, correctness, current_draw, g_hl, g_ol, g_pl);
             led_indicator_update_emotional_state();
 

@@ -177,6 +177,28 @@ static BTStatus action_sleep(BTNode* node) {
         return BT_RUNNING;
     }
     if (planner_is_idle()) {
+        // Disengage motor torque during dreaming to protect physical hardware
+        BusRequest_t torque_req;
+        torque_req.command = CMD_WRITE_BYTE;
+        torque_req.reg_address = REG_TORQUE_ENABLE;
+        torque_req.value = 0;
+        torque_req.response_queue = NULL;
+        for (int s = 0; s < NUM_SERVOS; s++) {
+            torque_req.servo_id = servo_ids[s];
+            xQueueSend(g_bus_request_queues[0], &torque_req, portMAX_DELAY);
+        }
+
+        // Run Autonomous Offline Dreaming Replay pass through SNN & Predictive Coding
+        int dreams_replayed = dream_buffer_replay_consolidation();
+        ESP_LOGI(TAG, "BT: Dreaming consolidation complete (%d memories replayed).", dreams_replayed);
+
+        // Re-enable torque after dreaming
+        torque_req.value = 1;
+        for (int s = 0; s < NUM_SERVOS; s++) {
+            torque_req.servo_id = servo_ids[s];
+            xQueueSend(g_bus_request_queues[0], &torque_req, portMAX_DELAY);
+        }
+
         // Consolidated learned weights during sleep
         g_drives.fatigue *= 0.1f; // Sleep significantly reduces fatigue
         g_drives.satisfaction = fminf(1.0f, g_drives.satisfaction + 0.3f); // Rest is satisfying
@@ -185,7 +207,8 @@ static BTStatus action_sleep(BTNode* node) {
         ESP_LOGI(TAG, "BT: Pruning SNN weights...");
         snn_lsm_prune_weights(&g_lsm, 0.01f); // Remove weak connections < 0.01
 
-        save_network_to_nvs(g_hl, g_ol, g_pl); // Persist during sleep
+        save_network_to_nvs(g_hl, g_ol, g_pl); // Persist predictive coding during sleep
+        save_snn_weights_to_nvs(&g_lsm);       // Persist SNN weights during sleep
         sleep_started = false;
         ESP_LOGI(TAG, "BT: Sleep cycle complete. Robot is refreshed.");
         return BT_SUCCESS;

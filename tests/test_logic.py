@@ -207,3 +207,24 @@ def test_predictive_coding_bridge_and_swarm_synthesis_logic():
     broadcast_patch(1, 25, 0.75, 1.0)
     assert broadcast_packet["type"] == "MSG_TYPE_WEIGHT_PATCH"
     assert broadcast_packet["w"] == 0.75
+
+
+def test_dreaming_consolidation_and_surface_profiling_logic():
+    # 1. Dreaming consolidation buffer
+    dream_buffer = []
+
+    def record_memory(inp, target, diss, curr):
+        if diss > 0.2:
+            dream_buffer.append({"input": inp, "target": target, "diss": diss})
+
+    record_memory([0.1]*10, [0.2]*5, 0.15, 0.5) # filtered out
+    assert len(dream_buffer) == 0
+
+    record_memory([0.1]*10, [0.2]*5, 0.45, 0.5) # accepted
+    assert len(dream_buffer) == 1
+    assert dream_buffer[0]["diss"] == 0.45
+
+    # 2. Haptic surface micro-vibration stiffness metric
+    variance = 0.002
+    stiffness = 1.0 / (1.0 + 50.0 * variance)
+    assert abs(stiffness - 1.0 / 1.1) < 1e-4

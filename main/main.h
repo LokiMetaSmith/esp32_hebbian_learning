@@ -206,5 +206,17 @@ typedef struct {
 
 extern EnergyStats g_energy_stats;
 
+// --- Offline Dreaming Replay Buffer ---
+#define DREAM_BUFFER_CAPACITY 16
+
+typedef struct {
+    float input[INPUT_NEURONS];
+    float target_state[PRED_NEURONS];
+    float dissonance;
+    float current_draw;
+} DreamMemory_t;
+
+void dream_buffer_record(const float* input, const float* target_state, float dissonance, float current_draw);
+int dream_buffer_replay_consolidation(void);
 
 #endif // MAIN_H
