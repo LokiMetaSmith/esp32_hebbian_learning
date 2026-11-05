@@ -36,6 +36,8 @@ void snn_lsm_init(snn_lsm_t *lsm) {
     lsm->oja_alpha = 0.05f;
     lsm->spectral_clamp = 4.0f;
 
+    memset(lsm->elig_out, 0, sizeof(lsm->elig_out));
+
     // 1. Initialize input weights (random uniform)
     for (int i = 0; i < N_RES; i++) {
         for (int j = 0; j < N_INPUT; j++) {
