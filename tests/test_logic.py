@@ -258,3 +258,64 @@ def test_som_multimodal_fusion_and_optical_flow_slip_logic():
 
     assert slip_detected
     assert discrepancy > 0.17
+
+
+def test_reward_modulated_stdp_logic():
+    class SNN_RSTDP:
+        def __init__(self):
+            self.w_out = [[0.5]]
+            self.eta_out = [[1.0]]
+            self.trace_pre = [0.8]
+            self.spk_out = [1]
+            self.elig_out = [[0.0]]
+            self.beta = 0.9
+            self.oja_alpha = 0.05
+            self.learning_rate = 0.1
+            self.modulator = 1.0 # dopamine
+
+        def update(self):
+            dw = 0.0
+            if self.spk_out[0]:
+                dw += self.trace_pre[0]
+                dw -= 0.1 * (1.0 - self.trace_pre[0])
+
+            # Eligibility trace
+            self.elig_out[0][0] = self.beta * self.elig_out[0][0] + dw
+
+            # Independent Oja decay
+            y = float(self.spk_out[0])
+            dw_oja = -self.oja_alpha * self.w_out[0][0] * (y * y + 0.1)
+
+            # Weight update modulated by reward
+            self.w_out[0][0] += (self.learning_rate * self.eta_out[0][0] * self.modulator * self.elig_out[0][0]) + (self.learning_rate * self.eta_out[0][0] * dw_oja)
+
+    # 1. Test positive reward (modulator = 1.0)
+    snn_pos = SNN_RSTDP()
+    snn_pos.update()
+
+    # dw = 0.8 - 0.1*(0.2) = 0.78
+    # elig = 0.9 * 0 + 0.78 = 0.78
+    # dw_oja = -0.05 * 0.5 * 1.1 = -0.0275
+    # w_out = 0.5 + 0.1 * 1.0 * 1.0 * 0.78 + 0.1 * 1.0 * (-0.0275) = 0.578 - 0.00275 = 0.57525
+    assert snn_pos.elig_out[0][0] > 0.0
+    assert snn_pos.w_out[0][0] > 0.5 # weight increased due to positive reward
+
+    # 2. Test negative reward / punishment (modulator = -1.0)
+    snn_neg = SNN_RSTDP()
+    snn_neg.modulator = -1.0
+    snn_neg.update()
+    assert snn_neg.elig_out[0][0] > 0.0 # eligibility trace is independent of reward
+    assert snn_neg.w_out[0][0] < 0.5 # weight decreased due to negative reward (punishment) reversing the STDP effect
+
+    # 3. Test stability: Zero spikes + Negative Reward (Modulator = -1.0)
+    snn_stable = SNN_RSTDP()
+    snn_stable.spk_out = [0]
+    snn_stable.modulator = -1.0
+    snn_stable.update()
+    # dw = 0
+    # elig = 0
+    # dw_oja = -0.05 * 0.5 * 0.1 = -0.0025
+    # w_out = 0.5 + (0.1 * 1.0 * -1.0 * 0) + (0.1 * 1.0 * -0.0025) = 0.5 - 0.00025 = 0.49975
+    assert snn_stable.elig_out[0][0] == 0.0
+    assert snn_stable.w_out[0][0] < 0.5 # Oja decay strictly decreases weight (no divergence due to negative modulator)
+    assert snn_stable.w_out[0][0] > 0.49 # Decreased slightly, not spiked positively

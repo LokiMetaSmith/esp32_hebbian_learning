@@ -46,6 +46,9 @@ typedef struct {
     float trace_pre[N_RES];
     float trace_post[N_OUTPUT];
 
+    // Eligibility trace for R-STDP
+    float elig_out[N_OUTPUT][N_RES];
+
     // Spiking outputs for the current step
     uint8_t spk_res[N_RES];
     uint8_t spk_out[N_OUTPUT];
