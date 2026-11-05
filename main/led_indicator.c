@@ -10,6 +10,7 @@
 
 #include "led_indicator.h"
 #include "common.h"
+#include "main.h"
 #include "led_strip.h"
 
 // Pin configuration from the ESP32-S3-DevKitC-1 documentation

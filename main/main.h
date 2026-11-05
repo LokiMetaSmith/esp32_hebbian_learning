@@ -219,4 +219,7 @@ typedef struct {
 void dream_buffer_record(const float* input, const float* target_state, float dissonance, float current_draw);
 int dream_buffer_replay_consolidation(void);
 
+void forward_pass(const float* input, HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl);
+void update_weights_hebbian(const float* input, float correctness, float current_draw, HiddenLayer* hl, OutputLayer* ol, PredictionLayer* pl);
+
 #endif // MAIN_H
