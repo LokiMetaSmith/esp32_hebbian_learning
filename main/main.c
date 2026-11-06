@@ -1101,6 +1101,12 @@ int cmd_get_snn_stats(int argc, char **argv) {
         printf("%.2f%s", g_lsm.mem_out[i], (i == N_OUTPUT - 1) ? "" : ", ");
     }
     printf("]\n");
+    printf("Eligibility Traces (Node 0): [");
+    for (int i = 0; i < 4; i++) {
+        printf("%.4f%s", g_lsm.elig_out[0][i], (i == 3) ? "" : ", "); // Print just first 4 of first output node
+    }
+    printf("]\n");
+    printf("Current R-STDP Modulator: %.4f\n", g_lsm.modulator);
     return 0;
 }
 
@@ -1197,6 +1203,8 @@ int cmd_get_full_status(int argc, char **argv) {
     printf("   Curiosity: %.4f (Exploration Drive)\n", g_drives.curiosity);
     printf("   Fatigue:   %.4f (Energy Drive)\n", g_drives.fatigue);
     printf("   Safety:    %.4f (Pain Drive)\n", g_drives.safety);
+    printf("   Satisfaction: %.4f (Reward Drive)\n", g_drives.satisfaction);
+    printf("   Modulator: %.4f (R-STDP Scalar)\n", g_lsm.modulator);
 
     printf(">> MOTION PLANNER:\n");
     printf("   State: %s\n", planner_is_idle() ? "IDLE" : "EXECUTING_PATH");

@@ -116,7 +116,6 @@ void snn_lsm_forward(snn_lsm_t *lsm, const float inputs[N_INPUT]) {
 
 void snn_lsm_stdp_update(snn_lsm_t *lsm) {
     snn_weight_bank_t *active = &lsm->banks[lsm->active_bank];
-    float eff_lr = lsm->learning_rate * lsm->modulator;
 
     // 1. Readout Dynamics & Trace updates
     for (int i = 0; i < N_OUTPUT; i++) {
@@ -152,7 +151,7 @@ void snn_lsm_stdp_update(snn_lsm_t *lsm) {
         lsm->trace_pre[j] = lsm->beta * lsm->trace_pre[j] + lsm->spk_res[j];
     }
 
-    // 2. Weight Update (STDP) for Readout Layer
+    // 2. Weight Update (R-STDP) for Readout Layer
     for (int i = 0; i < N_OUTPUT; i++) {
         for (int j = 0; j < N_RES; j++) {
             float eta = active->eta_out[i][j];
@@ -172,11 +171,15 @@ void snn_lsm_stdp_update(snn_lsm_t *lsm) {
                 dw -= 0.1f * (1.0f - lsm->trace_pre[j]);
             }
 
-            // Oja-style Homeostasis decay: - alpha * w * y^2
-            float y = (float)lsm->spk_out[i];
-            dw -= lsm->oja_alpha * active->w_out[i][j] * (y * y + 0.1f);
+            // R-STDP Eligibility Trace Update (Only structural STDP goes into trace)
+            lsm->elig_out[i][j] = lsm->beta * lsm->elig_out[i][j] + dw;
 
-            active->w_out[i][j] += eff_lr * eta * dw;
+            // Oja-style Homeostasis decay: - alpha * w * y^2 (Independent of Reward)
+            float y = (float)lsm->spk_out[i];
+            float dw_oja = -lsm->oja_alpha * active->w_out[i][j] * (y * y + 0.1f);
+
+            // Weight update modulated by reward (modulator) for STDP + independent Oja decay
+            active->w_out[i][j] += (lsm->learning_rate * eta * lsm->modulator * lsm->elig_out[i][j]) + (lsm->learning_rate * eta * dw_oja);
 
             // Spectral / magnitude clamp
             if (active->w_out[i][j] > lsm->spectral_clamp) {
@@ -199,7 +202,7 @@ void snn_lsm_stdp_update(snn_lsm_t *lsm) {
                 dw -= 0.05f * (1.0f - lsm->trace_pre[j]);
             }
             dw -= lsm->oja_alpha * active->w_rec[i][j];
-            active->w_rec[i][j] += eff_lr * eta * dw;
+            active->w_rec[i][j] += lsm->learning_rate * lsm->modulator * eta * dw;
 
             if (active->w_rec[i][j] > lsm->spectral_clamp) {
                 active->w_rec[i][j] = lsm->spectral_clamp;

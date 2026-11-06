@@ -8,6 +8,8 @@
 #include "synsense_driver.h"
 #include "inter_esp_comm.h"
 #include "mcp_server.h"
+#include "snn_lsm.h"
+#include "feetech_protocol.h"
 #include <stdlib.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -23,6 +25,8 @@ static float g_current_goal[HIDDEN_NEURONS];
 static bool g_has_active_goal = false;
 
 #define STRESS_THRESHOLD 0.5f
+
+extern snn_lsm_t g_lsm;
 
 // --- BT Leaf Nodes (Actions & Conditions) ---
 
