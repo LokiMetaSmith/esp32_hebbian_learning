@@ -95,5 +95,5 @@ This phase focuses on extending the architecture to support a coordinated omni-d
 
 ## Phase 7: Future Potential Tasks (Upcoming)
 
-*   **[ ] Reinforcement Learning (RL) Readout:** Transition the plastic SNN readout layer from unsupervised Hebbian to a reward-modulated R-STDP rule for goal-oriented skill refinement.
-*   **[ ] Host-Side 3D Digital Twin:** Standalone WebGL / Three.js 3D visualizer running on the host PC to mirror physical robot kinematics without adding flash bloat to the ESP32.
+*   **[DONE] Reinforcement Learning (RL) Readout:** Transition the plastic SNN readout layer from unsupervised Hebbian to a reward-modulated R-STDP rule for goal-oriented skill refinement.
+*   **[DONE] Host-Side 3D Digital Twin:** Standalone WebGL / Three.js 3D visualizer running on the host PC to mirror physical robot kinematics without adding flash bloat to the ESP32.

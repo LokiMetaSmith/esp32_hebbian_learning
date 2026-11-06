@@ -259,7 +259,6 @@ def test_som_multimodal_fusion_and_optical_flow_slip_logic():
     assert slip_detected
     assert discrepancy > 0.17
 
-
 def test_reward_modulated_stdp_logic():
     class SNN_RSTDP:
         def __init__(self):
