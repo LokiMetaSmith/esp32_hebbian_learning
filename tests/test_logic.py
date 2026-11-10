@@ -318,3 +318,54 @@ def test_reward_modulated_stdp_logic():
     assert snn_stable.elig_out[0][0] == 0.0
     assert snn_stable.w_out[0][0] < 0.5 # Oja decay strictly decreases weight (no divergence due to negative modulator)
     assert snn_stable.w_out[0][0] > 0.49 # Decreased slightly, not spiked positively
+
+def test_omni_base_torque_mapping_logic():
+    import math
+    def map_torque_to_duty(torque, max_pwm):
+        # Maps torque (0..max_pwm) to 13-bit duty cycle (0..8191)
+        duty = int((min(abs(torque), max_pwm) / max_pwm) * 8191.0)
+        return duty
+
+    MOTOR_PWM_MAX = 100.0
+
+    # Test zero torque
+    assert map_torque_to_duty(0.0, MOTOR_PWM_MAX) == 0
+
+    # Test half torque
+    assert map_torque_to_duty(50.0, MOTOR_PWM_MAX) == int(8191.0 * 0.5)
+
+    # Test max torque
+    assert map_torque_to_duty(100.0, MOTOR_PWM_MAX) == 8191
+
+    # Test negative torque (should use absolute value)
+    assert map_torque_to_duty(-25.0, MOTOR_PWM_MAX) == int(8191.0 * 0.25)
+
+    # Test saturation beyond max torque
+    assert map_torque_to_duty(150.0, MOTOR_PWM_MAX) == 8191
+
+
+def test_spi_chunking_logic():
+    MAX_CHUNK_SIZE = 4000
+
+    def simulate_spi_transfer(config_len):
+        bytes_sent = 0
+        chunks = []
+        while bytes_sent < config_len:
+            chunk_size = config_len - bytes_sent
+            if chunk_size > MAX_CHUNK_SIZE:
+                chunk_size = MAX_CHUNK_SIZE
+            chunks.append(chunk_size)
+            bytes_sent += chunk_size
+        return chunks
+
+    # Small payload (no chunking)
+    assert simulate_spi_transfer(500) == [500]
+
+    # Exact boundary payload
+    assert simulate_spi_transfer(4000) == [4000]
+
+    # Large payload (requires chunking)
+    assert simulate_spi_transfer(9500) == [4000, 4000, 1500]
+
+    # Empty payload
+    assert simulate_spi_transfer(0) == []
