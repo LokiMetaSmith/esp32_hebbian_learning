@@ -85,22 +85,31 @@ void synsense_load_configuration(const unsigned char* config_array, unsigned int
         return;
     }
 
-    // TODO: The exact SPI protocol is unknown. The following is a generic
-    // implementation. It may be necessary to send specific command bytes
-    // before the data, or to structure the data into multiple transactions.
-    // This requires the low-level hardware datasheet.
+    // Transmission needs to be chunked if config_len is larger than max_transfer_sz
+    // Assuming max_transfer_sz is 4096 bytes based on initialization.
+    const unsigned int MAX_CHUNK_SIZE = 4000;
+    unsigned int bytes_sent = 0;
 
-    spi_transaction_t t;
-    memset(&t, 0, sizeof(t));
-    t.length = config_len * 8; // length is in bits
-    t.tx_buffer = config_array;
+    while (bytes_sent < config_len) {
+        unsigned int chunk_size = config_len - bytes_sent;
+        if (chunk_size > MAX_CHUNK_SIZE) {
+            chunk_size = MAX_CHUNK_SIZE;
+        }
 
-    esp_err_t ret = spi_device_transmit(g_spi_handle, &t);
-    if (ret != ESP_OK) {
-        ESP_LOGE(TAG, "SPI transmission failed: %s", esp_err_to_name(ret));
-    } else {
-        ESP_LOGI(TAG, "SPI transmission successful.");
+        spi_transaction_t t;
+        memset(&t, 0, sizeof(t));
+        t.length = chunk_size * 8; // length is in bits
+        t.tx_buffer = config_array + bytes_sent;
+
+        esp_err_t ret = spi_device_transmit(g_spi_handle, &t);
+        if (ret != ESP_OK) {
+            ESP_LOGE(TAG, "SPI transmission failed at offset %u: %s", bytes_sent, esp_err_to_name(ret));
+            return; // Abort on failure
+        }
+
+        bytes_sent += chunk_size;
     }
+    ESP_LOGI(TAG, "SPI transmission successful.");
 }
 
 uint8_t synsense_get_classification(void) {

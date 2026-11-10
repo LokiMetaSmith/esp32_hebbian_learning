@@ -89,5 +89,11 @@ void omni_base_set_torque(const float* torques) {
     if (!torques) return;
     ESP_LOGD(TAG, "Setting Torque: FL=%.2f, FR=%.2f, RL=%.2f, RR=%.2f",
              torques[0], torques[1], torques[2], torques[3]);
-    // TODO: Send PWM duty to motor drivers
+
+    for (int i = 0; i < 4; i++) {
+        // Map torque (0..MOTOR_PWM_MAX) to PWM duty cycle (0..8191 for 13-bit resolution)
+        uint32_t duty = (uint32_t)(fminf(fabsf(torques[i]), MOTOR_PWM_MAX) / MOTOR_PWM_MAX * 8191.0f);
+        ledc_set_duty(LEDC_MODE, (ledc_channel_t)i, duty);
+        ledc_update_duty(LEDC_MODE, (ledc_channel_t)i);
+    }
 }
