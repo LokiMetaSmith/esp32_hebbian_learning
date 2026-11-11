@@ -76,6 +76,9 @@ bool kinematics_inverse(Point3D target, const float* initial_angles, float* out_
         float error = sqrtf(dx*dx + dy*dy + dz*dz);
 
         if (error < 0.005f) { // 5mm tolerance
+            if (!kinematics_check_self_collision(current_angles)) {
+                return false; // Solution violates self-collision or table limit
+            }
             memcpy(out_angles, current_angles, sizeof(float) * 6);
             return true;
         }
