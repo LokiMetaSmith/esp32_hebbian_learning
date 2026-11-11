@@ -135,6 +135,57 @@ class MockSerialESP32:
                 self.modulator = float(parts[1])
             resp = {"event": "modulate_success", "modulator": self.modulator}
             self.in_buf += f"@JSON:{json.dumps(resp)}\nrobot>"
+        elif cmd.startswith("ik-move"):
+            parts = cmd.split()
+            x = float(parts[1]) if len(parts) > 1 else 0.2
+            y = float(parts[2]) if len(parts) > 2 else 0.0
+            z = float(parts[3]) if len(parts) > 3 else 0.2
+            resp = {"event": "ik_move_success", "target": [x, y, z], "result": "OK"}
+            self.in_buf += f"@JSON:{json.dumps(resp)}\nrobot>"
+        elif cmd == "get-full-status":
+            resp = {
+                "event": "full_status",
+                "snn_stress": 0.35,
+                "dissonance": 0.12,
+                "curiosity": 0.65,
+                "fatigue": 0.20,
+                "satisfaction": 0.80,
+                "bt_status": "SUCCESS",
+                "end_effector": {"x": 0.22, "y": 0.05, "z": 0.14}
+            }
+            self.in_buf += f"@JSON:{json.dumps(resp)}\nrobot>"
+        elif cmd == "get-surface-profile":
+            resp = {
+                "event": "surface_profile",
+                "roughness": 0.042,
+                "stiffness": 0.88,
+                "pitch": 0.01,
+                "roll": -0.02
+            }
+            self.in_buf += f"@JSON:{json.dumps(resp)}\nrobot>"
+        elif cmd == "get-fusion-state":
+            resp = {
+                "event": "fusion_state",
+                "bmu_x": 4,
+                "bmu_y": 3,
+                "anomaly": 0.08,
+                "samples": 1250
+            }
+            self.in_buf += f"@JSON:{json.dumps(resp)}\nrobot>"
+        elif cmd == "get-optical-flow":
+            resp = {
+                "event": "optical_flow",
+                "dx": 0.001,
+                "dy": 0.0,
+                "squal": 150,
+                "slip": False
+            }
+            self.in_buf += f"@JSON:{json.dumps(resp)}\nrobot>"
+        elif cmd.startswith("teach-gesture"):
+            parts = cmd.split()
+            gid = int(parts[1]) if len(parts) > 1 else 1
+            resp = {"event": "teach_gesture_success", "gesture_id": gid}
+            self.in_buf += f"@JSON:{json.dumps(resp)}\nrobot>"
         else:
             self.in_buf += "robot>"
 

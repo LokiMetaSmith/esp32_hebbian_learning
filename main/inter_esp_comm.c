@@ -67,12 +67,20 @@ static void on_data_recv(const esp_now_recv_info_t * info, const uint8_t *data, 
             uint8_t sector = (uint8_t)msg->data[0];
             float bid = msg->data[1];
             if (sector < SWARM_MAX_SECTORS) {
-                // If unclaimed or peer has higher bid score (e.g. less fatigue), award claim
-                if (!g_swarm_sectors[sector].active || bid > g_swarm_sectors[sector].owner_bid_score) {
+                uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                // Check if existing lease has expired (5 seconds)
+                if (g_swarm_sectors[sector].active && (now_ms - g_swarm_sectors[sector].lease_timestamp_ms > 5000)) {
+                    g_swarm_sectors[sector].active = false;
+                }
+
+                // If unclaimed, owned by same peer, or peer has higher bid score, award/renew claim
+                if (!g_swarm_sectors[sector].active ||
+                    g_swarm_sectors[sector].owner_robot_id == msg->source_id ||
+                    bid > g_swarm_sectors[sector].owner_bid_score) {
                     g_swarm_sectors[sector].sector_id = sector;
                     g_swarm_sectors[sector].owner_robot_id = msg->source_id;
                     g_swarm_sectors[sector].owner_bid_score = bid;
-                    g_swarm_sectors[sector].lease_timestamp_ms = (uint32_t)(esp_timer_get_time() / 1000);
+                    g_swarm_sectors[sector].lease_timestamp_ms = now_ms;
                     g_swarm_sectors[sector].active = true;
                     ESP_LOGI(TAG, "Swarm Consensus: Peer %d claimed sector %d (bid: %.2f)",
                              msg->source_id, sector, bid);

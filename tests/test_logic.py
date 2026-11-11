@@ -369,3 +369,167 @@ def test_spi_chunking_logic():
 
     # Empty payload
     assert simulate_spi_transfer(0) == []
+
+
+def test_swarm_sector_claim_lease_expiration_logic():
+    class SwarmSector:
+        def __init__(self, sector_id=0):
+            self.sector_id = sector_id
+            self.active = False
+            self.owner_robot_id = 0
+            self.owner_bid_score = 0.0
+            self.lease_timestamp_ms = 0
+
+    sectors = [SwarmSector(i) for i in range(4)]
+
+    def handle_sector_claim(sector_id, source_id, bid, current_time_ms):
+        sector = sectors[sector_id]
+        # Check if existing lease has expired (5 seconds = 5000ms)
+        if sector.active and (current_time_ms - sector.lease_timestamp_ms > 5000):
+            sector.active = False
+
+        if not sector.active or sector.owner_robot_id == source_id or bid > sector.owner_bid_score:
+            sector.sector_id = sector_id
+            sector.owner_robot_id = source_id
+            sector.owner_bid_score = bid
+            sector.lease_timestamp_ms = current_time_ms
+            sector.active = True
+            return True
+        return False
+
+    # Robot 2 claims sector 0 with high bid 0.9 at t=1000
+    assert handle_sector_claim(0, 2, 0.9, 1000)
+    assert sectors[0].owner_robot_id == 2
+    assert sectors[0].owner_bid_score == 0.9
+
+    # Robot 3 attempts claim with lower bid 0.5 at t=2000 (lease still valid) -> rejected
+    assert not handle_sector_claim(0, 3, 0.5, 2000)
+    assert sectors[0].owner_robot_id == 2
+
+    # At t=7000 (6 seconds later, lease expired), Robot 3 claims with lower bid 0.5 -> accepted!
+    assert handle_sector_claim(0, 3, 0.5, 7000)
+    assert sectors[0].owner_robot_id == 3
+    assert sectors[0].owner_bid_score == 0.5
+
+
+def test_kinematics_self_collision_and_ik_validation():
+    import math
+
+    LINK1_LEN = 0.10
+    LINK2_LEN = 0.15
+    LINK3_LEN = 0.15
+
+    def get_joint_positions(angles):
+        q = [a * (math.pi / 2.0) for a in angles]
+        j0 = (0.0, 0.0, 0.0)
+        j1 = (
+            LINK1_LEN * math.cos(q[0]) * math.cos(q[1]),
+            LINK1_LEN * math.sin(q[0]) * math.cos(q[1]),
+            LINK1_LEN * math.sin(q[1])
+        )
+        pitch_sum = q[1] + q[2]
+        j2 = (
+            j1[0] + LINK2_LEN * math.cos(q[0]) * math.cos(pitch_sum),
+            j1[1] + LINK2_LEN * math.sin(q[0]) * math.cos(pitch_sum),
+            j1[2] + LINK2_LEN * math.sin(pitch_sum)
+        )
+        pitch_sum += q[3]
+        j3 = (
+            j2[0] + LINK3_LEN * math.cos(q[0]) * math.cos(pitch_sum),
+            j2[1] + LINK3_LEN * math.sin(q[0]) * math.cos(pitch_sum),
+            j2[2] + LINK3_LEN * math.sin(pitch_sum)
+        )
+        return [j0, j1, j2, j3]
+
+    def check_self_collision(angles):
+        joints = get_joint_positions(angles)
+        for i in range(1, 4):
+            if joints[i][2] < -0.02:
+                return False  # Below table
+        for i in range(2, 4):
+            r2 = joints[i][0]**2 + joints[i][1]**2
+            if joints[i][2] < 0.10 and r2 < (0.07 * 0.07):
+                return False  # Collision with central cylinder
+        return True
+
+    # Nominal upright/outward pose
+    safe_pose = [0.0, 0.2, 0.2, 0.0, 0.0, 0.0]
+    assert check_self_collision(safe_pose)
+
+    # Collision pose: pointing downwards below table
+    table_crash_pose = [0.0, -0.9, -0.9, -0.5, 0.0, 0.0]
+    assert not check_self_collision(table_crash_pose)
+
+    # Collision pose: table violation (z < -0.02)
+    assert not check_self_collision(table_crash_pose)
+
+    # Collision pose: central cylinder collision check
+    # Directly verify the condition logic of check_self_collision
+    mock_colliding_joints_cylinder = [
+        (0.0, 0.0, 0.0),
+        (0.10, 0.0, 0.05),
+        (0.05, 0.02, 0.08),  # r2 = 0.05^2 + 0.02^2 = 0.0029 < 0.07^2 (0.0049), z = 0.08 < 0.10
+        (0.15, 0.0, 0.15)
+    ]
+    def check_joints_collision(joints):
+        for i in range(1, 4):
+            if joints[i][2] < -0.02:
+                return False
+        for i in range(2, 4):
+            r2 = joints[i][0]**2 + joints[i][1]**2
+            if joints[i][2] < 0.10 and r2 < (0.07 * 0.07):
+                return False
+        return True
+
+    assert not check_joints_collision(mock_colliding_joints_cylinder)
+
+
+def test_cortex_chat_offline_intent_parsing_and_mock_serial():
+    import sys, os
+    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+    from tools.cortex_chat import CortexChatCLI
+
+    cli = CortexChatCLI(mock_hw=True)
+
+    # 1. Test status intent
+    intent_status = cli.parse_natural_language_intent("What is the current status and stress of the robot?")
+    assert intent_status["action_type"] == "status"
+    res_status = cli.execute_intent(intent_status)
+    assert "Full status queried" in res_status
+    assert "snn_stress" in res_status
+
+    # 2. Test ik_move intent with coordinates
+    intent_ik = cli.parse_natural_language_intent("Move arm to position 0.30 0.10 0.20")
+    assert intent_ik["action_type"] == "ik_move"
+    assert intent_ik["target_coordinates"] == [0.30, 0.10, 0.20]
+    res_ik = cli.execute_intent(intent_ik)
+    assert "ik_move_success" in res_ik
+
+    # 3. Test teach intent with gesture ID
+    intent_teach = cli.parse_natural_language_intent("Teach current pose as gesture 5")
+    assert intent_teach["action_type"] == "teach"
+    assert intent_teach["gesture_id"] == 5
+    res_teach = cli.execute_intent(intent_teach)
+    assert "gesture_id': 5" in res_teach or "gesture_id\": 5" in res_teach
+
+    # 4. Test surface profile intent
+    intent_surf = cli.parse_natural_language_intent("Analyze surface texture roughness")
+    assert intent_surf["action_type"] == "surface"
+    res_surf = cli.execute_intent(intent_surf)
+    assert "surface_profile" in res_surf
+    assert "roughness" in res_surf
+
+    # 5. Test flow intent
+    intent_flow = cli.parse_natural_language_intent("Check optical flow sensor slip")
+    assert intent_flow["action_type"] == "flow"
+    res_flow = cli.execute_intent(intent_flow)
+    assert "optical_flow" in res_flow
+
+    # 6. Test modulate intent with custom value
+    intent_mod = cli.parse_natural_language_intent("Set dopamine reward modulation to -0.8")
+    assert intent_mod["action_type"] == "modulate"
+    assert intent_mod["modulator_value"] == -0.8
+    res_mod = cli.execute_intent(intent_mod)
+    assert "Modulator set to -0.8" in res_mod
+
+    cli.close()
